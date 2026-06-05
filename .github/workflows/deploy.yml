@@ -1,0 +1,21 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 52.66.68.49
+          username: deploy
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /var/www/ai-voice-platform
+            ./scripts/deploy.sh
