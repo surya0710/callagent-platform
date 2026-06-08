@@ -1,0 +1,347 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+enum CustomerStatus {
+  active
+  inactive
+  do_not_call
+}
+
+enum CampaignStatus {
+  draft
+  scheduled
+  running
+  paused
+  completed
+  cancelled
+}
+
+enum CallStatus {
+  queued
+  initiated
+  ringing
+  answered
+  in_progress
+  completed
+  failed
+  busy
+  no_answer
+  cancelled
+}
+
+enum CallSource {
+  campaign
+  integration
+  manual
+  test
+}
+
+enum CallPurpose {
+  driver_assigned
+  ride_reminder
+  pickup_update
+  trip_completed
+  payment_reminder
+  custom
+}
+
+enum CallEventType {
+  status_change
+  transcript_chunk
+  ai_response
+  error
+  webhook
+  system
+}
+
+enum SentimentLabel {
+  positive
+  neutral
+  negative
+}
+
+enum AuditAction {
+  create
+  update
+  delete
+  login
+  logout
+  activate
+  deactivate
+  import
+  schedule
+  pause
+  resume
+  retry
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  firstName    String     @map("first_name")
+  lastName     String     @map("last_name")
+  status       UserStatus @default(active)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  roles      UserRole[]
+  auditLogs  AuditLog[]
+  campaigns  Campaign[] @relation("CampaignCreatedBy")
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String @map("user_id")
+  roleId String @map("role_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model Customer {
+  id        String         @id @default(uuid())
+  firstName String         @map("first_name")
+  lastName  String         @map("last_name")
+  phone     String
+  email     String?
+  language  String         @default("en")
+  timezone  String         @default("UTC")
+  metadata  Json?
+  status    CustomerStatus @default(active)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+  deletedAt DateTime?      @map("deleted_at")
+
+  campaigns CampaignCustomer[]
+  calls     Call[]
+
+  @@index([phone])
+  @@index([status])
+  @@index([createdAt])
+  @@map("customers")
+}
+
+model Campaign {
+  id          String         @id @default(uuid())
+  name        String
+  description String?
+  status      CampaignStatus @default(draft)
+  scheduledAt DateTime?      @map("scheduled_at")
+  startedAt   DateTime?      @map("started_at")
+  completedAt DateTime?      @map("completed_at")
+  agentPromptId String?      @map("agent_prompt_id")
+  createdById String         @map("created_by_id")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  createdBy   User               @relation("CampaignCreatedBy", fields: [createdById], references: [id])
+  agentPrompt AgentPrompt?       @relation(fields: [agentPromptId], references: [id])
+  customers   CampaignCustomer[]
+  calls       Call[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("campaigns")
+}
+
+model CampaignCustomer {
+  id         String   @id @default(uuid())
+  campaignId String   @map("campaign_id")
+  customerId String   @map("customer_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, customerId])
+  @@index([campaignId])
+  @@index([customerId])
+  @@map("campaign_customers")
+}
+
+model ApiKey {
+  id        String   @id @default(uuid())
+  name      String
+  keyPrefix String   @map("key_prefix")
+  keyHash   String   @map("key_hash")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  calls Call[]
+
+  @@index([keyPrefix])
+  @@map("api_keys")
+}
+
+model Call {
+  id            String       @id @default(uuid())
+  campaignId    String?      @map("campaign_id")
+  customerId    String       @map("customer_id")
+  apiKeyId      String?      @map("api_key_id")
+  source        CallSource   @default(manual)
+  externalRef   String?      @map("external_ref")
+  callPurpose   CallPurpose? @map("call_purpose")
+  status        CallStatus   @default(queued)
+  phone         String
+  priority      String       @default("normal")
+  metadata      Json?
+  callbackUrl   String?      @map("callback_url")
+  durationSec   Int?         @map("duration_sec")
+  startedAt     DateTime?    @map("started_at")
+  endedAt       DateTime?    @map("ended_at")
+  failureReason String?      @map("failure_reason")
+  providerRef   String?      @map("provider_ref")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  campaign   Campaign?       @relation(fields: [campaignId], references: [id])
+  customer   Customer        @relation(fields: [customerId], references: [id])
+  apiKey     ApiKey?         @relation(fields: [apiKeyId], references: [id])
+  events     CallEvent[]
+  transcript CallTranscript?
+  summary    CallSummary?
+
+  @@unique([apiKeyId, externalRef])
+  @@index([status])
+  @@index([campaignId])
+  @@index([customerId])
+  @@index([externalRef])
+  @@index([source])
+  @@index([createdAt])
+  @@map("calls")
+}
+
+model CallEvent {
+  id        String        @id @default(uuid())
+  callId    String        @map("call_id")
+  type      CallEventType
+  payload   Json?
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+  @@index([createdAt])
+  @@map("call_events")
+}
+
+model CallTranscript {
+  id        String   @id @default(uuid())
+  callId    String   @unique @map("call_id")
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@map("call_transcripts")
+}
+
+model CallSummary {
+  id        String          @id @default(uuid())
+  callId    String          @unique @map("call_id")
+  summary   String          @db.Text
+  sentiment SentimentLabel?
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@map("call_summaries")
+}
+
+model AgentPrompt {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  systemPrompt String  @map("system_prompt") @db.Text
+  isActive    Boolean  @default(false) @map("is_active")
+  version     Int      @default(1)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  campaigns Campaign[]
+
+  @@map("agent_prompts")
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  userId     String?     @map("user_id")
+  action     AuditAction
+  entityType String      @map("entity_type")
+  entityId   String?     @map("entity_id")
+  metadata   Json?
+  ipAddress  String?     @map("ip_address")
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([entityType])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

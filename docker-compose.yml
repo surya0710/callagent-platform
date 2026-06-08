@@ -1,0 +1,133 @@
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_voice_platform}
+      MYSQL_USER: ${MYSQL_USER:-ai_voice_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-this-password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-this-root-password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build:
+      context: ./backend
+    image: ai-voice-platform-backend:latest
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: mysql://${MYSQL_USER:-ai_voice_user}:${MYSQL_PASSWORD:-change-this-password}@mysql:3306/${MYSQL_DATABASE:-ai_voice_platform}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:-change-this-before-deploy}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://52.66.68.49}
+      SEED_DEV_INTEGRATION_API_KEY: ${SEED_DEV_INTEGRATION_API_KEY:-false}
+    command: sh -c "npx prisma migrate deploy && npx prisma db seed"
+
+  api:
+    image: ai-voice-platform-backend:latest
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: mysql://${MYSQL_USER:-ai_voice_user}:${MYSQL_PASSWORD:-change-this-password}@mysql:3306/${MYSQL_DATABASE:-ai_voice_platform}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:-change-this-before-deploy}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://52.66.68.49}
+    ports:
+      - "3000:3000"
+
+  worker:
+    image: ai-voice-platform-backend:latest
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://${MYSQL_USER:-ai_voice_user}:${MYSQL_PASSWORD:-change-this-password}@mysql:3306/${MYSQL_DATABASE:-ai_voice_platform}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:-change-this-before-deploy}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://52.66.68.49}
+    command: ["node", "dist/worker.js"]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+    image: ai-voice-platform-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "8080:80"
+
+volumes:
+  mysql-data:
+  redis-data:
