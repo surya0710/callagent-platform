@@ -1,4 +1,8 @@
+import { config } from 'dotenv';
+import { resolve } from 'path';
 import * as Sentry from '@sentry/nestjs';
+
+config({ path: resolve(__dirname, '../.env') });
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,

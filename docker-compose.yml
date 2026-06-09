@@ -91,6 +91,12 @@ services:
       AWS_REGION: ${AWS_REGION:-us-east-1}
       BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://52.66.68.49}
+      APP_VERSION: ${APP_VERSION:-0.1.0}
+      SENTRY_ENABLED: ${SENTRY_ENABLED:-false}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
+      SENTRY_TEST_ENABLED: ${SENTRY_TEST_ENABLED:-false}
     ports:
       - "3000:3000"
 
@@ -119,6 +125,11 @@ services:
       AWS_REGION: ${AWS_REGION:-us-east-1}
       BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://52.66.68.49}
+      APP_VERSION: ${APP_VERSION:-0.1.0}
+      SENTRY_ENABLED: ${SENTRY_ENABLED:-false}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
     command: ["node", "dist/worker.js"]
 
   frontend:
