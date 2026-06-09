@@ -50,4 +50,10 @@ describe('Health endpoint', () => {
     });
     expect(result.timestamp).toBeDefined();
   });
+
+  it('GET /health/sentry-test throws outside production', () => {
+    expect(() => controller.sentryTest()).toThrow(
+      'Sentry test error from /api/health/sentry-test',
+    );
+  });
 });

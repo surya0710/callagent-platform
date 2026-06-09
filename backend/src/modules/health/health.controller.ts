@@ -28,4 +28,11 @@ export class HealthController {
   checkRedis() {
     return this.healthService.checkRedis();
   }
+
+  @Public()
+  @Get('sentry-test')
+  @ApiOperation({ summary: 'Trigger a Sentry test error (non-production only)' })
+  sentryTest() {
+    return this.healthService.sentryTest();
+  }
 }

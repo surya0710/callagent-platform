@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { isSentryTestAllowed } from '../../common/sentry/sentry.util';
 import { PrismaService } from '../../database/prisma.service';
 
 @Injectable()
@@ -17,6 +18,17 @@ export class HealthService {
       service: 'ai-voice-platform-api',
       environment: this.configService.get<string>('NODE_ENV'),
     };
+  }
+
+  sentryTest() {
+    if (!isSentryTestAllowed()) {
+      return {
+        status: 'disabled',
+        message: 'Sentry test endpoint is disabled in production',
+      };
+    }
+
+    throw new Error('Sentry test error from /api/health/sentry-test');
   }
 
   async checkDatabase() {

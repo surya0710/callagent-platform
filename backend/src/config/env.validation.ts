@@ -89,6 +89,30 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SEED_DEV_INTEGRATION_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  SENTRY_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  SENTRY_DSN?: string;
+
+  @IsOptional()
+  @IsString()
+  SENTRY_ENVIRONMENT?: string;
+
+  @IsOptional()
+  @IsString()
+  SENTRY_TRACES_SAMPLE_RATE?: string;
+
+  @IsOptional()
+  @IsString()
+  SENTRY_TEST_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  APP_VERSION?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
