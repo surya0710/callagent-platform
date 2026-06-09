@@ -64,6 +64,14 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  OPENAI_TRANSCRIPTION_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENAI_FINE_TUNE_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
   AWS_REGION?: string;
 
   @IsOptional()

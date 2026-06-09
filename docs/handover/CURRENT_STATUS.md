@@ -27,11 +27,21 @@
 - Docker scaffold added with backend/frontend Dockerfiles and `docker-compose.yml`
 - `AUTH_COOKIE_SECURE=false` supports current HTTP-only Elastic IP deployment
 
+### Recorded-call training workflow
+- Training page added to the admin dashboard
+- Upload recorded calls for training
+- Transcribe uploaded audio through the selected training provider
+- Review/redact/approve transcripts as supervised examples
+- Generate OpenAI-compatible JSONL datasets
+- Upload datasets and start supervised fine-tuning jobs through `OpenAiTrainingProvider`
+- Mock and Bedrock training providers keep the abstraction vendor-safe
+
 ## Still placeholders
 - Telephony provider (real outbound dialing)
 - Amazon Bedrock / Nova Sonic
 - HTTPS on EC2
 - Customer edit form on detail page
+- Evaluation harness before production use of fine-tuned models
 
 ## Quick test flow
 

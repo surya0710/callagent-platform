@@ -9,6 +9,8 @@ export const PERMISSIONS = {
   CALLS_WRITE: 'calls.write',
   ANALYTICS_READ: 'analytics.read',
   SETTINGS_WRITE: 'settings.write',
+  TRAINING_READ: 'training.read',
+  TRAINING_WRITE: 'training.write',
 } as const;
 
 export type PermissionName = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

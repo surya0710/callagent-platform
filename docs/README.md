@@ -33,6 +33,7 @@ Swagger: `http://localhost:3000/api/docs`
 - [Database Design](./database/DATABASE_DESIGN.md)
 - [Deployment](./devops/DEPLOYMENT.md)
 - [AI Provider Strategy](./ai/AI_PROVIDER_STRATEGY.md)
+- [Training Workflow](./ai/TRAINING_WORKFLOW.md)
 - [External Integration API](./integrations/EXTERNAL_API.md)
 - [Current Status](./handover/CURRENT_STATUS.md)
 

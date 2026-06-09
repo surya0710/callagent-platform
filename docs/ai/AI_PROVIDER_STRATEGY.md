@@ -48,3 +48,7 @@ interface AiProvider {
 | POST | `/api/ai/test-response` | Test text generation |
 | POST | `/api/ai/summarize` | Summarize call transcript |
 | POST | `/api/ai/sentiment` | Analyze text sentiment |
+
+## Training provider abstraction
+
+Recorded-call training uses a companion provider abstraction in `TrainingModule`. It supports audio transcription, JSONL file upload, fine-tune job creation, and job polling. See [Training Workflow](./TRAINING_WORKFLOW.md).

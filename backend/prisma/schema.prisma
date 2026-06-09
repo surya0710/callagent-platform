@@ -86,6 +86,31 @@ enum AuditAction {
   retry
 }
 
+enum TrainingRecordingStatus {
+  uploaded
+  transcribing
+  transcribed
+  failed
+  approved
+}
+
+enum TrainingDatasetStatus {
+  draft
+  ready
+  uploaded
+  failed
+}
+
+enum TrainingJobStatus {
+  draft
+  uploading
+  queued
+  running
+  succeeded
+  failed
+  cancelled
+}
+
 model User {
   id           String     @id @default(uuid())
   email        String     @unique
@@ -99,6 +124,9 @@ model User {
   roles      UserRole[]
   auditLogs  AuditLog[]
   campaigns  Campaign[] @relation("CampaignCreatedBy")
+  trainingRecordings TrainingRecording[] @relation("TrainingRecordingUploadedBy")
+  trainingDatasets   TrainingDataset[]   @relation("TrainingDatasetCreatedBy")
+  trainingJobs       TrainingJob[]       @relation("TrainingJobCreatedBy")
 
   @@map("users")
 }
@@ -253,6 +281,7 @@ model Call {
   events     CallEvent[]
   transcript CallTranscript?
   summary    CallSummary?
+  trainingRecordings TrainingRecording[]
 
   @@unique([apiKeyId, externalRef])
   @@index([status])
@@ -344,4 +373,102 @@ model AuditLog {
   @@index([entityType])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+model TrainingRecording {
+  id               String                  @id @default(uuid())
+  callId           String?                 @map("call_id")
+  originalFileName String                  @map("original_file_name")
+  fileName         String                  @map("file_name")
+  mimeType         String                  @map("mime_type")
+  storagePath      String                  @map("storage_path")
+  sizeBytes        Int                     @map("size_bytes")
+  language         String?
+  status           TrainingRecordingStatus @default(uploaded)
+  transcript       String?                 @db.LongText
+  redactedTranscript String?               @map("redacted_transcript") @db.LongText
+  labelOutcome     String?                 @map("label_outcome")
+  expectedResponse String?                 @map("expected_response") @db.LongText
+  trainingApproved Boolean                 @default(false) @map("training_approved")
+  errorMessage     String?                 @map("error_message") @db.Text
+  uploadedById     String?                 @map("uploaded_by_id")
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  uploadedBy User?             @relation("TrainingRecordingUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  call       Call?             @relation(fields: [callId], references: [id], onDelete: SetNull)
+  examples   TrainingExample[]
+
+  @@index([callId])
+  @@index([status])
+  @@index([uploadedById])
+  @@index([createdAt])
+  @@map("training_recordings")
+}
+
+model TrainingDataset {
+  id            String                @id @default(uuid())
+  name          String
+  description   String?
+  status        TrainingDatasetStatus @default(draft)
+  jsonlPath     String?               @map("jsonl_path")
+  openAiFileId  String?               @map("openai_file_id")
+  exampleCount  Int                   @default(0) @map("example_count")
+  baseModel     String?               @map("base_model")
+  createdById   String?               @map("created_by_id")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+
+  createdBy User?             @relation("TrainingDatasetCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  examples  TrainingExample[]
+  jobs      TrainingJob[]
+
+  @@index([status])
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("training_datasets")
+}
+
+model TrainingExample {
+  id                String   @id @default(uuid())
+  datasetId         String   @map("dataset_id")
+  recordingId       String?  @map("recording_id")
+  systemPrompt      String?  @map("system_prompt") @db.Text
+  userPrompt        String   @map("user_prompt") @db.LongText
+  assistantResponse String   @map("assistant_response") @db.LongText
+  metadata          Json?
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  dataset   TrainingDataset    @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  recording TrainingRecording? @relation(fields: [recordingId], references: [id], onDelete: SetNull)
+
+  @@index([datasetId])
+  @@index([recordingId])
+  @@map("training_examples")
+}
+
+model TrainingJob {
+  id             String            @id @default(uuid())
+  datasetId      String            @map("dataset_id")
+  provider       String            @default("openai")
+  baseModel      String            @map("base_model")
+  openAiJobId    String?           @map("openai_job_id")
+  openAiFileId   String?           @map("openai_file_id")
+  fineTunedModel String?           @map("fine_tuned_model")
+  status         TrainingJobStatus @default(draft)
+  errorMessage   String?           @map("error_message") @db.Text
+  createdById    String?           @map("created_by_id")
+  finishedAt     DateTime?         @map("finished_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  dataset   TrainingDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  createdBy User?           @relation("TrainingJobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([datasetId])
+  @@index([status])
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("training_jobs")
 }

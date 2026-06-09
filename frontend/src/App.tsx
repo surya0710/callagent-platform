@@ -13,6 +13,7 @@ import { CustomersPage } from './pages/CustomersPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { TrainingPage } from './pages/TrainingPage';
 import { UsersPage } from './pages/UsersPage';
 
 export function App() {
@@ -37,6 +38,7 @@ export function App() {
             <Route path="calls/:id" element={<CallDetailPage />} />
             <Route path="agent-prompts" element={<AgentPromptsPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
+            <Route path="training" element={<TrainingPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

@@ -17,6 +17,8 @@ const DEFAULT_PERMISSIONS = [
   { name: 'calls.write', description: 'Manage calls' },
   { name: 'analytics.read', description: 'View analytics' },
   { name: 'settings.write', description: 'Manage system settings' },
+  { name: 'training.read', description: 'View training recordings, datasets, and jobs' },
+  { name: 'training.write', description: 'Manage training data and fine-tuning jobs' },
 ] as const;
 
 const DEFAULT_ROLES: Record<
@@ -37,11 +39,13 @@ const DEFAULT_ROLES: Record<
       'calls.read',
       'calls.write',
       'analytics.read',
+      'training.read',
+      'training.write',
     ],
   },
   agent: {
     description: 'View customers and calls',
-    permissions: ['customers.read', 'calls.read', 'analytics.read'],
+    permissions: ['customers.read', 'calls.read', 'analytics.read', 'training.read'],
   },
 };
 

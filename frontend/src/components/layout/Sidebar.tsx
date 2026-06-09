@@ -7,6 +7,7 @@ const links = [
   { to: '/calls', label: 'Calls' },
   { to: '/agent-prompts', label: 'Agent Prompts' },
   { to: '/analytics', label: 'Analytics' },
+  { to: '/training', label: 'Training' },
   { to: '/users', label: 'Users' },
   { to: '/settings', label: 'Settings' },
 ];
