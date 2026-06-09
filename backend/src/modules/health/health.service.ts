@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
-import { isSentryTestAllowed } from '../../common/sentry/sentry.util';
+import {
+  isSentryEnabled,
+  isSentryTestAllowed,
+} from '../../common/sentry/sentry.util';
 import { PrismaService } from '../../database/prisma.service';
 
 @Injectable()
@@ -17,6 +20,15 @@ export class HealthService {
       timestamp: new Date().toISOString(),
       service: 'ai-voice-platform-api',
       environment: this.configService.get<string>('NODE_ENV'),
+    };
+  }
+
+  getSentryStatus() {
+    return {
+      sentryEnabled: isSentryEnabled(),
+      sentryTestAllowed: isSentryTestAllowed(),
+      environment: this.configService.get<string>('NODE_ENV'),
+      release: process.env.APP_VERSION ?? null,
     };
   }
 

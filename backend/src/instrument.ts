@@ -1,8 +1,7 @@
-import { config } from 'dotenv';
-import { resolve } from 'path';
 import * as Sentry from '@sentry/nestjs';
+import { loadEnvBeforeBootstrap } from './common/sentry/load-env';
 
-config({ path: resolve(__dirname, '../.env') });
+loadEnvBeforeBootstrap();
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,

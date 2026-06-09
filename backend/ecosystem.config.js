@@ -1,3 +1,13 @@
+const path = require('path');
+const { config } = require('dotenv');
+
+config({ path: path.join(__dirname, '.env') });
+
+const sharedEnv = {
+  ...process.env,
+  NODE_ENV: 'production',
+};
+
 module.exports = {
   apps: [
     {
@@ -8,9 +18,7 @@ module.exports = {
       autorestart: true,
       watch: false,
       max_memory_restart: '512M',
-      env: {
-        NODE_ENV: 'production',
-      },
+      env: sharedEnv,
     },
     {
       name: 'ai-voice-worker',
@@ -20,9 +28,7 @@ module.exports = {
       autorestart: true,
       watch: false,
       max_memory_restart: '512M',
-      env: {
-        NODE_ENV: 'production',
-      },
+      env: sharedEnv,
     },
   ],
 };

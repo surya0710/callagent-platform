@@ -30,6 +30,13 @@ export class HealthController {
   }
 
   @Public()
+  @Get('sentry')
+  @ApiOperation({ summary: 'Sentry integration status (no secrets)' })
+  getSentryStatus() {
+    return this.healthService.getSentryStatus();
+  }
+
+  @Public()
   @Get('sentry-test')
   @ApiOperation({ summary: 'Trigger a Sentry test error (non-production only)' })
   sentryTest() {
