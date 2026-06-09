@@ -7,12 +7,15 @@ import * as cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
+import { isSentryEnabled } from './common/sentry/sentry.util';
 import { AUTH_COOKIE_NAME } from './modules/auth/auth-cookie.util';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
-  app.useLogger(app.get(Logger));
+  const logger = app.get(Logger);
+  app.useLogger(logger);
+  logger.log(`Sentry enabled: ${isSentryEnabled()}`);
   app.use(cookieParser());
   app.use(helmet());
   app.enableCors({

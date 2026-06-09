@@ -3,7 +3,6 @@ import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { SentryGlobalFilter, SentryModule } from '@sentry/nestjs/setup';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
-import { isSentryEnabled } from './common/sentry/sentry.util';
 import { AppConfigModule } from './config/config.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
@@ -24,19 +23,9 @@ import { UsersModule } from './modules/users/users.module';
 import { ProcessorsModule } from './queues/processors/processors.module';
 import { QueuesModule } from './queues/queues.module';
 
-const sentryImports = isSentryEnabled() ? [SentryModule.forRoot()] : [];
-const sentryProviders = isSentryEnabled()
-  ? [
-      {
-        provide: APP_FILTER,
-        useClass: SentryGlobalFilter,
-      },
-    ]
-  : [];
-
 @Module({
   imports: [
-    ...sentryImports,
+    SentryModule.forRoot(),
     AppConfigModule,
     LoggerModule.forRoot({
       pinoHttp: {
@@ -70,7 +59,10 @@ const sentryProviders = isSentryEnabled()
     TrainingModule,
   ],
   providers: [
-    ...sentryProviders,
+    {
+      provide: APP_FILTER,
+      useClass: SentryGlobalFilter,
+    },
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

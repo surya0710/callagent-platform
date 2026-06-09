@@ -10,10 +10,7 @@ const SENSITIVE_KEYS = new Set([
 ]);
 
 export function isSentryEnabled(): boolean {
-  return (
-    process.env.SENTRY_ENABLED === 'true' &&
-    Boolean(process.env.SENTRY_DSN?.trim())
-  );
+  return process.env.SENTRY_ENABLED === 'true' && !!process.env.SENTRY_DSN;
 }
 
 export function isSentryTestAllowed(): boolean {
