@@ -2,6 +2,7 @@ import './instrument';
 
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { WsAdapter } from '@nestjs/platform-ws';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as cookieParser from 'cookie-parser';
 import helmet from 'helmet';
@@ -24,6 +25,7 @@ async function bootstrap() {
   });
 
   app.setGlobalPrefix('api');
+  app.useWebSocketAdapter(new WsAdapter(app));
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -55,6 +57,7 @@ async function bootstrap() {
     .addTag('Knowledge Base')
     .addTag('Tickets')
     .addTag('CX Agent')
+    .addTag('Voice')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

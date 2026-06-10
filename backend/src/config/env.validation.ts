@@ -17,6 +17,10 @@ export enum AiProviderType {
   MOCK = 'mock',
 }
 
+export enum VoiceRuntimeType {
+  MOCK = 'mock',
+}
+
 export class EnvironmentVariables {
   @IsEnum(['development', 'production', 'test'])
   NODE_ENV!: 'development' | 'production' | 'test';
@@ -113,6 +117,14 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   APP_VERSION?: string;
+
+  @IsOptional()
+  @IsEnum(VoiceRuntimeType)
+  VOICE_RUNTIME?: VoiceRuntimeType;
+
+  @IsOptional()
+  @IsString()
+  VOICE_WSS_BASE_URL?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

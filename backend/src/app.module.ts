@@ -23,6 +23,7 @@ import { HealthModule } from './modules/health/health.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { TrainingModule } from './modules/training/training.module';
 import { UsersModule } from './modules/users/users.module';
+import { VoiceModule } from './modules/voice/voice.module';
 import { ProcessorsModule } from './queues/processors/processors.module';
 import { QueuesModule } from './queues/queues.module';
 
@@ -63,6 +64,7 @@ import { QueuesModule } from './queues/queues.module';
     AuditLogsModule,
     IntegrationsModule,
     TrainingModule,
+    VoiceModule,
   ],
   providers: [
     {
