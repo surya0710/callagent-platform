@@ -1,6 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MockVoiceRuntimeProvider } from './runtime/mock-voice-runtime.provider';
 import { VoiceSessionService } from './voice-session.service';
+import { VoiceSocketRegistry } from './voice-socket.registry';
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
 
 @Injectable()
 export class SmartfloStreamAdapter {
@@ -8,71 +15,232 @@ export class SmartfloStreamAdapter {
 
   constructor(
     private readonly voiceSessionService: VoiceSessionService,
+    private readonly voiceSocketRegistry: VoiceSocketRegistry,
     private readonly mockVoiceRuntime: MockVoiceRuntimeProvider,
   ) {}
 
-  handleMessage(sessionId: string, raw: string): void {
+  handleMessage(socketSessionId: string, raw: string): void {
     let payload: Record<string, unknown>;
 
     try {
       payload = JSON.parse(raw) as Record<string, unknown>;
     } catch {
-      this.logger.warn({ sessionId, message: 'Invalid JSON in WebSocket message' });
+      this.logger.warn({
+        socketSessionId,
+        message: 'Invalid JSON in WebSocket message',
+      });
       return;
     }
 
-    this.logger.log({ sessionId, smartfloEvent: payload });
-
     const event = payload.event;
     if (typeof event !== 'string') {
-      this.logger.warn({ sessionId, message: 'Missing or invalid event field' });
+      this.logger.warn({
+        socketSessionId,
+        message: 'Missing or invalid event field',
+      });
       return;
     }
 
     switch (event) {
       case 'connected':
-        this.mockVoiceRuntime.onConnected(sessionId, payload);
+        this.handleConnected(socketSessionId, payload);
         break;
-
-      case 'start': {
-        const start = payload.start;
-        if (start && typeof start === 'object') {
-          const startObj = start as Record<string, unknown>;
-          this.voiceSessionService.update(sessionId, {
-            callSid:
-              typeof startObj.callSid === 'string' ? startObj.callSid : undefined,
-            streamSid:
-              typeof startObj.streamSid === 'string'
-                ? startObj.streamSid
-                : undefined,
-          });
-        }
-        this.mockVoiceRuntime.onStart(sessionId, payload);
+      case 'start':
+        this.handleStart(socketSessionId, payload);
         break;
-      }
-
       case 'media':
-        this.mockVoiceRuntime.onMedia(sessionId, payload.media);
+        this.handleMedia(socketSessionId, payload);
         break;
-
       case 'dtmf':
-        this.mockVoiceRuntime.onDtmf(sessionId, payload.dtmf);
+        this.handleDtmf(socketSessionId, payload);
         break;
-
       case 'mark':
-        this.mockVoiceRuntime.onMark(sessionId, payload.mark);
+        this.handleMark(socketSessionId, payload);
         break;
-
       case 'clear':
-        this.mockVoiceRuntime.onClear(sessionId, payload.clear);
+        this.handleClear(socketSessionId, payload);
         break;
-
       case 'stop':
-        this.mockVoiceRuntime.onStop(sessionId, payload);
+        this.handleStop(socketSessionId, payload);
         break;
-
       default:
-        this.logger.warn({ sessionId, message: `Unknown Smartflo event: ${event}` });
+        this.logger.warn({
+          socketSessionId,
+          message: `Unknown Smartflo event: ${event}`,
+        });
     }
+  }
+
+  private handleConnected(
+    socketSessionId: string,
+    payload: Record<string, unknown>,
+  ): void {
+    this.logger.log({ socketSessionId, smartfloEvent: payload });
+    this.mockVoiceRuntime.onConnected(socketSessionId);
+  }
+
+  private handleStart(
+    socketSessionId: string,
+    payload: Record<string, unknown>,
+  ): void {
+    const start = asRecord(payload.start) ?? {};
+    const streamSid =
+      (typeof start.streamSid === 'string' ? start.streamSid : undefined) ??
+      (typeof payload.streamSid === 'string' ? payload.streamSid : undefined);
+
+    if (!streamSid) {
+      this.logger.warn({
+        socketSessionId,
+        message: 'Start event missing streamSid',
+      });
+      return;
+    }
+
+    const startData = {
+      streamSid,
+      callSid: typeof start.callSid === 'string' ? start.callSid : undefined,
+      accountSid:
+        typeof start.accountSid === 'string' ? start.accountSid : undefined,
+      from: typeof start.from === 'string' ? start.from : undefined,
+      to: typeof start.to === 'string' ? start.to : undefined,
+      direction:
+        typeof start.direction === 'string' ? start.direction : undefined,
+      mediaFormat: start.mediaFormat,
+      customParameters: start.customParameters,
+    };
+
+    this.voiceSessionService.bindStreamSid(socketSessionId, startData);
+    this.voiceSocketRegistry.bindStreamSid(socketSessionId, streamSid);
+
+    this.logger.log({
+      socketSessionId,
+      streamSid,
+      smartfloEvent: payload,
+      message: 'Voice session bound to streamSid',
+    });
+
+    this.mockVoiceRuntime.onStart(streamSid, payload);
+  }
+
+  private handleMedia(
+    socketSessionId: string,
+    payload: Record<string, unknown>,
+  ): void {
+    const streamSid = this.voiceSessionService.resolveStreamSid(
+      payload.streamSid,
+      socketSessionId,
+    );
+
+    if (!streamSid) {
+      this.logger.warn({
+        socketSessionId,
+        message: 'Media event received before streamSid binding',
+      });
+      return;
+    }
+
+    const media = asRecord(payload.media);
+    const payloadStr =
+      media && typeof media.payload === 'string' ? media.payload : undefined;
+
+    this.mockVoiceRuntime.onMedia(streamSid, {
+      sequenceNumber: payload.sequenceNumber,
+      chunk: media?.chunk,
+      timestamp: media?.timestamp,
+      payloadLength: payloadStr?.length,
+    });
+  }
+
+  private handleDtmf(
+    socketSessionId: string,
+    payload: Record<string, unknown>,
+  ): void {
+    const streamSid = this.voiceSessionService.resolveStreamSid(
+      payload.streamSid,
+      socketSessionId,
+    );
+
+    if (!streamSid) {
+      this.logger.warn({
+        socketSessionId,
+        message: 'DTMF event received before streamSid binding',
+      });
+      return;
+    }
+
+    const dtmf = asRecord(payload.dtmf);
+    const digit = dtmf?.digit;
+    this.mockVoiceRuntime.onDtmf(streamSid, digit);
+  }
+
+  private handleMark(
+    socketSessionId: string,
+    payload: Record<string, unknown>,
+  ): void {
+    const streamSid = this.voiceSessionService.resolveStreamSid(
+      payload.streamSid,
+      socketSessionId,
+    );
+
+    if (!streamSid) {
+      this.logger.warn({
+        socketSessionId,
+        message: 'Mark event received before streamSid binding',
+      });
+      return;
+    }
+
+    const mark = asRecord(payload.mark);
+    this.mockVoiceRuntime.onMark(streamSid, mark?.name);
+  }
+
+  private handleClear(
+    socketSessionId: string,
+    payload: Record<string, unknown>,
+  ): void {
+    const streamSid = this.voiceSessionService.resolveStreamSid(
+      payload.streamSid,
+      socketSessionId,
+    );
+
+    if (!streamSid) {
+      this.logger.warn({
+        socketSessionId,
+        message: 'Clear event received before streamSid binding',
+      });
+      return;
+    }
+
+    this.mockVoiceRuntime.onClear(streamSid);
+  }
+
+  private handleStop(
+    socketSessionId: string,
+    payload: Record<string, unknown>,
+  ): void {
+    const streamSid = this.voiceSessionService.resolveStreamSid(
+      payload.streamSid,
+      socketSessionId,
+    );
+
+    if (!streamSid) {
+      this.logger.warn({
+        socketSessionId,
+        message: 'Stop event received before streamSid binding',
+      });
+      return;
+    }
+
+    const stop = asRecord(payload.stop);
+    this.mockVoiceRuntime.onStop(streamSid, stop?.reason);
+
+    this.voiceSessionService.endByStreamSid(streamSid);
+    this.voiceSocketRegistry.removeByStreamSid(streamSid);
+
+    this.logger.log({
+      socketSessionId,
+      streamSid,
+      message: 'Voice session ended on stop event',
+    });
   }
 }

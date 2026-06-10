@@ -1,47 +1,120 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 
+export type VoiceSessionState = 'pending' | 'active' | 'ended';
+
 export interface VoiceSession {
-  id: string;
-  token: string;
-  remoteAddress?: string;
-  startedAt: Date;
-  callSid?: string;
+  socketSessionId: string;
   streamSid?: string;
+  remoteAddress?: string;
+  connectedAt: Date;
+  callSid?: string;
+  accountSid?: string;
+  from?: string;
+  to?: string;
+  direction?: string;
+  mediaFormat?: unknown;
+  customParameters?: unknown;
+  state: VoiceSessionState;
+}
+
+export interface VoiceSessionStartData {
+  streamSid: string;
+  callSid?: string;
+  accountSid?: string;
+  from?: string;
+  to?: string;
+  direction?: string;
+  mediaFormat?: unknown;
+  customParameters?: unknown;
 }
 
 @Injectable()
 export class VoiceSessionService {
-  private readonly sessions = new Map<string, VoiceSession>();
+  private readonly bySocketSessionId = new Map<string, VoiceSession>();
+  private readonly byStreamSid = new Map<string, VoiceSession>();
+  private readonly socketToStreamSid = new Map<string, string>();
 
-  create(token: string, remoteAddress?: string): VoiceSession {
+  createSocketSession(remoteAddress?: string): VoiceSession {
+    const socketSessionId = randomUUID();
     const session: VoiceSession = {
-      id: randomUUID(),
-      token,
+      socketSessionId,
       remoteAddress,
-      startedAt: new Date(),
+      connectedAt: new Date(),
+      state: 'pending',
     };
-    this.sessions.set(session.id, session);
+    this.bySocketSessionId.set(socketSessionId, session);
     return session;
   }
 
-  get(id: string): VoiceSession | undefined {
-    return this.sessions.get(id);
+  getBySocketSessionId(socketSessionId: string): VoiceSession | undefined {
+    return this.bySocketSessionId.get(socketSessionId);
   }
 
-  update(
-    id: string,
-    partial: Partial<Pick<VoiceSession, 'callSid' | 'streamSid'>>,
+  getByStreamSid(streamSid: string): VoiceSession | undefined {
+    return this.byStreamSid.get(streamSid);
+  }
+
+  getStreamSidForSocket(socketSessionId: string): string | undefined {
+    return this.socketToStreamSid.get(socketSessionId);
+  }
+
+  bindStreamSid(
+    socketSessionId: string,
+    data: VoiceSessionStartData,
   ): VoiceSession | undefined {
-    const session = this.sessions.get(id);
+    const session = this.bySocketSessionId.get(socketSessionId);
     if (!session) {
       return undefined;
     }
-    Object.assign(session, partial);
+
+    session.streamSid = data.streamSid;
+    session.callSid = data.callSid;
+    session.accountSid = data.accountSid;
+    session.from = data.from;
+    session.to = data.to;
+    session.direction = data.direction;
+    session.mediaFormat = data.mediaFormat;
+    session.customParameters = data.customParameters;
+    session.state = 'active';
+
+    this.byStreamSid.set(data.streamSid, session);
+    this.socketToStreamSid.set(socketSessionId, data.streamSid);
     return session;
   }
 
-  end(id: string): void {
-    this.sessions.delete(id);
+  resolveStreamSid(
+    payloadStreamSid: unknown,
+    socketSessionId: string,
+  ): string | undefined {
+    if (typeof payloadStreamSid === 'string' && payloadStreamSid.length > 0) {
+      return payloadStreamSid;
+    }
+    return this.socketToStreamSid.get(socketSessionId);
+  }
+
+  endByStreamSid(streamSid: string): void {
+    const session = this.byStreamSid.get(streamSid);
+    if (!session) {
+      return;
+    }
+    this.cleanup(session);
+  }
+
+  endBySocketSessionId(socketSessionId: string): void {
+    const session = this.bySocketSessionId.get(socketSessionId);
+    if (!session) {
+      return;
+    }
+    this.cleanup(session);
+  }
+
+  private cleanup(session: VoiceSession): void {
+    session.state = 'ended';
+    this.bySocketSessionId.delete(session.socketSessionId);
+    if (session.streamSid) {
+      this.byStreamSid.delete(session.streamSid);
+      this.socketToStreamSid.delete(session.socketSessionId);
+    }
   }
 }

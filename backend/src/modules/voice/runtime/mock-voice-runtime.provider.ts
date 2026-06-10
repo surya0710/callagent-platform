@@ -4,39 +4,43 @@ import { Injectable, Logger } from '@nestjs/common';
 export class MockVoiceRuntimeProvider {
   private readonly logger = new Logger(MockVoiceRuntimeProvider.name);
 
-  onConnected(sessionId: string, payload: unknown): void {
-    this.logger.log({ sessionId, event: 'connected', payload });
+  onConnected(socketSessionId: string): void {
+    this.logger.log({
+      socketSessionId,
+      event: 'connected',
+      message: 'Smartflo handshake received',
+    });
   }
 
-  onStart(sessionId: string, payload: unknown): void {
-    this.logger.log({ sessionId, event: 'start', payload });
+  onStart(streamSid: string, payload: unknown): void {
+    this.logger.log({ streamSid, event: 'start', payload });
   }
 
-  onMedia(sessionId: string, media: unknown): void {
-    const payloadLength =
-      media &&
-      typeof media === 'object' &&
-      'payload' in media &&
-      typeof (media as { payload: unknown }).payload === 'string'
-        ? (media as { payload: string }).payload.length
-        : undefined;
-
-    this.logger.log({ sessionId, event: 'media', payloadLength });
+  onMedia(
+    streamSid: string,
+    details: {
+      sequenceNumber?: unknown;
+      chunk?: unknown;
+      timestamp?: unknown;
+      payloadLength?: number;
+    },
+  ): void {
+    this.logger.log({ streamSid, event: 'media', ...details });
   }
 
-  onDtmf(sessionId: string, dtmf: unknown): void {
-    this.logger.log({ sessionId, event: 'dtmf', dtmf });
+  onDtmf(streamSid: string, digit: unknown): void {
+    this.logger.log({ streamSid, event: 'dtmf', digit });
   }
 
-  onMark(sessionId: string, mark: unknown): void {
-    this.logger.log({ sessionId, event: 'mark', mark });
+  onMark(streamSid: string, name: unknown): void {
+    this.logger.log({ streamSid, event: 'mark', name });
   }
 
-  onClear(sessionId: string, clear: unknown): void {
-    this.logger.log({ sessionId, event: 'clear', clear });
+  onClear(streamSid: string): void {
+    this.logger.log({ streamSid, event: 'clear' });
   }
 
-  onStop(sessionId: string, payload: unknown): void {
-    this.logger.log({ sessionId, event: 'stop', payload });
+  onStop(streamSid: string, reason: unknown): void {
+    this.logger.log({ streamSid, event: 'stop', reason });
   }
 }

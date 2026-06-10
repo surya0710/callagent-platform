@@ -1,10 +1,4 @@
-import {
-  Controller,
-  Headers,
-  HttpCode,
-  Post,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Controller, HttpCode, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../common/decorators/public.decorator';
 
@@ -17,22 +11,13 @@ export class VoiceController {
   @Post('resolve')
   @HttpCode(200)
   @ApiOperation({ summary: 'Smartflo dynamic WebSocket URL resolver' })
-  resolve(@Headers('authorization') authorization?: string) {
-    if (!authorization?.startsWith('Bearer ')) {
-      throw new UnauthorizedException();
-    }
-
-    const token = authorization.slice('Bearer '.length).trim();
-    if (!token) {
-      throw new UnauthorizedException();
-    }
-
-    const wssBaseUrl =
+  resolve() {
+    const wssUrl =
       process.env.VOICE_WSS_BASE_URL?.trim() || DEFAULT_WSS_BASE_URL;
 
     return {
       success: true,
-      wss_url: `${wssBaseUrl}?token=${encodeURIComponent(token)}`,
+      wss_url: wssUrl,
     };
   }
 }
