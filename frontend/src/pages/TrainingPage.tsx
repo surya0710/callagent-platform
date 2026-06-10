@@ -10,11 +10,48 @@ interface TrainingRecording {
   id: string;
   originalFileName: string;
   status: string;
+  language?: string;
   labelOutcome?: string;
   transcript?: string;
   redactedTranscript?: string;
   trainingApproved: boolean;
+  errorMessage?: string;
   createdAt: string;
+}
+
+function isTranscribed(recording: TrainingRecording) {
+  return Boolean(
+    recording.transcript &&
+      (recording.status === 'transcribed' || recording.status === 'approved'),
+  );
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'response' in error &&
+    typeof (error as { response?: { data?: { message?: string | string[] } } }).response?.data
+      ?.message === 'string'
+  ) {
+    return (error as { response: { data: { message: string } } }).response.data.message;
+  }
+
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'response' in error &&
+    Array.isArray(
+      (error as { response?: { data?: { message?: string | string[] } } }).response?.data
+        ?.message,
+    )
+  ) {
+    return (
+      (error as { response: { data: { message: string[] } } }).response.data.message as string[]
+    ).join(', ');
+  }
+
+  return fallback;
 }
 
 interface TrainingDataset {
@@ -40,9 +77,14 @@ interface TrainingJob {
 export function TrainingPage() {
   const queryClient = useQueryClient();
   const [approveRecording, setApproveRecording] = useState<TrainingRecording | null>(null);
+  const [editRecording, setEditRecording] = useState<TrainingRecording | null>(null);
   const [uploadError, setUploadError] = useState('');
   const [approveError, setApproveError] = useState('');
+  const [editError, setEditError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
   const [datasetError, setDatasetError] = useState('');
+  const [transcribeError, setTranscribeError] = useState('');
+  const [transcribingId, setTranscribingId] = useState<string | null>(null);
 
   const recordings = useQuery({
     queryKey: ['training-recordings'],
@@ -79,7 +121,55 @@ export function TrainingPage() {
 
   const transcribeMutation = useMutation({
     mutationFn: (id: string) => api.post(`/training/recordings/${id}/transcribe`),
-    onSuccess: invalidateTraining,
+    onMutate: (id) => {
+      setTranscribingId(id);
+      setTranscribeError('');
+    },
+    onSuccess: () => {
+      setTranscribeError('');
+      invalidateTraining();
+    },
+    onError: (error) => {
+      setTranscribeError(getApiErrorMessage(error, 'Transcription failed'));
+    },
+    onSettled: () => {
+      setTranscribingId(null);
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: {
+        language?: string;
+        labelOutcome?: string;
+        transcript?: string;
+        redactedTranscript?: string;
+        resetTranscription?: boolean;
+      };
+    }) => api.patch(`/training/recordings/${id}`, body),
+    onSuccess: () => {
+      setEditError('');
+      setEditRecording(null);
+      invalidateTraining();
+    },
+    onError: (error) => {
+      setEditError(getApiErrorMessage(error, 'Failed to update recording'));
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/training/recordings/${id}`),
+    onSuccess: () => {
+      setDeleteError('');
+      invalidateTraining();
+    },
+    onError: (error) => {
+      setDeleteError(getApiErrorMessage(error, 'Failed to delete recording'));
+    },
   });
 
   const approveMutation = useMutation({
@@ -125,6 +215,40 @@ export function TrainingPage() {
     e.currentTarget.reset();
   };
 
+  const handleEdit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!editRecording) return;
+    const fd = new FormData(e.currentTarget);
+    const resetTranscription = fd.get('resetTranscription') === 'on';
+
+    updateMutation.mutate({
+      id: editRecording.id,
+      body: {
+        language: (fd.get('language') as string) || undefined,
+        labelOutcome: (fd.get('labelOutcome') as string) || undefined,
+        transcript: resetTranscription
+          ? undefined
+          : (fd.get('transcript') as string) || undefined,
+        redactedTranscript: resetTranscription
+          ? undefined
+          : (fd.get('redactedTranscript') as string) || undefined,
+        resetTranscription,
+      },
+    });
+  };
+
+  const handleDelete = (recording: TrainingRecording) => {
+    if (
+      !window.confirm(
+        `Delete "${recording.originalFileName}"? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    deleteMutation.mutate(recording.id);
+  };
+
   const handleApprove = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!approveRecording) return;
@@ -160,7 +284,11 @@ export function TrainingPage() {
         <form onSubmit={handleUpload} className="grid gap-4 md:grid-cols-[1fr_160px_160px_auto]">
           {uploadError && <div className="md:col-span-4"><ErrorState message={uploadError} /></div>}
           <Input label="Recording" name="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.webm,.mp4" required />
-          <Input label="Language" name="language" placeholder="en" />
+          <Input
+            label="Language"
+            name="language"
+            placeholder="en, hi (leave empty to auto-detect)"
+          />
           <Input label="Outcome" name="labelOutcome" placeholder="interested" />
           <div className="flex items-end">
             <Button type="submit" disabled={uploadMutation.isPending}>
@@ -171,30 +299,66 @@ export function TrainingPage() {
       </Card>
 
       <Card title="Recordings">
+        {transcribeError && <div className="mb-4"><ErrorState message={transcribeError} /></div>}
+        {deleteError && <div className="mb-4"><ErrorState message={deleteError} /></div>}
         <Table headers={['File', 'Status', 'Outcome', 'Approved', 'Actions']} empty={!recordings.data?.length}>
-          {recordings.data?.map((recording) => (
-            <tr key={recording.id} className="text-slate-300">
-              <td className="px-4 py-3">{recording.originalFileName}</td>
-              <td className="px-4 py-3">{recording.status}</td>
-              <td className="px-4 py-3">{recording.labelOutcome ?? '-'}</td>
-              <td className="px-4 py-3">{recording.trainingApproved ? 'Yes' : 'No'}</td>
-              <td className="space-x-3 px-4 py-3">
-                <button
-                  onClick={() => transcribeMutation.mutate(recording.id)}
-                  className="text-indigo-400 hover:underline"
-                  disabled={transcribeMutation.isPending}
-                >
-                  Transcribe
-                </button>
-                <button
-                  onClick={() => setApproveRecording(recording)}
-                  className="text-indigo-400 hover:underline"
-                >
-                  Approve
-                </button>
-              </td>
-            </tr>
-          ))}
+          {recordings.data?.map((recording) => {
+            const transcribed = isTranscribed(recording);
+            const isTranscribing = transcribingId === recording.id;
+            const canTranscribe = !transcribed && !isTranscribing;
+
+            return (
+              <tr key={recording.id} className="text-slate-300">
+                <td className="px-4 py-3">{recording.originalFileName}</td>
+                <td className="px-4 py-3">
+                  <div>{recording.status}</div>
+                  {recording.errorMessage && (
+                    <div className="mt-1 text-xs text-red-300">{recording.errorMessage}</div>
+                  )}
+                </td>
+                <td className="px-4 py-3">{recording.labelOutcome ?? '-'}</td>
+                <td className="px-4 py-3">{recording.trainingApproved ? 'Yes' : 'No'}</td>
+                <td className="space-x-3 px-4 py-3">
+                  {isTranscribing ? (
+                    <span className="inline-flex items-center gap-2 text-amber-300">
+                      <span className="h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-transparent" />
+                      Transcribing...
+                    </span>
+                  ) : transcribed ? (
+                    <span className="text-slate-500">Transcribed</span>
+                  ) : (
+                    <button
+                      onClick={() => transcribeMutation.mutate(recording.id)}
+                      className="text-indigo-400 hover:underline disabled:cursor-not-allowed disabled:text-slate-500"
+                      disabled={!canTranscribe || transcribeMutation.isPending}
+                    >
+                      {recording.status === 'failed' ? 'Retry Transcribe' : 'Transcribe'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setApproveRecording(recording)}
+                    className="text-indigo-400 hover:underline disabled:cursor-not-allowed disabled:text-slate-500"
+                    disabled={!transcribed}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => setEditRecording(recording)}
+                    className="text-indigo-400 hover:underline"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(recording)}
+                    className="text-red-400 hover:underline disabled:cursor-not-allowed disabled:text-slate-500"
+                    disabled={deleteMutation.isPending}
+                  >
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </Table>
       </Card>
 
@@ -255,6 +419,42 @@ export function TrainingPage() {
           ))}
         </Table>
       </Card>
+
+      <Modal title="Edit Recording" open={Boolean(editRecording)} onClose={() => setEditRecording(null)}>
+        <form onSubmit={handleEdit} className="space-y-4">
+          {editError && <ErrorState message={editError} />}
+          <Input
+            label="Language"
+            name="language"
+            placeholder="en, hi (leave empty to auto-detect)"
+            defaultValue={editRecording?.language ?? ''}
+          />
+          <Input
+            label="Outcome"
+            name="labelOutcome"
+            defaultValue={editRecording?.labelOutcome ?? ''}
+          />
+          <Textarea
+            label="Transcript"
+            name="transcript"
+            rows={6}
+            defaultValue={editRecording?.transcript ?? ''}
+          />
+          <Textarea
+            label="Redacted Transcript"
+            name="redactedTranscript"
+            rows={6}
+            defaultValue={editRecording?.redactedTranscript ?? ''}
+          />
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input type="checkbox" name="resetTranscription" className="rounded border-slate-600" />
+            Reset transcription and allow re-transcribe
+          </label>
+          <Button type="submit" disabled={updateMutation.isPending}>
+            {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
+          </Button>
+        </form>
+      </Modal>
 
       <Modal title="Approve Training Example" open={Boolean(approveRecording)} onClose={() => setApproveRecording(null)}>
         <form onSubmit={handleApprove} className="space-y-4">
