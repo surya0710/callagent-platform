@@ -52,6 +52,9 @@ async function bootstrap() {
     .addTag('Analytics')
     .addTag('Integrations')
     .addTag('Training')
+    .addTag('Knowledge Base')
+    .addTag('Tickets')
+    .addTag('CX Agent')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

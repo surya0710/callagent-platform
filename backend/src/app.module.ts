@@ -9,7 +9,10 @@ import { PermissionsGuard } from './common/guards/permissions.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { DatabaseModule } from './database/database.module';
 import { AgentPromptsModule } from './modules/agent-prompts/agent-prompts.module';
+import { AiAgentsModule } from './modules/ai-agents/ai-agents.module';
 import { AiModule } from './modules/ai/ai.module';
+import { KnowledgeBaseModule } from './modules/knowledge-base/knowledge-base.module';
+import { TicketsModule } from './modules/tickets/tickets.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AuditLogsModule } from './modules/audit-logs/audit-logs.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -54,6 +57,9 @@ import { QueuesModule } from './queues/queues.module';
     AnalyticsModule,
     AgentPromptsModule,
     AiModule,
+    KnowledgeBaseModule,
+    TicketsModule,
+    AiAgentsModule,
     AuditLogsModule,
     IntegrationsModule,
     TrainingModule,

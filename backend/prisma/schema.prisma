@@ -111,6 +111,20 @@ enum TrainingJobStatus {
   cancelled
 }
 
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  ESCALATED
+}
+
+enum TicketSource {
+  cx_call
+  manual
+  integration
+}
+
 model User {
   id           String     @id @default(uuid())
   email        String     @unique
@@ -194,6 +208,7 @@ model Customer {
 
   campaigns CampaignCustomer[]
   calls     Call[]
+  tickets   Ticket[]
 
   @@index([phone])
   @@index([status])
@@ -282,6 +297,7 @@ model Call {
   transcript CallTranscript?
   summary    CallSummary?
   trainingRecordings TrainingRecording[]
+  tickets    Ticket[]
 
   @@unique([apiKeyId, externalRef])
   @@index([status])
@@ -471,4 +487,79 @@ model TrainingJob {
   @@index([createdById])
   @@index([createdAt])
   @@map("training_jobs")
+}
+
+model KnowledgeBaseEntry {
+  id         String   @id @default(uuid())
+  title      String
+  content    String   @db.Text
+  department String
+  category   String
+  tags       Json?
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([department])
+  @@index([category])
+  @@index([isActive])
+  @@map("knowledge_base_entries")
+}
+
+model Ticket {
+  id            String       @id @default(uuid())
+  customerId    String       @map("customer_id")
+  callId        String?      @map("call_id")
+  issueCategory String       @map("issue_category")
+  issueSummary  String?      @map("issue_summary") @db.Text
+  priority      String       @default("medium")
+  status        TicketStatus @default(OPEN)
+  source        TicketSource @default(cx_call)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id])
+  call     Call?    @relation(fields: [callId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([callId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("tickets")
+}
+
+model ConversationExample {
+  id            String   @id @default(uuid())
+  title         String
+  department    String
+  transcript    String   @db.LongText
+  summary       String?  @db.Text
+  goodPractices String?  @map("good_practices") @db.Text
+  badPractices  String?  @map("bad_practices") @db.Text
+  tags          Json?
+  isApproved    Boolean  @default(false) @map("is_approved")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([department])
+  @@index([isApproved])
+  @@map("conversation_examples")
+}
+
+model AgentActionEvent {
+  id         String   @id @default(uuid())
+  department String
+  action     String
+  callId     String?  @map("call_id")
+  customerId String?  @map("customer_id")
+  ticketId   String?  @map("ticket_id")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([department])
+  @@index([action])
+  @@index([customerId])
+  @@index([callId])
+  @@index([createdAt])
+  @@map("agent_action_events")
 }
