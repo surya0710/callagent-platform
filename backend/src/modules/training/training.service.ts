@@ -11,15 +11,17 @@ import {
   TrainingRecordingStatus,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { ApproveRecordingDto } from './dto/approve-recording.dto';
 import { CreateTrainingDatasetDto } from './dto/create-dataset.dto';
 import { StartFineTuneDto } from './dto/start-fine-tune.dto';
+import { UpdateRecordingDto } from './dto/update-recording.dto';
 import { UploadRecordingDto } from './dto/upload-recording.dto';
 import { TrainingProviderFactory } from './training-provider.factory';
+import { normalizeTranscriptionLanguage } from './utils/transcription-language.util';
 
 export interface UploadedAudioFile {
   originalname: string;
@@ -81,7 +83,7 @@ export class TrainingService {
         mimeType: file.mimetype,
         storagePath: relativePath,
         sizeBytes: file.size,
-        language: dto.language,
+        language: normalizeTranscriptionLanguage(dto.language),
         labelOutcome: dto.labelOutcome,
         uploadedById: userId,
       },
@@ -132,7 +134,7 @@ export class TrainingService {
         filePath: this.toAbsolutePath(recording.storagePath),
         fileName: recording.originalFileName,
         mimeType: recording.mimeType,
-        language: recording.language ?? undefined,
+        language: normalizeTranscriptionLanguage(recording.language),
       });
 
       const redactedTranscript = this.redactSensitiveData(output.text);
@@ -195,6 +197,93 @@ export class TrainingService {
     });
 
     return updated;
+  }
+
+  async updateRecording(id: string, dto: UpdateRecordingDto, userId: string) {
+    const recording = await this.findRecording(id);
+
+    const data: {
+      language?: string | null;
+      labelOutcome?: string | null;
+      transcript?: string | null;
+      redactedTranscript?: string | null;
+      status?: TrainingRecordingStatus;
+      trainingApproved?: boolean;
+      expectedResponse?: string | null;
+      errorMessage?: string | null;
+    } = {};
+
+    if (dto.language !== undefined) {
+      data.language = normalizeTranscriptionLanguage(dto.language) ?? null;
+    }
+
+    if (dto.labelOutcome !== undefined) {
+      data.labelOutcome = dto.labelOutcome || null;
+    }
+
+    if (dto.resetTranscription) {
+      data.transcript = null;
+      data.redactedTranscript = null;
+      data.expectedResponse = null;
+      data.trainingApproved = false;
+      data.errorMessage = null;
+      data.status = TrainingRecordingStatus.uploaded;
+    } else {
+      if (dto.transcript !== undefined) {
+        data.transcript = dto.transcript || null;
+        if (dto.transcript) {
+          data.status = TrainingRecordingStatus.transcribed;
+          data.trainingApproved = false;
+        }
+      }
+
+      if (dto.redactedTranscript !== undefined) {
+        data.redactedTranscript = dto.redactedTranscript
+          ? this.redactSensitiveData(dto.redactedTranscript)
+          : null;
+      }
+    }
+
+    const updated = await this.prisma.trainingRecording.update({
+      where: { id },
+      data,
+    });
+
+    await this.auditLogsService.log({
+      userId,
+      action: 'update',
+      entityType: 'training_recording',
+      entityId: id,
+      metadata: {
+        resetTranscription: dto.resetTranscription ?? false,
+        fields: Object.keys(dto),
+      },
+    });
+
+    return updated;
+  }
+
+  async deleteRecording(id: string, userId: string) {
+    const recording = await this.findRecording(id);
+    const absolutePath = this.toAbsolutePath(recording.storagePath);
+
+    await this.prisma.trainingRecording.delete({ where: { id } });
+
+    try {
+      await unlink(absolutePath);
+    } catch {
+      // File may already be missing on disk
+    }
+
+    await this.auditLogsService.log({
+      userId,
+      action: 'delete',
+      entityType: 'training_recording',
+      entityId: id,
+      metadata: { originalFileName: recording.originalFileName },
+    });
+
+    return { deleted: true };
   }
 
   listDatasets() {

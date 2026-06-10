@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -23,6 +24,7 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { ApproveRecordingDto } from './dto/approve-recording.dto';
 import { CreateTrainingDatasetDto } from './dto/create-dataset.dto';
 import { StartFineTuneDto } from './dto/start-fine-tune.dto';
+import { UpdateRecordingDto } from './dto/update-recording.dto';
 import { UploadRecordingDto } from './dto/upload-recording.dto';
 import { TrainingService, UploadedAudioFile } from './training.service';
 
@@ -87,6 +89,27 @@ export class TrainingController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.trainingService.approveRecording(id, dto, user.id);
+  }
+
+  @Patch('recordings/:id')
+  @RequirePermissions(PERMISSIONS.TRAINING_WRITE)
+  @ApiOperation({ summary: 'Update recording metadata or transcript' })
+  updateRecording(
+    @Param('id') id: string,
+    @Body() dto: UpdateRecordingDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.trainingService.updateRecording(id, dto, user.id);
+  }
+
+  @Delete('recordings/:id')
+  @RequirePermissions(PERMISSIONS.TRAINING_WRITE)
+  @ApiOperation({ summary: 'Delete an uploaded recording' })
+  deleteRecording(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.trainingService.deleteRecording(id, user.id);
   }
 
   @Get('datasets')
