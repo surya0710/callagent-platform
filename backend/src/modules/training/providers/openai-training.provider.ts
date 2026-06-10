@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { readFile } from 'node:fs/promises';
+import * as path from 'node:path';
 import {
   FineTuneJobOutput,
   StartFineTuneInput,
@@ -35,24 +36,47 @@ export class OpenAiTrainingProvider implements TrainingProvider {
 
   async transcribeAudio(input: TranscribeAudioInput): Promise<TranscribeAudioOutput> {
     const apiKey = this.configService.get<string>('OPENAI_API_KEY');
-    const model =
-      this.configService.get<string>('OPENAI_TRANSCRIPTION_MODEL') ??
-      'gpt-4o-transcribe';
+    const configuredModel =
+      this.configService.get<string>('OPENAI_TRANSCRIPTION_MODEL') ?? 'whisper-1';
 
     if (!apiKey) {
       this.logger.warn('OPENAI_API_KEY not set; returning placeholder transcript');
       return {
         text: `[openai-transcription-placeholder] ${input.fileName}`,
         provider: this.name,
-        model,
+        model: configuredModel,
       };
     }
 
+    const modelsToTry = [...new Set([configuredModel, 'whisper-1'])];
+    let lastError = 'OpenAI transcription failed';
+
+    for (const model of modelsToTry) {
+      try {
+        return await this.requestTranscription(apiKey, model, input);
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : lastError;
+        if (model === modelsToTry[modelsToTry.length - 1]) {
+          throw new Error(lastError);
+        }
+        this.logger.warn(`Transcription failed with model ${model}; trying fallback`);
+      }
+    }
+
+    throw new Error(lastError);
+  }
+
+  private async requestTranscription(
+    apiKey: string,
+    model: string,
+    input: TranscribeAudioInput,
+  ): Promise<TranscribeAudioOutput> {
     const fileBuffer = await readFile(input.filePath);
+    const mimeType = this.resolveMimeType(input.fileName, input.mimeType);
     const form = new FormData();
     form.append(
       'file',
-      new Blob([new Uint8Array(fileBuffer)], { type: input.mimeType }),
+      new Blob([new Uint8Array(fileBuffer)], { type: mimeType }),
       input.fileName,
     );
     form.append('model', model);
@@ -70,15 +94,57 @@ export class OpenAiTrainingProvider implements TrainingProvider {
     if (!response.ok) {
       const errorBody = await response.text();
       this.logger.error(`OpenAI transcription failed ${response.status}: ${errorBody}`);
-      throw new Error(`OpenAI transcription failed with status ${response.status}`);
+      throw new Error(this.parseOpenAiError(errorBody, response.status));
     }
 
     const data = (await response.json()) as OpenAiTranscriptionResponse;
+    const text = data.text?.trim() ?? '';
+
+    if (!text) {
+      throw new Error('OpenAI returned an empty transcript');
+    }
+
     return {
-      text: data.text?.trim() ?? '',
+      text,
       provider: this.name,
       model,
     };
+  }
+
+  private resolveMimeType(fileName: string, mimeType: string): string {
+    if (mimeType && mimeType !== 'application/octet-stream') {
+      return mimeType;
+    }
+
+    const extension = path.extname(fileName).toLowerCase();
+    const mimeByExtension: Record<string, string> = {
+      '.flac': 'audio/flac',
+      '.mp3': 'audio/mpeg',
+      '.mp4': 'audio/mp4',
+      '.mpeg': 'audio/mpeg',
+      '.mpga': 'audio/mpeg',
+      '.m4a': 'audio/mp4',
+      '.ogg': 'audio/ogg',
+      '.wav': 'audio/wav',
+      '.webm': 'audio/webm',
+    };
+
+    return mimeByExtension[extension] ?? 'audio/mpeg';
+  }
+
+  private parseOpenAiError(errorBody: string, status: number): string {
+    try {
+      const parsed = JSON.parse(errorBody) as {
+        error?: { message?: string };
+      };
+      if (parsed.error?.message) {
+        return `OpenAI transcription failed (${status}): ${parsed.error.message}`;
+      }
+    } catch {
+      // fall through to generic message
+    }
+
+    return `OpenAI transcription failed with status ${status}`;
   }
 
   async uploadTrainingFile(input: UploadTrainingFileInput): Promise<UploadTrainingFileOutput> {

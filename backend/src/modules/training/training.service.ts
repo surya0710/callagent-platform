@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -10,7 +11,7 @@ import {
   TrainingRecordingStatus,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
@@ -100,6 +101,23 @@ export class TrainingService {
   async transcribeRecording(id: string, userId: string) {
     const recording = await this.findRecording(id);
 
+    if (
+      recording.transcript &&
+      (recording.status === TrainingRecordingStatus.transcribed ||
+        recording.status === TrainingRecordingStatus.approved)
+    ) {
+      return recording;
+    }
+
+    const absolutePath = this.toAbsolutePath(recording.storagePath);
+    try {
+      await access(absolutePath);
+    } catch {
+      throw new BadRequestException(
+        'Audio file not found on server. Please re-upload the recording.',
+      );
+    }
+
     await this.prisma.trainingRecording.update({
       where: { id },
       data: {
@@ -145,7 +163,7 @@ export class TrainingService {
           errorMessage: message,
         },
       });
-      throw error;
+      throw new BadGatewayException(message);
     }
   }
 
