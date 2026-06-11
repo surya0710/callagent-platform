@@ -15,6 +15,7 @@ import { LoginPage } from './pages/LoginPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrainingPage } from './pages/TrainingPage';
 import { UsersPage } from './pages/UsersPage';
+import { VoiceSessionsPage } from './pages/VoiceSessionsPage';
 
 export function App() {
   return (
@@ -36,6 +37,7 @@ export function App() {
             <Route path="campaigns/:id" element={<CampaignDetailPage />} />
             <Route path="calls" element={<CallsPage />} />
             <Route path="calls/:id" element={<CallDetailPage />} />
+            <Route path="voice/sessions" element={<VoiceSessionsPage />} />
             <Route path="agent-prompts" element={<AgentPromptsPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="training" element={<TrainingPage />} />
