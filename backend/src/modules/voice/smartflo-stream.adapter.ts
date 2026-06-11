@@ -75,6 +75,7 @@ export class SmartfloStreamAdapter {
     socketSessionId: string,
     payload: Record<string, unknown>,
   ): void {
+    this.voiceSessionService.recordConnected(socketSessionId);
     this.logger.log({ socketSessionId, smartfloEvent: payload });
     this.mockVoiceRuntime.onConnected(socketSessionId);
   }
@@ -143,6 +144,8 @@ export class SmartfloStreamAdapter {
     const payloadStr =
       media && typeof media.payload === 'string' ? media.payload : undefined;
 
+    this.voiceSessionService.recordMedia(socketSessionId, payload);
+
     this.mockVoiceRuntime.onMedia(streamSid, {
       sequenceNumber: payload.sequenceNumber,
       chunk: media?.chunk,
@@ -170,6 +173,8 @@ export class SmartfloStreamAdapter {
 
     const dtmf = asRecord(payload.dtmf);
     const digit = dtmf?.digit;
+
+    this.voiceSessionService.recordDtmf(socketSessionId, payload);
     this.mockVoiceRuntime.onDtmf(streamSid, digit);
   }
 
@@ -191,6 +196,8 @@ export class SmartfloStreamAdapter {
     }
 
     const mark = asRecord(payload.mark);
+
+    this.voiceSessionService.recordMark(socketSessionId, payload);
     this.mockVoiceRuntime.onMark(streamSid, mark?.name);
   }
 
@@ -211,6 +218,7 @@ export class SmartfloStreamAdapter {
       return;
     }
 
+    this.voiceSessionService.recordClear(socketSessionId, payload);
     this.mockVoiceRuntime.onClear(streamSid);
   }
 
@@ -232,9 +240,12 @@ export class SmartfloStreamAdapter {
     }
 
     const stop = asRecord(payload.stop);
+    const stopReason =
+      typeof stop?.reason === 'string' ? stop.reason : null;
+
     this.mockVoiceRuntime.onStop(streamSid, stop?.reason);
 
-    this.voiceSessionService.endByStreamSid(streamSid);
+    this.voiceSessionService.endByStreamSid(streamSid, stopReason);
     this.voiceSocketRegistry.removeByStreamSid(streamSid);
 
     this.logger.log({
