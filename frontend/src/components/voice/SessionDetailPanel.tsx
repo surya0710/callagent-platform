@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { VoiceSession } from '../../types/voice';
+import { VoiceSession, voiceRecordingDownloadUrl } from '../../types/voice';
 import {
   formatDateTime,
   safeValue,
@@ -149,6 +149,44 @@ export function SessionDetailPanel({
             <DetailRow label="Sample Rate" value={safeValue(session.mediaFormat?.sampleRate)} />
             <DetailRow label="Bit Rate" value={safeValue(session.mediaFormat?.bitRate)} />
             <DetailRow label="Bit Depth" value={safeValue(session.mediaFormat?.bitDepth)} />
+          </Section>
+
+          <Section title="Recording">
+            <DetailRow
+              label="Available"
+              value={session.recordingAvailable ? 'Yes' : 'No'}
+            />
+            <DetailRow
+              label="File Name"
+              value={safeValue(session.recordingFileName)}
+            />
+            <DetailRow
+              label="Duration (est.)"
+              value={
+                session.recordingDurationMsEstimate != null
+                  ? `${session.recordingDurationMsEstimate} ms`
+                  : '—'
+              }
+            />
+            <DetailRow
+              label="μ-law Bytes"
+              value={safeValue(session.recordingMulawBytes)}
+            />
+            <DetailRow
+              label="WAV Bytes"
+              value={safeValue(session.recordingWavBytes)}
+            />
+            {session.recordingAvailable && session.streamSid && (
+              <div className="sm:col-span-2">
+                <a
+                  href={voiceRecordingDownloadUrl(session.streamSid)}
+                  className="inline-flex items-center rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-sm text-indigo-300 hover:bg-indigo-500/20"
+                  download
+                >
+                  Download WAV
+                </a>
+              </div>
+            )}
           </Section>
 
           {customParams && (

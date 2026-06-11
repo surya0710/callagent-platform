@@ -72,6 +72,37 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
+    const session = this.voiceSessionService.getBySocketSessionId(socketSessionId);
+    const streamSid = session?.streamSid;
+
+    if (
+      streamSid &&
+      session &&
+      (session.status === 'ACTIVE' || session.status === 'PENDING')
+    ) {
+      void this.finalizeAndDisconnect(socketSessionId, streamSid, session.callSid);
+      return;
+    }
+
+    this.voiceSessionService.endBySocketSessionId(socketSessionId);
+    this.voiceSocketRegistry.removeBySocketSessionId(socketSessionId);
+
+    this.logger.log({
+      socketSessionId,
+      message: 'Smartflo WebSocket disconnected',
+    });
+  }
+
+  private async finalizeAndDisconnect(
+    socketSessionId: string,
+    streamSid: string,
+    callSid?: string,
+  ): Promise<void> {
+    await this.smartfloStreamAdapter.finalizeRecordingForStreamAsync(
+      streamSid,
+      callSid,
+    );
+
     this.voiceSessionService.endBySocketSessionId(socketSessionId);
     this.voiceSocketRegistry.removeBySocketSessionId(socketSessionId);
 

@@ -27,6 +27,11 @@ export interface VoiceSession {
   marksReceived: string[];
   stopReason?: string | null;
   remoteAddress?: string;
+  recordingAvailable?: boolean;
+  recordingFileName?: string;
+  recordingDurationMsEstimate?: number;
+  recordingMulawBytes?: number;
+  recordingWavBytes?: number;
 }
 
 export interface VoiceSessionStartData {
@@ -64,6 +69,11 @@ export interface VoiceSessionResponse {
   marksReceived: string[];
   stopReason?: string | null;
   remoteAddress?: string;
+  recordingAvailable?: boolean;
+  recordingFileName?: string;
+  recordingDurationMsEstimate?: number;
+  recordingMulawBytes?: number;
+  recordingWavBytes?: number;
 }
 
 const MAX_RECENT_ENDED_SESSIONS = 100;
@@ -102,6 +112,11 @@ export function toVoiceSessionResponse(
     marksReceived: [...session.marksReceived],
     stopReason: session.stopReason ?? null,
     remoteAddress: session.remoteAddress,
+    recordingAvailable: session.recordingAvailable ?? false,
+    recordingFileName: session.recordingFileName,
+    recordingDurationMsEstimate: session.recordingDurationMsEstimate,
+    recordingMulawBytes: session.recordingMulawBytes,
+    recordingWavBytes: session.recordingWavBytes,
   };
 }
 
@@ -326,6 +341,27 @@ export class VoiceSessionService {
 
     session.lastEvent = 'clear';
     session.lastEventAt = new Date();
+  }
+
+  attachRecordingMetadata(
+    streamSid: string,
+    metadata: {
+      fileName: string;
+      durationMsEstimate: number;
+      mulawBytes: number;
+      wavBytes: number;
+    },
+  ): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    session.recordingAvailable = true;
+    session.recordingFileName = metadata.fileName;
+    session.recordingDurationMsEstimate = metadata.durationMsEstimate;
+    session.recordingMulawBytes = metadata.mulawBytes;
+    session.recordingWavBytes = metadata.wavBytes;
   }
 
   endByStreamSid(streamSid: string, stopReason?: string | null): void {

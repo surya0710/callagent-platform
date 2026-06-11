@@ -21,6 +21,11 @@ export enum VoiceRuntimeType {
   MOCK = 'mock',
 }
 
+export enum VoiceRecordingStorageDriver {
+  LOCAL = 'local',
+  S3 = 's3',
+}
+
 export class EnvironmentVariables {
   @IsEnum(['development', 'production', 'test'])
   NODE_ENV!: 'development' | 'production' | 'test';
@@ -125,6 +130,18 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   VOICE_WSS_BASE_URL?: string;
+
+  @IsOptional()
+  @IsEnum(VoiceRecordingStorageDriver)
+  VOICE_RECORDINGS_STORAGE_DRIVER?: VoiceRecordingStorageDriver;
+
+  @IsOptional()
+  @IsString()
+  VOICE_RECORDINGS_STORAGE_PATH?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_RECORDINGS_S3_BUCKET?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

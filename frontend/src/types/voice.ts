@@ -31,6 +31,11 @@ export interface VoiceSession {
   marksReceived?: string[];
   stopReason?: string | null;
   remoteAddress?: string;
+  recordingAvailable?: boolean;
+  recordingFileName?: string;
+  recordingDurationMsEstimate?: number;
+  recordingMulawBytes?: number;
+  recordingWavBytes?: number;
 }
 
 export interface VoiceSessionsResponse {
@@ -44,4 +49,9 @@ export interface VoiceHealthResponse {
   activeSessions: number;
   recentEndedSessions: number;
   timestamp: string;
+}
+
+export function voiceRecordingDownloadUrl(streamSid: string): string {
+  const base = import.meta.env.VITE_API_BASE_URL || '/api';
+  return `${base}/voice/recordings/${encodeURIComponent(streamSid)}/download`;
 }

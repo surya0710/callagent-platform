@@ -13,7 +13,7 @@ import {
   sessionDuration,
   statusBadgeClass,
 } from '../lib/voice-utils';
-import { VoiceSession, VoiceSessionStatus } from '../types/voice';
+import { VoiceSession, VoiceSessionStatus, voiceRecordingDownloadUrl } from '../types/voice';
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -57,6 +57,15 @@ function SessionActions({
         >
           {copiedKey === copyKey ? 'Copied!' : 'Copy streamSid'}
         </Button>
+      )}
+      {session.recordingAvailable && streamSid && (
+        <a
+          href={voiceRecordingDownloadUrl(streamSid)}
+          className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+          download
+        >
+          Download WAV
+        </a>
       )}
     </div>
   );
@@ -268,6 +277,7 @@ export function VoiceSessionsPage() {
               'To',
               'Packets',
               'Stop Reason',
+              'Recording',
               'Started At',
               'Ended At',
               'Duration',
@@ -285,6 +295,19 @@ export function VoiceSessionsPage() {
                 <td className="px-4 py-3">{safeValue(session.to)}</td>
                 <td className="px-4 py-3">{session.packetsReceived}</td>
                 <td className="px-4 py-3">{safeValue(session.stopReason)}</td>
+                <td className="px-4 py-3">
+                  {session.recordingAvailable && session.streamSid ? (
+                    <a
+                      href={voiceRecordingDownloadUrl(session.streamSid)}
+                      className="text-xs text-indigo-400 hover:text-indigo-300"
+                      download
+                    >
+                      Download WAV
+                    </a>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-3">{formatDateTime(session.startedAt ?? session.connectedAt)}</td>
                 <td className="px-4 py-3">{formatDateTime(session.endedAt ?? undefined)}</td>
                 <td className="px-4 py-3">{sessionDuration(session)}</td>

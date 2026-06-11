@@ -5,9 +5,12 @@ import {
   NotFoundException,
   Param,
   Post,
+  Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
+import { VoiceRecordingService } from './audio/voice-recording.service';
 import {
   toVoiceSessionResponse,
   VoiceSessionService,
@@ -19,7 +22,10 @@ const DEFAULT_WSS_BASE_URL = 'wss://tatdai.in/api/voice/stream';
 @Public()
 @Controller('voice')
 export class VoiceController {
-  constructor(private readonly voiceSessionService: VoiceSessionService) {}
+  constructor(
+    private readonly voiceSessionService: VoiceSessionService,
+    private readonly voiceRecordingService: VoiceRecordingService,
+  ) {}
 
   @Get('sessions')
   @ApiOperation({ summary: 'List active and recently ended voice sessions' })
@@ -59,6 +65,61 @@ export class VoiceController {
     }
 
     return toVoiceSessionResponse(session);
+  }
+
+  @Get('recordings')
+  @ApiOperation({ summary: 'List finalized voice recordings' })
+  listRecordings() {
+    return {
+      recordings: this.voiceRecordingService
+        .listRecordings()
+        .map((recording) =>
+          this.voiceRecordingService.toPublicMetadata(recording),
+        ),
+    };
+  }
+
+  @Get('recordings/:streamSid/download')
+  @ApiOperation({ summary: 'Download a voice recording WAV file' })
+  async downloadRecording(
+    @Param('streamSid') streamSid: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const recording = this.voiceRecordingService.getRecording(streamSid);
+    if (!recording) {
+      throw new NotFoundException(`Voice recording not found: ${streamSid}`);
+    }
+
+    const exists = await this.voiceRecordingService.recordingExists(streamSid);
+    if (!exists) {
+      throw new NotFoundException(
+        `Voice recording file missing: ${streamSid}`,
+      );
+    }
+
+    const stream = this.voiceRecordingService.openRecordingReadStream(streamSid);
+    if (!stream) {
+      throw new NotFoundException(`Voice recording not found: ${streamSid}`);
+    }
+
+    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${streamSid}.wav"`,
+    );
+
+    stream.pipe(res);
+  }
+
+  @Get('recordings/:streamSid')
+  @ApiOperation({ summary: 'Get voice recording metadata by streamSid' })
+  getRecording(@Param('streamSid') streamSid: string) {
+    const recording = this.voiceRecordingService.getRecording(streamSid);
+    if (!recording) {
+      throw new NotFoundException(`Voice recording not found: ${streamSid}`);
+    }
+
+    return this.voiceRecordingService.toPublicMetadata(recording);
   }
 
   @Get('health')

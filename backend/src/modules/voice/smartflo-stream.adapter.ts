@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { VoiceRecordingService } from './audio/voice-recording.service';
 import { MockVoiceRuntimeProvider } from './runtime/mock-voice-runtime.provider';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
@@ -17,6 +18,7 @@ export class SmartfloStreamAdapter {
     private readonly voiceSessionService: VoiceSessionService,
     private readonly voiceSocketRegistry: VoiceSocketRegistry,
     private readonly mockVoiceRuntime: MockVoiceRuntimeProvider,
+    private readonly voiceRecordingService: VoiceRecordingService,
   ) {}
 
   handleMessage(socketSessionId: string, raw: string): void {
@@ -112,6 +114,7 @@ export class SmartfloStreamAdapter {
 
     this.voiceSessionService.bindStreamSid(socketSessionId, startData);
     this.voiceSocketRegistry.bindStreamSid(socketSessionId, streamSid);
+    this.voiceRecordingService.start(streamSid, startData.callSid);
 
     this.logger.log({
       socketSessionId,
@@ -145,6 +148,10 @@ export class SmartfloStreamAdapter {
       media && typeof media.payload === 'string' ? media.payload : undefined;
 
     this.voiceSessionService.recordMedia(socketSessionId, payload);
+
+    if (payloadStr) {
+      this.voiceRecordingService.appendMulawBase64(streamSid, payloadStr);
+    }
 
     this.mockVoiceRuntime.onMedia(streamSid, {
       sequenceNumber: payload.sequenceNumber,
@@ -245,6 +252,37 @@ export class SmartfloStreamAdapter {
 
     this.mockVoiceRuntime.onStop(streamSid, stop?.reason);
 
+    void this.finalizeAndEndOnStop(
+      socketSessionId,
+      streamSid,
+      (typeof stop?.callSid === 'string' ? stop.callSid : undefined) ??
+        this.voiceSessionService.getByStreamSid(streamSid)?.callSid,
+      stopReason,
+    );
+  }
+
+  finalizeRecordingForStream(
+    streamSid: string,
+    callSid?: string,
+  ): void {
+    void this.finalizeRecording(streamSid, callSid);
+  }
+
+  async finalizeRecordingForStreamAsync(
+    streamSid: string,
+    callSid?: string,
+  ): Promise<void> {
+    await this.finalizeRecording(streamSid, callSid);
+  }
+
+  private async finalizeAndEndOnStop(
+    socketSessionId: string,
+    streamSid: string,
+    callSid: string | undefined,
+    stopReason: string | null,
+  ): Promise<void> {
+    await this.finalizeRecording(streamSid, callSid);
+
     this.voiceSessionService.endByStreamSid(streamSid, stopReason);
     this.voiceSocketRegistry.removeByStreamSid(streamSid);
 
@@ -253,5 +291,32 @@ export class SmartfloStreamAdapter {
       streamSid,
       message: 'Voice session ended on stop event',
     });
+  }
+
+  private async finalizeRecording(
+    streamSid: string,
+    callSid?: string,
+  ): Promise<void> {
+    try {
+      const metadata = await this.voiceRecordingService.finalize(
+        streamSid,
+        callSid,
+      );
+      if (!metadata) {
+        return;
+      }
+
+      this.voiceSessionService.attachRecordingMetadata(streamSid, {
+        fileName: metadata.fileName,
+        durationMsEstimate: metadata.durationMsEstimate,
+        mulawBytes: metadata.mulawBytes,
+        wavBytes: metadata.wavBytes,
+      });
+    } catch (error) {
+      this.logger.error(
+        { streamSid, err: error },
+        'Failed to finalize voice recording',
+      );
+    }
   }
 }
