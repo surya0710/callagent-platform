@@ -19,6 +19,7 @@ export enum AiProviderType {
 
 export enum VoiceRuntimeType {
   MOCK = 'mock',
+  OPENAI_REALTIME = 'openai-realtime',
 }
 
 export enum VoiceRecordingStorageDriver {
@@ -78,6 +79,18 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   OPENAI_FINE_TUNE_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENAI_REALTIME_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENAI_REALTIME_VOICE?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENAI_REALTIME_INSTRUCTIONS?: string;
 
   @IsOptional()
   @IsString()

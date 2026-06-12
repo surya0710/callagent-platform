@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { decodeMulawBuffer } from './audio/mulaw-codec';
 import { VoiceRecordingService } from './audio/voice-recording.service';
-import { MockVoiceRuntimeProvider } from './runtime/mock-voice-runtime.provider';
+import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
 
@@ -17,9 +18,13 @@ export class SmartfloStreamAdapter {
   constructor(
     private readonly voiceSessionService: VoiceSessionService,
     private readonly voiceSocketRegistry: VoiceSocketRegistry,
-    private readonly mockVoiceRuntime: MockVoiceRuntimeProvider,
+    private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
     private readonly voiceRecordingService: VoiceRecordingService,
   ) {}
+
+  private get voiceRuntime() {
+    return this.voiceRuntimeFactory.getProvider();
+  }
 
   handleMessage(socketSessionId: string, raw: string): void {
     let payload: Record<string, unknown>;
@@ -79,7 +84,7 @@ export class SmartfloStreamAdapter {
   ): void {
     this.voiceSessionService.recordConnected(socketSessionId);
     this.logger.log({ socketSessionId, smartfloEvent: payload });
-    this.mockVoiceRuntime.onConnected(socketSessionId);
+    this.voiceRuntime.onSocketConnected?.(socketSessionId);
   }
 
   private handleStart(
@@ -123,7 +128,14 @@ export class SmartfloStreamAdapter {
       message: 'Voice session bound to streamSid',
     });
 
-    this.mockVoiceRuntime.onStart(streamSid, payload);
+    void this.voiceRuntime.createSession({
+      streamSid,
+      socketSessionId,
+      callSid: startData.callSid,
+      from: startData.from,
+      to: startData.to,
+      direction: startData.direction,
+    });
   }
 
   private handleMedia(
@@ -151,14 +163,21 @@ export class SmartfloStreamAdapter {
 
     if (payloadStr) {
       this.voiceRecordingService.appendMulawBase64(streamSid, payloadStr);
-    }
 
-    this.mockVoiceRuntime.onMedia(streamSid, {
-      sequenceNumber: payload.sequenceNumber,
-      chunk: media?.chunk,
-      timestamp: media?.timestamp,
-      payloadLength: payloadStr?.length,
-    });
+      try {
+        const mulawBuffer = Buffer.from(payloadStr, 'base64');
+        if (mulawBuffer.length > 0) {
+          const pcm16Audio = decodeMulawBuffer(mulawBuffer);
+          this.voiceRuntime.handleAudio(streamSid, pcm16Audio);
+        }
+      } catch (error) {
+        this.logger.warn({
+          streamSid,
+          err: error,
+          message: 'Failed to decode inbound media for runtime provider',
+        });
+      }
+    }
   }
 
   private handleDtmf(
@@ -178,11 +197,7 @@ export class SmartfloStreamAdapter {
       return;
     }
 
-    const dtmf = asRecord(payload.dtmf);
-    const digit = dtmf?.digit;
-
     this.voiceSessionService.recordDtmf(socketSessionId, payload);
-    this.mockVoiceRuntime.onDtmf(streamSid, digit);
   }
 
   private handleMark(
@@ -202,10 +217,7 @@ export class SmartfloStreamAdapter {
       return;
     }
 
-    const mark = asRecord(payload.mark);
-
     this.voiceSessionService.recordMark(socketSessionId, payload);
-    this.mockVoiceRuntime.onMark(streamSid, mark?.name);
   }
 
   private handleClear(
@@ -226,7 +238,6 @@ export class SmartfloStreamAdapter {
     }
 
     this.voiceSessionService.recordClear(socketSessionId, payload);
-    this.mockVoiceRuntime.onClear(streamSid);
   }
 
   private handleStop(
@@ -250,8 +261,6 @@ export class SmartfloStreamAdapter {
     const stopReason =
       typeof stop?.reason === 'string' ? stop.reason : null;
 
-    this.mockVoiceRuntime.onStop(streamSid, stop?.reason);
-
     void this.finalizeAndEndOnStop(
       socketSessionId,
       streamSid,
@@ -259,6 +268,17 @@ export class SmartfloStreamAdapter {
         this.voiceSessionService.getByStreamSid(streamSid)?.callSid,
       stopReason,
     );
+  }
+
+  async endRuntimeForStream(streamSid: string): Promise<void> {
+    try {
+      await this.voiceRuntime.endSession(streamSid);
+    } catch (error) {
+      this.logger.error(
+        { streamSid, err: error },
+        'Failed to end voice runtime session',
+      );
+    }
   }
 
   finalizeRecordingForStream(
@@ -272,6 +292,7 @@ export class SmartfloStreamAdapter {
     streamSid: string,
     callSid?: string,
   ): Promise<void> {
+    await this.endRuntimeForStream(streamSid);
     await this.finalizeRecording(streamSid, callSid);
   }
 
@@ -281,6 +302,7 @@ export class SmartfloStreamAdapter {
     callSid: string | undefined,
     stopReason: string | null,
   ): Promise<void> {
+    await this.endRuntimeForStream(streamSid);
     await this.finalizeRecording(streamSid, callSid);
 
     this.voiceSessionService.endByStreamSid(streamSid, stopReason);
