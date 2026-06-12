@@ -29,6 +29,7 @@ export function buildGaSessionUpdate(options: {
         output: {
           format: {
             type: 'audio/pcm',
+            rate: OPENAI_REALTIME_SAMPLE_RATE,
           },
           voice: options.voice,
         },
