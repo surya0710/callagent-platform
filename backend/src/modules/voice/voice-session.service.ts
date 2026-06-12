@@ -3,6 +3,13 @@ import { randomUUID } from 'crypto';
 
 export type VoiceSessionStatus = 'PENDING' | 'ACTIVE' | 'ENDED';
 
+export type VoiceRuntimeStatus =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'error'
+  | 'closed';
+
 export interface VoiceSession {
   socketSessionId: string;
   streamSid?: string;
@@ -32,6 +39,11 @@ export interface VoiceSession {
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
   recordingWavBytes?: number;
+  runtimeProvider?: string;
+  runtimeStatus?: VoiceRuntimeStatus;
+  runtimeConnectedAt?: Date;
+  runtimeLastEventAt?: Date;
+  runtimeError?: string;
 }
 
 export interface VoiceSessionStartData {
@@ -74,6 +86,11 @@ export interface VoiceSessionResponse {
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
   recordingWavBytes?: number;
+  runtimeProvider?: string;
+  runtimeStatus?: VoiceRuntimeStatus;
+  runtimeConnectedAt?: string;
+  runtimeLastEventAt?: string;
+  runtimeError?: string;
 }
 
 const MAX_RECENT_ENDED_SESSIONS = 100;
@@ -117,6 +134,11 @@ export function toVoiceSessionResponse(
     recordingDurationMsEstimate: session.recordingDurationMsEstimate,
     recordingMulawBytes: session.recordingMulawBytes,
     recordingWavBytes: session.recordingWavBytes,
+    runtimeProvider: session.runtimeProvider,
+    runtimeStatus: session.runtimeStatus,
+    runtimeConnectedAt: session.runtimeConnectedAt?.toISOString(),
+    runtimeLastEventAt: session.runtimeLastEventAt?.toISOString(),
+    runtimeError: session.runtimeError,
   };
 }
 
@@ -341,6 +363,38 @@ export class VoiceSessionService {
 
     session.lastEvent = 'clear';
     session.lastEventAt = new Date();
+  }
+
+  updateRuntimeState(
+    streamSid: string,
+    update: {
+      runtimeProvider?: string;
+      runtimeStatus?: VoiceRuntimeStatus;
+      runtimeConnectedAt?: Date;
+      runtimeLastEventAt?: Date;
+      runtimeError?: string;
+    },
+  ): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    if (update.runtimeProvider !== undefined) {
+      session.runtimeProvider = update.runtimeProvider;
+    }
+    if (update.runtimeStatus !== undefined) {
+      session.runtimeStatus = update.runtimeStatus;
+    }
+    if (update.runtimeConnectedAt !== undefined) {
+      session.runtimeConnectedAt = update.runtimeConnectedAt;
+    }
+    if (update.runtimeLastEventAt !== undefined) {
+      session.runtimeLastEventAt = update.runtimeLastEventAt;
+    }
+    if (update.runtimeError !== undefined) {
+      session.runtimeError = update.runtimeError;
+    }
   }
 
   attachRecordingMetadata(

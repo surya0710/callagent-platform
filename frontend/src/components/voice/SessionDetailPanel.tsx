@@ -151,6 +151,20 @@ export function SessionDetailPanel({
             <DetailRow label="Bit Depth" value={safeValue(session.mediaFormat?.bitDepth)} />
           </Section>
 
+          <Section title="Runtime">
+            <DetailRow label="Provider" value={safeValue(session.runtimeProvider)} />
+            <DetailRow label="Status" value={safeValue(session.runtimeStatus)} />
+            <DetailRow
+              label="Connected At"
+              value={formatDateTime(session.runtimeConnectedAt)}
+            />
+            <DetailRow
+              label="Last Event At"
+              value={formatDateTime(session.runtimeLastEventAt)}
+            />
+            <DetailRow label="Error" value={safeValue(session.runtimeError)} />
+          </Section>
+
           <Section title="Recording">
             <DetailRow
               label="Available"

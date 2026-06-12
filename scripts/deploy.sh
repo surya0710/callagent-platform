@@ -14,6 +14,19 @@ if [ ! -f ".env" ]; then
   exit 1
 fi
 
+ensure_env_var() {
+  local key="$1"
+  local value="$2"
+  if ! grep -q "^${key}=" .env; then
+    echo "${key}=${value}" >> .env
+    echo "Added missing ${key} to backend/.env"
+  fi
+}
+
+echo "==> Ensuring voice recording env vars"
+ensure_env_var "VOICE_RECORDINGS_STORAGE_DRIVER" "local"
+ensure_env_var "VOICE_RECORDINGS_STORAGE_PATH" "storage"
+
 if [ -f "pnpm-lock.yaml" ]; then
   pnpm install --frozen-lockfile
 else

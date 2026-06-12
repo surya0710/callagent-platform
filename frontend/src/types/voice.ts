@@ -36,6 +36,11 @@ export interface VoiceSession {
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
   recordingWavBytes?: number;
+  runtimeProvider?: string;
+  runtimeStatus?: 'idle' | 'connecting' | 'connected' | 'error' | 'closed';
+  runtimeConnectedAt?: string;
+  runtimeLastEventAt?: string;
+  runtimeError?: string;
 }
 
 export interface VoiceSessionsResponse {

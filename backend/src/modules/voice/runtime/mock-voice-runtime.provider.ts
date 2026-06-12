@@ -1,10 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { VoiceSessionService } from '../voice-session.service';
+import {
+  VoiceRuntimeProvider,
+  VoiceRuntimeSessionContext,
+} from './voice-runtime.provider';
 
 @Injectable()
-export class MockVoiceRuntimeProvider {
+export class MockVoiceRuntimeProvider implements VoiceRuntimeProvider {
+  readonly name = 'mock';
   private readonly logger = new Logger(MockVoiceRuntimeProvider.name);
 
-  onConnected(socketSessionId: string): void {
+  constructor(private readonly voiceSessionService: VoiceSessionService) {}
+
+  onSocketConnected(socketSessionId: string): void {
     this.logger.log({
       socketSessionId,
       event: 'connected',
@@ -12,35 +20,30 @@ export class MockVoiceRuntimeProvider {
     });
   }
 
-  onStart(streamSid: string, payload: unknown): void {
-    this.logger.log({ streamSid, event: 'start', payload });
+  async createSession(context: VoiceRuntimeSessionContext): Promise<void> {
+    this.logger.log({ streamSid: context.streamSid, event: 'start', context });
+    this.voiceSessionService.updateRuntimeState(context.streamSid, {
+      runtimeProvider: this.name,
+      runtimeStatus: 'connected',
+      runtimeConnectedAt: new Date(),
+      runtimeLastEventAt: new Date(),
+    });
   }
 
-  onMedia(
-    streamSid: string,
-    details: {
-      sequenceNumber?: unknown;
-      chunk?: unknown;
-      timestamp?: unknown;
-      payloadLength?: number;
-    },
-  ): void {
-    this.logger.log({ streamSid, event: 'media', ...details });
+  handleAudio(streamSid: string, pcm16Audio: Buffer): void {
+    this.logger.debug({
+      streamSid,
+      event: 'media',
+      pcmBytes: pcm16Audio.length,
+      sampleCount: Math.floor(pcm16Audio.length / 2),
+    });
   }
 
-  onDtmf(streamSid: string, digit: unknown): void {
-    this.logger.log({ streamSid, event: 'dtmf', digit });
-  }
-
-  onMark(streamSid: string, name: unknown): void {
-    this.logger.log({ streamSid, event: 'mark', name });
-  }
-
-  onClear(streamSid: string): void {
-    this.logger.log({ streamSid, event: 'clear' });
-  }
-
-  onStop(streamSid: string, reason: unknown): void {
-    this.logger.log({ streamSid, event: 'stop', reason });
+  async endSession(streamSid: string): Promise<void> {
+    this.logger.log({ streamSid, event: 'stop' });
+    this.voiceSessionService.updateRuntimeState(streamSid, {
+      runtimeStatus: 'closed',
+      runtimeLastEventAt: new Date(),
+    });
   }
 }
