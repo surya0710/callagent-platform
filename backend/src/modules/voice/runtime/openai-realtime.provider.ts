@@ -145,6 +145,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       });
       this.sendSessionUpdate(ws, model);
       this.logger.log({ streamSid, model, message: 'OpenAI Realtime WebSocket open' });
+
+      setTimeout(() => {
+        if (!session.sessionReady && !session.closing) {
+          session.sessionReady = true;
+          this.flushPendingInput(session);
+          this.logger.warn({
+            streamSid,
+            message: 'session.updated not received within 2s; proceeding with audio anyway',
+          });
+        }
+      }, 2000);
     });
 
     ws.on('message', (data) => {
