@@ -56,6 +56,18 @@ export interface VoiceHealthResponse {
   timestamp: string;
 }
 
+export interface VoiceTestCallRequest {
+  customerNumber: string;
+}
+
+export interface VoiceTestCallResponse {
+  success: boolean;
+  message: string;
+  providerResponse: unknown;
+  requestedCustomerNumber: string;
+  normalizedCustomerNumber: string;
+}
+
 export function voiceRecordingDownloadUrl(streamSid: string): string {
   const base = import.meta.env.VITE_API_BASE_URL || '/api';
   return `${base}/voice/recordings/${encodeURIComponent(streamSid)}/download`;

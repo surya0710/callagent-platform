@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { SessionDetailPanel } from '../components/voice/SessionDetailPanel';
 import { Button } from '../components/ui/Button';
 import { Card, StatCard } from '../components/ui/Card';
@@ -160,6 +161,12 @@ export function VoiceSessionsPage() {
           <Button variant="secondary" onClick={handleManualRefresh}>
             Refresh
           </Button>
+          <Link
+            to="/voice/test-call"
+            className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-sm text-slate-200 hover:bg-slate-700"
+          >
+            Test Call
+          </Link>
           <span className="text-xs text-slate-500">
             Last refresh: {lastRefreshed ? formatTime(lastRefreshed) : '—'}
           </span>

@@ -155,6 +155,18 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   VOICE_RECORDINGS_S3_BUCKET?: string;
+
+  @IsOptional()
+  @IsString()
+  SMARTFLO_CLICK_TO_CALL_API_KEY?: string;
+
+  @IsOptional()
+  @IsUrl({ require_tld: true })
+  SMARTFLO_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  SMARTFLO_CALLER_ID?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {
