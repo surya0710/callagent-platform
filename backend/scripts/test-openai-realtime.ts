@@ -1,6 +1,6 @@
 #!/usr/bin/env ts-node
 /**
- * Standalone OpenAI Realtime connectivity test (no Smartflo).
+ * Standalone OpenAI Realtime GA connectivity test (no Smartflo).
  *
  * Usage:
  *   npm run openai:realtime:test
@@ -9,6 +9,11 @@
 import * as dotenv from 'dotenv';
 import * as path from 'node:path';
 import { WebSocket } from 'ws';
+import {
+  buildGaSessionUpdate,
+  buildRealtimeWsHeaders,
+  isOpenAiOutputAudioDeltaEvent,
+} from '../src/modules/voice/runtime/openai-realtime-ga.util';
 
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
@@ -28,10 +33,7 @@ async function main(): Promise<void> {
   console.log('API key prefix:', `${apiKey.slice(0, 8)}...`);
 
   const ws = new WebSocket(url, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'OpenAI-Beta': 'realtime=v1',
-    },
+    headers: buildRealtimeWsHeaders(apiKey),
   });
 
   const events: string[] = [];
@@ -44,19 +46,15 @@ async function main(): Promise<void> {
 
       if (event.type === 'session.created') {
         ws.send(
-          JSON.stringify({
-            type: 'session.update',
-            session: {
-              modalities: ['text', 'audio'],
-              instructions: 'Say hello briefly.',
+          JSON.stringify(
+            buildGaSessionUpdate({
               voice: 'alloy',
-              input_audio_format: 'pcm16',
-              output_audio_format: 'pcm16',
-              turn_detection: null,
-            },
-          }),
+              instructions: 'Say hello briefly.',
+              model,
+            }),
+          ),
         );
-        console.log('[openai →] session.update');
+        console.log('[openai →] session.update (GA)');
       }
 
       if (event.type === 'session.updated') {
@@ -66,7 +64,9 @@ async function main(): Promise<void> {
             item: {
               type: 'message',
               role: 'user',
-              content: [{ type: 'input_text', text: 'Say hello in one short sentence.' }],
+              content: [
+                { type: 'input_text', text: 'Say hello in one short sentence.' },
+              ],
             },
           }),
         );
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
         console.log('[openai →] conversation.item.create + response.create');
       }
 
-      if (event.type === 'response.audio.delta' || event.type === 'response.output_audio.delta') {
+      if (event.type && isOpenAiOutputAudioDeltaEvent(event.type)) {
         console.log('[openai ←] audio delta received');
       }
 

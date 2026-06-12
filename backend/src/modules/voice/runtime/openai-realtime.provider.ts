@@ -6,13 +6,19 @@ import { resamplePcm16 } from '../audio/pcm-resampler';
 import { AudioGateway } from '../audio.gateway';
 import { VoiceSessionService } from '../voice-session.service';
 import {
+  buildGaSessionUpdate,
+  buildRealtimeWsHeaders,
+  isOpenAiOutputAudioDeltaEvent,
+  OPENAI_REALTIME_SAMPLE_RATE,
+} from './openai-realtime-ga.util';
+import {
   VoiceRuntimeProvider,
   VoiceRuntimeSessionContext,
   VoiceRuntimeStatus,
 } from './voice-runtime.provider';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
-const OPENAI_SAMPLE_RATE = 24000;
+const OPENAI_SAMPLE_RATE = OPENAI_REALTIME_SAMPLE_RATE;
 const MULAW_FRAME_BYTES = 160;
 const MULAW_SILENCE_BYTE = 0xff;
 const INPUT_COMMIT_DELAY_MS = 600;
@@ -101,7 +107,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     const apiKey = sanitizeApiKey(this.configService.get<string>('OPENAI_API_KEY'));
     const model =
       this.configService.get<string>('OPENAI_REALTIME_MODEL')?.trim() ??
-      'gpt-4o-realtime-preview-2024-12-17';
+      'gpt-realtime';
 
     if (!apiKey) {
       const message = 'OPENAI_API_KEY is not configured or invalid';
@@ -128,10 +134,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     const ws = new WebSocket(url, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'OpenAI-Beta': 'realtime=v1',
-      },
+      headers: buildRealtimeWsHeaders(apiKey),
     });
 
     const session: OpenAiRealtimeSession = {
@@ -161,7 +164,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         runtimeLastEventAt: new Date(),
         runtimeError: undefined,
       });
-      this.sendSessionUpdate(ws);
+      this.sendSessionUpdate(ws, model);
       this.logger.log({ streamSid, model, message: 'OpenAI Realtime WebSocket open' });
 
       setTimeout(() => {
@@ -298,26 +301,20 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
   }
 
-  private sendSessionUpdate(ws: WebSocket): void {
+  private sendSessionUpdate(ws: WebSocket, model: string): void {
     const voice =
       this.configService.get<string>('OPENAI_REALTIME_VOICE')?.trim() ?? 'alloy';
     const instructions =
       this.configService.get<string>('OPENAI_REALTIME_INSTRUCTIONS')?.trim() ??
       DEFAULT_INSTRUCTIONS;
 
-    const payload = {
-      type: 'session.update',
-      session: {
-        modalities: ['text', 'audio'],
-        instructions,
-        voice,
-        input_audio_format: 'pcm16',
-        output_audio_format: 'pcm16',
-        turn_detection: null,
-      },
-    };
+    const payload = buildGaSessionUpdate({ voice, instructions, model });
 
-    this.logger.log({ voice, message: 'Sending OpenAI session.update (manual turn detection)' });
+    this.logger.log({
+      voice,
+      model,
+      message: 'Sending OpenAI GA session.update (manual turn detection)',
+    });
     ws.send(JSON.stringify(payload));
   }
 
@@ -554,11 +551,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    if (
-      type === 'response.output_audio.delta' ||
-      type === 'response.audio.delta' ||
-      type.includes('audio.delta')
-    ) {
+    if (isOpenAiOutputAudioDeltaEvent(type) || type.includes('output_audio.delta')) {
       const delta = extractAudioDelta(event);
       if (!delta) {
         this.logger.warn({ streamSid, openaiEvent: type, message: 'Audio delta event without payload' });
