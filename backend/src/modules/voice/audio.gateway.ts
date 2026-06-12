@@ -114,9 +114,13 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   sendMedia(streamSid: string, base64MulawPayload: string, chunk?: number): void {
     const client = this.voiceSocketRegistry.getByStreamSid(streamSid);
-    if (!client || client.readyState !== WebSocket.OPEN) {
+    const socketFound = Boolean(client && client.readyState === WebSocket.OPEN);
+
+    if (!socketFound) {
       this.logger.warn({
         streamSid,
+        payloadBase64Length: base64MulawPayload.length,
+        socketFound: false,
         message: 'Cannot send media: no active WebSocket for streamSid',
       });
       return;
@@ -134,7 +138,16 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const chunkNumber =
       chunk ?? this.voiceSocketRegistry.nextOutboundChunk(streamSid);
 
-    client.send(
+    this.logger.log({
+      streamSid,
+      chunk: chunkNumber,
+      payloadBase64Length: base64MulawPayload.length,
+      mulawBytes: decodedLength,
+      socketFound: true,
+      message: 'Writing outbound media to Smartflo WebSocket',
+    });
+
+    client!.send(
       JSON.stringify({
         event: 'media',
         streamSid,

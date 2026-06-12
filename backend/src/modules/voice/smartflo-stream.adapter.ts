@@ -302,6 +302,7 @@ export class SmartfloStreamAdapter {
     callSid: string | undefined,
     stopReason: string | null,
   ): Promise<void> {
+    // Keep Smartflo socket open while OpenAI finishes its response.
     await this.endRuntimeForStream(streamSid);
     await this.finalizeRecording(streamSid, callSid);
 
