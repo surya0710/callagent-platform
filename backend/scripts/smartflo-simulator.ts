@@ -11,8 +11,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { WebSocket } from 'ws';
-import { encodePcm16ToMulaw } from '../src/modules/voice/audio/mulaw-codec';
+import {
+  decodeMulawBuffer,
+  encodePcm16ToMulaw,
+} from '../src/modules/voice/audio/mulaw-codec';
 import { resamplePcm16 } from '../src/modules/voice/audio/pcm-resampler';
+import { createWavBuffer } from '../src/modules/voice/audio/wav-writer';
 
 type WsMessageData = Buffer | ArrayBuffer | Buffer[];
 
@@ -21,6 +25,11 @@ const DEFAULT_STREAM_SID = 'TEST_OPENAI_AUDIO_001';
 const TARGET_SAMPLE_RATE = 8000;
 const CHUNK_MS = 100;
 const MULAW_BYTES_PER_CHUNK = (TARGET_SAMPLE_RATE * CHUNK_MS) / 1000; // 800 @ 8 kHz
+const MULAW_SILENCE_BYTE = 0xff;
+const ARTIFACTS_DIR = path.resolve('artifacts');
+const AI_RESPONSE_MULAW_PATH = path.join(ARTIFACTS_DIR, 'ai-response.mulaw');
+const AI_RESPONSE_WAV_PATH = path.join(ARTIFACTS_DIR, 'ai-response.wav');
+const SILENCE_AVG_ABS_AMPLITUDE_THRESHOLD = 120;
 
 interface WavPcm16 {
   pcm: Buffer;
@@ -99,6 +108,10 @@ Options:
   --chunk-ms <ms>         Media packet interval in ms (default: ${CHUNK_MS})
   --tail-ms <ms>          Wait after last chunk before stop, to capture AI audio (default: 10000)
   -h, --help              Show this help
+
+Output:
+  ./artifacts/ai-response.wav     Reconstructed AI speech (PCM16 WAV @ 8 kHz)
+  ./artifacts/ai-response.mulaw   Raw inbound Smartflo μ-law stream
 `);
 }
 
@@ -207,7 +220,160 @@ function rawDataToString(raw: WsMessageData): string {
   return Buffer.from(raw).toString('utf8');
 }
 
-function logOutbound(raw: WsMessageData): void {
+interface PcmAudioStats {
+  sampleCount: number;
+  min: number;
+  max: number;
+  avgAbsAmplitude: number;
+  rms: number;
+  nonZeroSamples: number;
+  appearsEmpty: boolean;
+  appearsSilent: boolean;
+}
+
+interface AiResponseArtifacts {
+  packetCount: number;
+  mulawBytes: number;
+  pcmBytes: number;
+  wavBytes: number;
+  durationSec: number;
+  mulawPath: string;
+  wavPath: string;
+  pcmStats: PcmAudioStats;
+}
+
+class InboundAiAudioCapture {
+  private readonly mulawChunks: Buffer[] = [];
+  private packetCount = 0;
+  private totalMulawBytes = 0;
+
+  appendMediaPayload(base64Payload: string): number {
+    if (!base64Payload) {
+      return 0;
+    }
+
+    const mulawChunk = Buffer.from(base64Payload, 'base64');
+    if (mulawChunk.length === 0) {
+      return 0;
+    }
+
+    this.mulawChunks.push(mulawChunk);
+    this.packetCount += 1;
+    this.totalMulawBytes += mulawChunk.length;
+    return mulawChunk.length;
+  }
+
+  getPacketCount(): number {
+    return this.packetCount;
+  }
+
+  getTotalMulawBytes(): number {
+    return this.totalMulawBytes;
+  }
+
+  getEstimatedDurationSec(): number {
+    return this.totalMulawBytes / TARGET_SAMPLE_RATE;
+  }
+
+  finalize(): AiResponseArtifacts | null {
+    if (this.mulawChunks.length === 0) {
+      return null;
+    }
+
+    const mulawBuffer = Buffer.concat(this.mulawChunks);
+    const pcmBuffer = decodeMulawBuffer(mulawBuffer);
+    const wavBuffer = createWavBuffer(pcmBuffer, {
+      sampleRate: TARGET_SAMPLE_RATE,
+      channels: 1,
+      bitsPerSample: 16,
+    });
+
+    fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
+    fs.writeFileSync(AI_RESPONSE_MULAW_PATH, mulawBuffer);
+    fs.writeFileSync(AI_RESPONSE_WAV_PATH, wavBuffer);
+
+    const pcmStats = analyzePcmAudio(pcmBuffer);
+    const durationSec = mulawBuffer.length / TARGET_SAMPLE_RATE;
+
+    return {
+      packetCount: this.packetCount,
+      mulawBytes: mulawBuffer.length,
+      pcmBytes: pcmBuffer.length,
+      wavBytes: wavBuffer.length,
+      durationSec,
+      mulawPath: AI_RESPONSE_MULAW_PATH,
+      wavPath: AI_RESPONSE_WAV_PATH,
+      pcmStats,
+    };
+  }
+}
+
+function analyzePcmAudio(pcm: Buffer): PcmAudioStats {
+  const sampleCount = Math.floor(pcm.length / 2);
+  if (sampleCount === 0) {
+    return {
+      sampleCount: 0,
+      min: 0,
+      max: 0,
+      avgAbsAmplitude: 0,
+      rms: 0,
+      nonZeroSamples: 0,
+      appearsEmpty: true,
+      appearsSilent: true,
+    };
+  }
+
+  let min = 32767;
+  let max = -32768;
+  let sumAbs = 0;
+  let sumSquares = 0;
+  let nonZeroSamples = 0;
+
+  for (let i = 0; i < sampleCount; i += 1) {
+    const sample = pcm.readInt16LE(i * 2);
+    if (sample < min) {
+      min = sample;
+    }
+    if (sample > max) {
+      max = sample;
+    }
+    const abs = Math.abs(sample);
+    sumAbs += abs;
+    sumSquares += sample * sample;
+    if (sample !== 0) {
+      nonZeroSamples += 1;
+    }
+  }
+
+  const avgAbsAmplitude = sumAbs / sampleCount;
+  const rms = Math.sqrt(sumSquares / sampleCount);
+  const appearsEmpty = nonZeroSamples === 0;
+  const appearsSilent =
+    appearsEmpty || avgAbsAmplitude < SILENCE_AVG_ABS_AMPLITUDE_THRESHOLD;
+
+  return {
+    sampleCount,
+    min,
+    max,
+    avgAbsAmplitude,
+    rms,
+    nonZeroSamples,
+    appearsEmpty,
+    appearsSilent,
+  };
+}
+
+function countMulawSilenceBytes(mulaw: Buffer): number {
+  let silenceBytes = 0;
+  for (let i = 0; i < mulaw.length; i += 1) {
+    if (mulaw[i] === MULAW_SILENCE_BYTE) {
+      silenceBytes += 1;
+    }
+  }
+  return silenceBytes;
+}
+
+function logOutbound(raw: WsMessageData, capture: InboundAiAudioCapture): void {
   const text = rawDataToString(raw);
   try {
     const payload = JSON.parse(text) as Record<string, unknown>;
@@ -220,13 +386,14 @@ function logOutbound(raw: WsMessageData): void {
           : undefined;
       const b64 =
         media && typeof media.payload === 'string' ? media.payload : '';
-      const decodedBytes = b64 ? Buffer.from(b64, 'base64').length : 0;
+      const decodedBytes = b64 ? capture.appendMediaPayload(b64) : 0;
       console.log('[server ←] media', {
         streamSid: payload.streamSid,
         chunk: media?.chunk,
         timestamp: media?.timestamp,
         payloadBase64Length: b64.length,
         mulawBytes: decodedBytes,
+        inboundPacket: capture.getPacketCount(),
       });
       return;
     }
@@ -235,6 +402,80 @@ function logOutbound(raw: WsMessageData): void {
   } catch {
     console.log('[server ←] raw', text);
   }
+}
+
+function printAiResponseSummary(artifacts: AiResponseArtifacts): void {
+  const relativeWavPath = path.relative(process.cwd(), artifacts.wavPath);
+  const relativeMulawPath = path.relative(process.cwd(), artifacts.mulawPath);
+
+  console.log('\nAI response saved:');
+  console.log(relativeWavPath);
+  console.log(`Duration: ${artifacts.durationSec.toFixed(1)} sec`);
+  console.log(`PCM bytes: ${artifacts.pcmBytes}`);
+  console.log(`WAV bytes: ${artifacts.wavBytes}`);
+  console.log(`μ-law file: ${relativeMulawPath}`);
+
+  console.log('\nInbound AI audio debug:');
+  console.log(`Inbound media packets: ${artifacts.packetCount}`);
+  console.log(`Total μ-law bytes: ${artifacts.mulawBytes}`);
+  console.log(`Total PCM bytes: ${artifacts.pcmBytes}`);
+  console.log(
+    `Estimated duration: ${artifacts.durationSec.toFixed(2)} sec @ ${TARGET_SAMPLE_RATE} Hz`,
+  );
+
+  const silenceBytes = countMulawSilenceBytes(
+    fs.readFileSync(artifacts.mulawPath),
+  );
+  const silencePct = (silenceBytes / artifacts.mulawBytes) * 100;
+  console.log(
+    `μ-law silence bytes (0xFF): ${silenceBytes} (${silencePct.toFixed(1)}%)`,
+  );
+
+  const { pcmStats } = artifacts;
+  console.log('\nPCM sample statistics:');
+  console.log(`Samples: ${pcmStats.sampleCount}`);
+  console.log(`Min: ${pcmStats.min}`);
+  console.log(`Max: ${pcmStats.max}`);
+  console.log(`Average absolute amplitude: ${pcmStats.avgAbsAmplitude.toFixed(2)}`);
+  console.log(`RMS: ${pcmStats.rms.toFixed(2)}`);
+  console.log(`Non-zero samples: ${pcmStats.nonZeroSamples}`);
+
+  if (pcmStats.appearsEmpty) {
+    console.warn(
+      '\nValidation: decoded AI audio appears EMPTY (all PCM samples are zero).',
+    );
+    return;
+  }
+
+  if (pcmStats.appearsSilent) {
+    console.warn(
+      '\nValidation: decoded AI audio appears SILENT or near-silent.',
+    );
+    console.warn(
+      `Average amplitude ${pcmStats.avgAbsAmplitude.toFixed(2)} is below threshold ${SILENCE_AVG_ABS_AMPLITUDE_THRESHOLD}.`,
+    );
+    console.warn(
+      'Open the WAV file in a media player to confirm whether speech is audible.',
+    );
+    return;
+  }
+
+  console.log(
+    '\nValidation: decoded AI audio contains non-silent PCM — speech should be audible.',
+  );
+  console.log(`Play ${relativeWavPath} to verify what the AI said.`);
+}
+
+function printMissingAiResponseSummary(capture: InboundAiAudioCapture): void {
+  console.warn('\nNo inbound server media packets were captured.');
+  console.warn(`Inbound media packets: ${capture.getPacketCount()}`);
+  console.warn(`Total μ-law bytes: ${capture.getTotalMulawBytes()}`);
+  console.warn(
+    `Estimated duration: ${capture.getEstimatedDurationSec().toFixed(2)} sec`,
+  );
+  console.warn(
+    'Cannot create ai-response.wav — increase --tail-ms or verify the backend is sending outbound media.',
+  );
 }
 
 async function run(): Promise<void> {
@@ -257,7 +498,8 @@ async function run(): Promise<void> {
   });
   console.log('WebSocket connected');
 
-  ws.on('message', logOutbound);
+  const inboundAiCapture = new InboundAiAudioCapture();
+  ws.on('message', (raw) => logOutbound(raw, inboundAiCapture));
 
   ws.send(
     JSON.stringify({
@@ -336,6 +578,13 @@ async function run(): Promise<void> {
   await sleep(500);
   ws.close(1000, 'simulator done');
   console.log('WebSocket closed');
+
+  const artifacts = inboundAiCapture.finalize();
+  if (artifacts) {
+    printAiResponseSummary(artifacts);
+  } else {
+    printMissingAiResponseSummary(inboundAiCapture);
+  }
 }
 
 run().catch((error) => {
