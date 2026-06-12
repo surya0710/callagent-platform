@@ -42,6 +42,7 @@ interface ActiveRecording {
   streamSid: string;
   callSid?: string;
   streamStartedAtMs: number;
+  outboundCursorMs: number | null;
   inboundChunks: TimelineChunk[];
   outboundChunks: TimelineChunk[];
 }
@@ -86,6 +87,7 @@ export class VoiceRecordingService {
       streamSid,
       callSid,
       streamStartedAtMs: Date.now(),
+      outboundCursorMs: null,
       inboundChunks: [],
       outboundChunks: [],
     });
@@ -148,8 +150,21 @@ export class VoiceRecordingService {
         return;
       }
 
-      const resolvedOffsetMs =
-        offsetMs ?? Date.now() - active.streamStartedAtMs;
+      const chunkDurationMs = (mulaw.length / SAMPLE_RATE) * 1000;
+      let resolvedOffsetMs = offsetMs;
+
+      if (direction === 'outbound') {
+        if (resolvedOffsetMs == null) {
+          if (active.outboundCursorMs == null) {
+            active.outboundCursorMs = Date.now() - active.streamStartedAtMs;
+          }
+          resolvedOffsetMs = active.outboundCursorMs;
+          active.outboundCursorMs += chunkDurationMs;
+        }
+      } else if (resolvedOffsetMs == null) {
+        resolvedOffsetMs = Date.now() - active.streamStartedAtMs;
+      }
+
       const timelineChunk: TimelineChunk = {
         offsetMs: Math.max(0, resolvedOffsetMs),
         mulaw,
