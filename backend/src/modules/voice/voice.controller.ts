@@ -10,7 +10,10 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
+import { ConfigService } from '@nestjs/config';
+import { VoiceRuntimeType } from '../../config/env.validation';
 import { VoiceRecordingService } from './audio/voice-recording.service';
+import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import {
   toVoiceSessionResponse,
   VoiceSessionService,
@@ -25,6 +28,8 @@ export class VoiceController {
   constructor(
     private readonly voiceSessionService: VoiceSessionService,
     private readonly voiceRecordingService: VoiceRecordingService,
+    private readonly configService: ConfigService,
+    private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
   ) {}
 
   @Get('sessions')
@@ -126,12 +131,21 @@ export class VoiceController {
   @ApiOperation({ summary: 'Smartflo voice service health' })
   health() {
     const counts = this.voiceSessionService.getSessionCounts();
+    const voiceRuntime =
+      this.configService.get<VoiceRuntimeType>('VOICE_RUNTIME') ??
+      VoiceRuntimeType.MOCK;
+    const openAiKey = this.configService.get<string>('OPENAI_API_KEY')?.trim();
 
     return {
       success: true,
       service: 'smartflo-voice',
       activeSessions: counts.active,
       recentEndedSessions: counts.recentEnded,
+      voiceRuntime,
+      activeRuntimeProvider: this.voiceRuntimeFactory.getProvider().name,
+      openAiKeyConfigured: Boolean(openAiKey),
+      openAiRealtimeModel:
+        this.configService.get<string>('OPENAI_REALTIME_MODEL') ?? null,
       timestamp: new Date().toISOString(),
     };
   }

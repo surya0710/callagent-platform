@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebSocket } from 'ws';
 import { encodePcm16ToMulaw } from '../audio/mulaw-codec';
@@ -15,27 +15,13 @@ const SMARTFLO_SAMPLE_RATE = 8000;
 const OPENAI_SAMPLE_RATE = 24000;
 const MULAW_FRAME_BYTES = 160;
 const MULAW_SILENCE_BYTE = 0xff;
-const INPUT_COMMIT_DELAY_MS = 800;
+const INPUT_COMMIT_DELAY_MS = 600;
 const RESPONSE_WAIT_MS = 15000;
+const SESSION_READY_TIMEOUT_MS = 5000;
+const WS_OPEN_TIMEOUT_MS = 8000;
 
 const DEFAULT_INSTRUCTIONS =
   'You are a helpful voice assistant on a phone call. Keep responses concise and conversational.';
-
-const LOGGED_OPENAI_EVENTS = new Set([
-  'session.created',
-  'session.updated',
-  'input_audio_buffer.committed',
-  'input_audio_buffer.speech_started',
-  'input_audio_buffer.speech_stopped',
-  'response.created',
-  'response.output_item.added',
-  'response.audio.delta',
-  'response.output_audio.delta',
-  'response.audio.done',
-  'response.output_audio.done',
-  'response.done',
-  'error',
-]);
 
 interface OpenAiRealtimeSession {
   streamSid: string;
@@ -54,12 +40,39 @@ interface OpenAiRealtimeSession {
   totalInputPcm24Sent: number;
   totalOutputMulawSent: number;
   inputAppendCount: number;
+  lastCloseCode?: number;
+  lastCloseReason?: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function sanitizeApiKey(raw: string | undefined): string | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.replace(/[^\x20-\x7E]+/g, '');
+}
+
+function extractAudioDelta(event: Record<string, unknown>): string | undefined {
+  const direct = event.delta;
+  if (typeof direct === 'string' && direct.length > 0) {
+    return direct;
+  }
+
+  const audio = asRecord(event.audio);
+  if (audio && typeof audio.delta === 'string' && audio.delta.length > 0) {
+    return audio.delta;
+  }
+
+  return undefined;
 }
 
 @Injectable()
@@ -85,13 +98,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       await this.endSession(streamSid);
     }
 
-    const apiKey = this.configService.get<string>('OPENAI_API_KEY')?.trim();
+    const apiKey = sanitizeApiKey(this.configService.get<string>('OPENAI_API_KEY'));
     const model =
       this.configService.get<string>('OPENAI_REALTIME_MODEL')?.trim() ??
-      'gpt-realtime';
+      'gpt-4o-realtime-preview-2024-12-17';
 
     if (!apiKey) {
-      const message = 'OPENAI_API_KEY is not configured';
+      const message = 'OPENAI_API_KEY is not configured or invalid';
       this.logger.error({ streamSid, message });
       this.updateRuntimeState(streamSid, {
         runtimeStatus: 'error',
@@ -107,7 +120,12 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
-    this.logger.log({ streamSid, model, url, message: 'Opening OpenAI Realtime WebSocket' });
+    this.logger.log({
+      streamSid,
+      model,
+      apiKeyPrefix: `${apiKey.slice(0, 8)}...`,
+      message: 'Opening OpenAI Realtime WebSocket',
+    });
 
     const ws = new WebSocket(url, {
       headers: {
@@ -143,7 +161,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         runtimeLastEventAt: new Date(),
         runtimeError: undefined,
       });
-      this.sendSessionUpdate(ws, model);
+      this.sendSessionUpdate(ws);
       this.logger.log({ streamSid, model, message: 'OpenAI Realtime WebSocket open' });
 
       setTimeout(() => {
@@ -152,10 +170,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           this.flushPendingInput(session);
           this.logger.warn({
             streamSid,
-            message: 'session.updated not received within 2s; proceeding with audio anyway',
+            message: 'session.updated not received; proceeding with audio anyway',
           });
         }
-      }, 2000);
+      }, SESSION_READY_TIMEOUT_MS);
     });
 
     ws.on('message', (data) => {
@@ -175,29 +193,42 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     ws.on('close', (code, reason) => {
       session.status = 'closed';
+      session.lastCloseCode = code;
+      session.lastCloseReason = reason.toString();
       this.clearCommitTimer(session);
-      this.sessions.delete(streamSid);
-      this.updateRuntimeState(streamSid, {
-        runtimeStatus: 'closed',
-        runtimeLastEventAt: new Date(),
-      });
       this.resolveResponseWaiters(session);
-      this.logger.log({
+
+      this.logger.warn({
         streamSid,
         code,
         reason: reason.toString(),
         inputAppendCount: session.inputAppendCount,
         totalInputPcm24Sent: session.totalInputPcm24Sent,
         totalOutputMulawSent: session.totalOutputMulawSent,
-        message: 'OpenAI Realtime session closed',
+        closing: session.closing,
+        message: 'OpenAI Realtime WebSocket closed',
       });
+
+      this.updateRuntimeState(streamSid, {
+        runtimeStatus: 'error',
+        runtimeLastEventAt: new Date(),
+        runtimeError: `OpenAI WebSocket closed: ${code} ${reason.toString()}`,
+      });
+
+      if (session.closing) {
+        this.sessions.delete(streamSid);
+      }
     });
   }
 
   handleAudio(streamSid: string, pcm16Audio: Buffer): void {
     const session = this.sessions.get(streamSid);
     if (!session) {
-      this.logger.warn({ streamSid, pcmBytes: pcm16Audio.length, message: 'No OpenAI session for streamSid' });
+      this.logger.warn({
+        streamSid,
+        pcmBytes: pcm16Audio.length,
+        message: 'No OpenAI session for streamSid — was createSession called?',
+      });
       return;
     }
 
@@ -207,10 +238,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     if (!session.sessionReady || session.ws.readyState !== WebSocket.OPEN) {
       session.pendingPcm8.push(pcm16Audio);
-      this.logger.debug({
+      this.logger.log({
         streamSid,
         pcmBytes: pcm16Audio.length,
         pendingChunks: session.pendingPcm8.length,
+        wsReadyState: session.ws.readyState,
         message: 'Queued inbound audio until OpenAI session is ready',
       });
       return;
@@ -228,11 +260,22 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.closing = true;
     this.clearCommitTimer(session);
 
-    if (session.ws.readyState === WebSocket.OPEN) {
+    const wsOpen = await this.waitForWebSocketOpen(session, WS_OPEN_TIMEOUT_MS);
+    if (wsOpen) {
+      session.sessionReady = true;
       this.flushPendingInput(session);
       await this.commitInputAndCreateResponse(session);
       await this.waitForResponseComplete(session, RESPONSE_WAIT_MS);
       this.flushRemainingOutbound(session);
+    } else {
+      this.logger.error({
+        streamSid,
+        pendingChunks: session.pendingPcm8.length,
+        totalInputPcm24Sent: session.totalInputPcm24Sent,
+        lastCloseCode: session.lastCloseCode,
+        lastCloseReason: session.lastCloseReason,
+        message: 'OpenAI WebSocket not open during endSession — no AI response possible',
+      });
     }
 
     const { ws } = session;
@@ -255,7 +298,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
   }
 
-  private sendSessionUpdate(ws: WebSocket, model: string): void {
+  private sendSessionUpdate(ws: WebSocket): void {
     const voice =
       this.configService.get<string>('OPENAI_REALTIME_VOICE')?.trim() ?? 'alloy';
     const instructions =
@@ -270,21 +313,20 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         voice,
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500,
-          create_response: true,
-        },
+        turn_detection: null,
       },
     };
 
-    this.logger.log({ model, voice, message: 'Sending OpenAI session.update' });
+    this.logger.log({ voice, message: 'Sending OpenAI session.update (manual turn detection)' });
     ws.send(JSON.stringify(payload));
   }
 
   private appendInputAudio(session: OpenAiRealtimeSession, pcm8: Buffer): void {
+    if (session.ws.readyState !== WebSocket.OPEN) {
+      session.pendingPcm8.push(pcm8);
+      return;
+    }
+
     const pcm24 = resamplePcm16(
       pcm8,
       SMARTFLO_SAMPLE_RATE,
@@ -301,7 +343,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.inputAppendCount += 1;
     session.totalInputPcm24Sent += pcm24.length;
 
-    this.logger.debug({
+    this.logger.log({
       streamSid: session.streamSid,
       pcm8Bytes: pcm8.length,
       pcm24Bytes: pcm24.length,
@@ -352,18 +394,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private async commitInputAndCreateResponse(
     session: OpenAiRealtimeSession,
   ): Promise<void> {
-    if (
-      session.responseRequested ||
-      session.responseInProgress ||
-      session.ws.readyState !== WebSocket.OPEN
-    ) {
+    if (session.responseRequested || session.ws.readyState !== WebSocket.OPEN) {
       return;
     }
 
     if (session.totalInputPcm24Sent === 0) {
       this.logger.warn({
         streamSid: session.streamSid,
-        message: 'Skipping commit/response.create — no audio sent to OpenAI',
+        pendingChunks: session.pendingPcm8.length,
+        message: 'Skipping commit/response.create — no audio sent to OpenAI yet',
       });
       return;
     }
@@ -385,6 +424,33 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
   }
 
+  private waitForWebSocketOpen(
+    session: OpenAiRealtimeSession,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    if (session.ws.readyState === WebSocket.OPEN) {
+      return Promise.resolve(true);
+    }
+    if (session.ws.readyState === WebSocket.CLOSED) {
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        resolve(session.ws.readyState === WebSocket.OPEN);
+      }, timeoutMs);
+
+      session.ws.once('open', () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+      session.ws.once('close', () => {
+        clearTimeout(timer);
+        resolve(false);
+      });
+    });
+  }
+
   private waitForResponseComplete(
     session: OpenAiRealtimeSession,
     timeoutMs: number,
@@ -398,6 +464,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         this.logger.warn({
           streamSid: session.streamSid,
           timeoutMs,
+          totalOutputMulawSent: session.totalOutputMulawSent,
           message: 'Timed out waiting for OpenAI response.done',
         });
         resolve();
@@ -449,15 +516,22 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       runtimeLastEventAt: new Date(),
     });
 
-    if (LOGGED_OPENAI_EVENTS.has(type)) {
+    const isImportant =
+      type === 'error' ||
+      type.includes('session') ||
+      type.includes('response') ||
+      type.includes('audio') ||
+      type.includes('buffer');
+
+    if (isImportant) {
       this.logger.log({ streamSid, openaiEvent: type, eventId: event.event_id });
-    } else {
-      this.logger.debug({ streamSid, openaiEvent: type });
     }
 
-    if (type === 'session.updated') {
+    if (type === 'session.updated' || type === 'session.created') {
       session.sessionReady = true;
-      this.flushPendingInput(session);
+      if (type === 'session.updated') {
+        this.flushPendingInput(session);
+      }
     }
 
     if (type === 'error') {
@@ -465,17 +539,12 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       const message =
         typeof error?.message === 'string'
           ? error.message
-          : 'OpenAI Realtime error';
-      this.logger.error({ streamSid, error: event.error }, message);
+          : JSON.stringify(event.error ?? event);
+      this.logger.error({ streamSid, error: event.error ?? event }, message);
       this.updateRuntimeState(streamSid, {
         runtimeStatus: 'error',
         runtimeError: message,
       });
-      return;
-    }
-
-    if (type === 'input_audio_buffer.speech_stopped') {
-      session.responseRequested = true;
       return;
     }
 
@@ -487,10 +556,12 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     if (
       type === 'response.output_audio.delta' ||
-      type === 'response.audio.delta'
+      type === 'response.audio.delta' ||
+      type.includes('audio.delta')
     ) {
-      const delta = event.delta;
-      if (typeof delta !== 'string' || delta.length === 0) {
+      const delta = extractAudioDelta(event);
+      if (!delta) {
+        this.logger.warn({ streamSid, openaiEvent: type, message: 'Audio delta event without payload' });
         return;
       }
       this.handleOutputAudioDelta(session, delta);
@@ -549,11 +620,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       mulaw,
     ]);
 
-    this.logger.debug({
+    this.logger.log({
       streamSid: session.streamSid,
       pcm24Bytes: pcm24.length,
       mulawBytes: mulaw.length,
-      bufferedMulawBytes: session.outboundMulawBuffer.length,
       message: 'Received OpenAI audio delta',
     });
 
@@ -583,13 +653,12 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.outboundMulawBuffer,
       Buffer.alloc(paddingLength, MULAW_SILENCE_BYTE),
     ]);
-    this.logger.debug({
+    this.flushOutboundMulaw(session);
+    this.logger.log({
       streamSid: session.streamSid,
       remainderBytes: remainder,
-      paddingBytes: paddingLength,
-      message: 'Padding final outbound μ-law frame',
+      message: 'Flushed final padded outbound frame',
     });
-    this.flushOutboundMulaw(session);
   }
 
   private sendOutboundMedia(
@@ -601,7 +670,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       streamSid,
       mulawBytes,
       base64Length: base64MulawPayload.length,
-      message: 'Sending outbound media to Smartflo',
+      message: 'Sending outbound media to Smartflo via AudioGateway',
     });
 
     this.audioGateway.sendMedia(streamSid, base64MulawPayload);

@@ -17,7 +17,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "smartflo:simulate": "ts-node scripts/smartflo-simulator.ts"
+    "smartflo:simulate": "ts-node scripts/smartflo-simulator.ts",
+    "openai:realtime:test": "ts-node scripts/test-openai-realtime.ts"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.2",

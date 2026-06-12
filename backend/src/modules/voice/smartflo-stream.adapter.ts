@@ -124,6 +124,7 @@ export class SmartfloStreamAdapter {
     this.logger.log({
       socketSessionId,
       streamSid,
+      runtimeProvider: this.voiceRuntime.name,
       smartfloEvent: payload,
       message: 'Voice session bound to streamSid',
     });
