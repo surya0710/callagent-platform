@@ -7,7 +7,7 @@ import {
 import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
-import { VoiceRecordingService } from './voice-recording.service';
+import { VoiceRecordingService } from './audio/voice-recording.service';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
 
