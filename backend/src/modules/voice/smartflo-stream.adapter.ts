@@ -163,7 +163,18 @@ export class SmartfloStreamAdapter {
     this.voiceSessionService.recordMedia(socketSessionId, payload);
 
     if (payloadStr) {
-      this.voiceRecordingService.appendMulawBase64(streamSid, payloadStr);
+      const timestampRaw =
+        media && media.timestamp != null ? String(media.timestamp) : undefined;
+      const parsedTimestamp = timestampRaw ? Number(timestampRaw) : Number.NaN;
+      const offsetMs = Number.isFinite(parsedTimestamp)
+        ? parsedTimestamp
+        : undefined;
+
+      this.voiceRecordingService.appendInboundMulawBase64(
+        streamSid,
+        payloadStr,
+        offsetMs,
+      );
 
       try {
         const mulawBuffer = Buffer.from(payloadStr, 'base64');

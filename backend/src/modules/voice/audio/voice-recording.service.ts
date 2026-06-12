@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Readable } from 'node:stream';
-import { decodeMulawBuffer } from './mulaw-codec';
+import {
+  decodeMulawBuffer,
+  decodeMulawSample,
+  encodePcm16ToMulaw,
+} from './mulaw-codec';
 import {
   buildVoiceRecordingStorageKey,
   toSafeRecordingFileName,
@@ -29,15 +33,23 @@ export type VoiceRecordingPublicMetadata = Omit<
   'storageKey'
 >;
 
+interface TimelineChunk {
+  offsetMs: number;
+  mulaw: Buffer;
+}
+
 interface ActiveRecording {
   streamSid: string;
   callSid?: string;
-  chunks: Buffer[];
+  streamStartedAtMs: number;
+  inboundChunks: TimelineChunk[];
+  outboundChunks: TimelineChunk[];
 }
 
 const SAMPLE_RATE = 8000;
 const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
+const MULAW_SILENCE_BYTE = 0xff;
 const MAX_METADATA_ENTRIES = 100;
 
 @Injectable()
@@ -73,11 +85,49 @@ export class VoiceRecordingService {
     this.activeByStreamSid.set(streamSid, {
       streamSid,
       callSid,
-      chunks: [],
+      streamStartedAtMs: Date.now(),
+      inboundChunks: [],
+      outboundChunks: [],
     });
   }
 
+  appendInboundMulawBase64(
+    streamSid: string,
+    base64Payload: string,
+    offsetMs?: number,
+  ): void {
+    this.appendTimelineMulawBase64(
+      streamSid,
+      base64Payload,
+      'inbound',
+      offsetMs,
+    );
+  }
+
+  /** @deprecated Use appendInboundMulawBase64 */
   appendMulawBase64(streamSid: string, base64Payload: string): void {
+    this.appendInboundMulawBase64(streamSid, base64Payload);
+  }
+
+  appendOutboundMulawBase64(
+    streamSid: string,
+    base64Payload: string,
+    offsetMs?: number,
+  ): void {
+    this.appendTimelineMulawBase64(
+      streamSid,
+      base64Payload,
+      'outbound',
+      offsetMs,
+    );
+  }
+
+  private appendTimelineMulawBase64(
+    streamSid: string,
+    base64Payload: string,
+    direction: 'inbound' | 'outbound',
+    offsetMs?: number,
+  ): void {
     if (!streamSid) {
       return;
     }
@@ -88,18 +138,32 @@ export class VoiceRecordingService {
     }
 
     try {
-      const chunk = Buffer.from(base64Payload, 'base64');
-      if (chunk.length === 0) {
+      const mulaw = Buffer.from(base64Payload, 'base64');
+      if (mulaw.length === 0) {
         this.logger.warn({
           streamSid,
+          direction,
           message: 'Skipping empty media payload after base64 decode',
         });
         return;
       }
-      active.chunks.push(chunk);
+
+      const resolvedOffsetMs =
+        offsetMs ?? Date.now() - active.streamStartedAtMs;
+      const timelineChunk: TimelineChunk = {
+        offsetMs: Math.max(0, resolvedOffsetMs),
+        mulaw,
+      };
+
+      if (direction === 'inbound') {
+        active.inboundChunks.push(timelineChunk);
+      } else {
+        active.outboundChunks.push(timelineChunk);
+      }
     } catch (error) {
       this.logger.warn({
         streamSid,
+        direction,
         err: error,
         message: 'Invalid base64 media payload; skipping chunk',
       });
@@ -126,12 +190,15 @@ export class VoiceRecordingService {
 
     this.activeByStreamSid.delete(streamSid);
 
-    if (active.chunks.length === 0) {
+    if (active.inboundChunks.length === 0 && active.outboundChunks.length === 0) {
       return null;
     }
 
     try {
-      const mulawBuffer = Buffer.concat(active.chunks);
+      const mulawBuffer = buildMixedMulawTimeline(
+        active.inboundChunks,
+        active.outboundChunks,
+      );
       const pcmBuffer = decodeMulawBuffer(mulawBuffer);
       const wavBuffer = createWavBuffer(pcmBuffer, {
         sampleRate: SAMPLE_RATE,
@@ -158,7 +225,7 @@ export class VoiceRecordingService {
         mulawBytes: mulawBuffer.length,
         pcmBytes: pcmBuffer.length,
         wavBytes: wavBuffer.length,
-        chunks: active.chunks.length,
+        chunks: active.inboundChunks.length + active.outboundChunks.length,
         durationMsEstimate: Math.round((mulawBuffer.length / SAMPLE_RATE) * 1000),
         createdAt: new Date().toISOString(),
       };
@@ -172,6 +239,8 @@ export class VoiceRecordingService {
         storageKey,
         mulawBytes: metadata.mulawBytes,
         wavBytes: metadata.wavBytes,
+        inboundChunks: active.inboundChunks.length,
+        outboundChunks: active.outboundChunks.length,
         chunks: metadata.chunks,
         message: 'Voice recording finalized',
       });
@@ -240,4 +309,53 @@ export class VoiceRecordingService {
   private trimMetadataEntries(): void {
     this.clearOldRecordings(MAX_METADATA_ENTRIES);
   }
+}
+
+function buildMixedMulawTimeline(
+  inboundChunks: TimelineChunk[],
+  outboundChunks: TimelineChunk[],
+): Buffer {
+  const allChunks = [...inboundChunks, ...outboundChunks];
+  if (allChunks.length === 0) {
+    return Buffer.alloc(0);
+  }
+
+  const totalMs = allChunks.reduce((maxEndMs, chunk) => {
+    const endMs = chunk.offsetMs + (chunk.mulaw.length / SAMPLE_RATE) * 1000;
+    return Math.max(maxEndMs, endMs);
+  }, 0);
+  const totalSamples = Math.max(1, Math.ceil((totalMs / 1000) * SAMPLE_RATE));
+  const output = Buffer.alloc(totalSamples, MULAW_SILENCE_BYTE);
+
+  for (const chunk of allChunks) {
+    const startSample = Math.floor((chunk.offsetMs / 1000) * SAMPLE_RATE);
+    for (let i = 0; i < chunk.mulaw.length; i += 1) {
+      const position = startSample + i;
+      if (position >= output.length) {
+        break;
+      }
+
+      const incoming = chunk.mulaw[i]!;
+      if (incoming === MULAW_SILENCE_BYTE) {
+        continue;
+      }
+
+      const existing = output[position]!;
+      output[position] =
+        existing === MULAW_SILENCE_BYTE
+          ? incoming
+          : mixMulawBytes(existing, incoming);
+    }
+  }
+
+  return output;
+}
+
+function mixMulawBytes(existing: number, incoming: number): number {
+  const pcmA = decodeMulawSample(existing);
+  const pcmB = decodeMulawSample(incoming);
+  const mixed = Math.max(-32768, Math.min(32767, Math.round((pcmA + pcmB) / 2)));
+  const mixedPcm = Buffer.alloc(2);
+  mixedPcm.writeInt16LE(mixed, 0);
+  return encodePcm16ToMulaw(mixedPcm)[0]!;
 }

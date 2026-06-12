@@ -7,6 +7,7 @@ import {
 import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
+import { VoiceRecordingService } from './voice-recording.service';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
 
@@ -24,6 +25,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly voiceSessionService: VoiceSessionService,
     private readonly voiceSocketRegistry: VoiceSocketRegistry,
     private readonly smartfloStreamAdapter: SmartfloStreamAdapter,
+    private readonly voiceRecordingService: VoiceRecordingService,
   ) {}
 
   handleConnection(client: VoiceWebSocket, request: IncomingMessage): void {
@@ -146,6 +148,11 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       socketFound: true,
       message: 'Writing outbound media to Smartflo WebSocket',
     });
+
+    this.voiceRecordingService.appendOutboundMulawBase64(
+      streamSid,
+      base64MulawPayload,
+    );
 
     client!.send(
       JSON.stringify({
