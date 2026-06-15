@@ -1,9 +1,9 @@
 import { Inject, Injectable, Logger, OnModuleInit, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebSocket } from 'ws';
-import { encodePcm16ToMulaw, decodeMulawBuffer } from '../audio/mulaw-codec';
-import { applyPcm16Gain } from '../audio/audio-gain.util';
-import { resamplePcm16 } from '../audio/pcm-resampler';
+import { encodePcm16ToMulaw } from '../audio/mulaw-codec';
+import { prepareOutboundPcm16 } from '../audio/audio-gain.util';
+import { Pcm16StreamDownsampler, resamplePcm16 } from '../audio/pcm-resampler';
 import { analyzePcm16, formatPcm16Stats } from '../audio/pcm-stats.util';
 import { isSpeechLikePcm16 } from '../audio/speech-detection.util';
 import { VoiceAudioConfigService } from '../audio/voice-audio-config.service';
@@ -41,6 +41,8 @@ interface OpenAiRealtimeSession {
   connectedAt?: Date;
   sessionReady: boolean;
   outboundMulawBuffer: Buffer;
+  outboundPcmDownsampler: Pcm16StreamDownsampler;
+  outboundChunkBytes: number;
   pendingPcm8: Buffer[];
   closing: boolean;
   commitTimer?: NodeJS.Timeout;
@@ -157,6 +159,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     const useServerVad = this.getTurnDetectionMode() === 'server_vad';
+    const outboundChunkBytes = this.voiceAudioConfigService.getOutboundChunkBytes();
 
     const session: OpenAiRealtimeSession = {
       streamSid,
@@ -164,6 +167,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       status: 'connecting',
       sessionReady: false,
       outboundMulawBuffer: Buffer.alloc(0),
+      outboundPcmDownsampler: new Pcm16StreamDownsampler(
+        OPENAI_SAMPLE_RATE,
+        SMARTFLO_SAMPLE_RATE,
+      ),
+      outboundChunkBytes,
       pendingPcm8: [],
       closing: false,
       responseRequested: false,
@@ -651,6 +659,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.responseInProgress = true;
       session.responseComplete = false;
       session.responseCount += 1;
+      session.outboundPcmDownsampler.reset();
+      session.outboundMulawBuffer = Buffer.alloc(0);
       this.updateRuntimeState(streamSid, {
         responseCount: session.responseCount,
         isAwaitingOpenAiResponse: true,
@@ -670,6 +680,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     if (type === 'response.output_audio.done' || type === 'response.audio.done') {
+      this.flushOutboundPcmRemainder(session);
+      this.flushRemainingOutbound(session);
       this.logger.log({
         streamSid,
         totalOutputMulawSent: session.totalOutputMulawSent,
@@ -684,6 +696,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.responseInProgress = false;
       session.responseComplete = true;
       session.responseRequested = false;
+      this.flushOutboundPcmRemainder(session);
       this.flushRemainingOutbound(session);
       this.resolveResponseWaiters(session);
       this.logger.log({
@@ -715,30 +728,40 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    if (pcm24.length === 0) {
+    if (pcm24.length === 0 || pcm24.length % 2 !== 0) {
+      if (pcm24.length % 2 !== 0) {
+        this.logger.warn({
+          streamSid: session.streamSid,
+          pcm24Bytes: pcm24.length,
+          message: 'OpenAI audio delta has odd byte length; dropping',
+        });
+      }
       return;
     }
 
-    const pcm8 = resamplePcm16(
-      pcm24,
-      OPENAI_SAMPLE_RATE,
-      SMARTFLO_SAMPLE_RATE,
-    );
-
     const openAiStats = analyzePcm16(pcm24);
-    const pcm8Stats = analyzePcm16(pcm8);
+    const pcm8 = session.outboundPcmDownsampler.push(pcm24);
+    if (pcm8.length === 0) {
+      return;
+    }
+
+    const pcm8Prepared = prepareOutboundPcm16(pcm8, {
+      autoNormalize: this.voiceAudioConfigService.isAutoNormalizeEnabled(),
+      gain: this.voiceAudioConfigService.getGain(),
+    });
+    const encodeInputStats = analyzePcm16(pcm8Prepared);
     const gain = this.voiceAudioConfigService.getGain();
-    const pcm8ForEncode = gain !== 1 ? applyPcm16Gain(pcm8, gain) : pcm8;
-    const encodeInputStats = analyzePcm16(pcm8ForEncode);
 
     if (!this.loggedOpenAiOutputByStreamSid.has(session.streamSid)) {
       this.loggedOpenAiOutputByStreamSid.add(session.streamSid);
       this.logger.log({
         streamSid: session.streamSid,
         openAiPcm24: formatPcm16Stats(openAiStats),
-        pcm8AfterResample: formatPcm16Stats(pcm8Stats),
-        pcm8BeforeMulawEncode: formatPcm16Stats(encodeInputStats),
+        pcm8AfterDownsample: formatPcm16Stats(analyzePcm16(pcm8)),
+        pcm8PreparedForMulaw: formatPcm16Stats(encodeInputStats),
         gain,
+        outboundChunkBytes: session.outboundChunkBytes,
+        autoNormalize: this.voiceAudioConfigService.isAutoNormalizeEnabled(),
         message: 'OpenAI output audio level stats (first delta)',
       });
     }
@@ -749,17 +772,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     );
     this.voiceSessionService.setAudioGainApplied(session.streamSid, gain);
 
-    const mulaw = encodePcm16ToMulaw(pcm8ForEncode);
-    const mulawRoundtripStats = analyzePcm16(decodeMulawBuffer(mulaw));
-    if (!this.loggedOpenAiOutputByStreamSid.has(`${session.streamSid}:mulaw`)) {
-      this.loggedOpenAiOutputByStreamSid.add(`${session.streamSid}:mulaw`);
-      this.logger.log({
-        streamSid: session.streamSid,
-        mulawEncodeRoundtrip: formatPcm16Stats(mulawRoundtripStats),
-        message: 'Outbound μ-law encode roundtrip stats (first delta)',
-      });
-    }
-
+    const mulaw = encodePcm16ToMulaw(pcm8Prepared);
     session.outboundMulawBuffer = Buffer.concat([
       session.outboundMulawBuffer,
       mulaw,
@@ -787,11 +800,35 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.flushOutboundMulaw(session);
   }
 
+  private flushOutboundPcmRemainder(session: OpenAiRealtimeSession): void {
+    const pcm8 = session.outboundPcmDownsampler.flush();
+    if (pcm8.length === 0) {
+      return;
+    }
+
+    const pcm8Prepared = prepareOutboundPcm16(pcm8, {
+      autoNormalize: this.voiceAudioConfigService.isAutoNormalizeEnabled(),
+      gain: this.voiceAudioConfigService.getGain(),
+    });
+    const mulaw = encodePcm16ToMulaw(pcm8Prepared);
+    session.outboundMulawBuffer = Buffer.concat([
+      session.outboundMulawBuffer,
+      mulaw,
+    ]);
+    this.logger.log({
+      streamSid: session.streamSid,
+      pcm8Bytes: pcm8.length,
+      mulawBytes: mulaw.length,
+      message: 'Flushed remaining OpenAI PCM through downsampler',
+    });
+  }
+
   private flushOutboundMulaw(session: OpenAiRealtimeSession): void {
-    while (session.outboundMulawBuffer.length >= MULAW_FRAME_BYTES) {
-      const frame = session.outboundMulawBuffer.subarray(0, MULAW_FRAME_BYTES);
+    const chunkBytes = session.outboundChunkBytes;
+    while (session.outboundMulawBuffer.length >= chunkBytes) {
+      const frame = session.outboundMulawBuffer.subarray(0, chunkBytes);
       session.outboundMulawBuffer = session.outboundMulawBuffer.subarray(
-        MULAW_FRAME_BYTES,
+        chunkBytes,
       );
       const payload = frame.toString('base64');
       session.totalOutputMulawSent += frame.length;
@@ -809,7 +846,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     const remainder = session.outboundMulawBuffer.length;
-    const paddingLength = MULAW_FRAME_BYTES - remainder;
+    const paddingLength =
+      MULAW_FRAME_BYTES - (remainder % MULAW_FRAME_BYTES || MULAW_FRAME_BYTES);
     session.outboundMulawBuffer = Buffer.concat([
       session.outboundMulawBuffer,
       Buffer.alloc(paddingLength, MULAW_SILENCE_BYTE),
@@ -818,6 +856,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.logger.log({
       streamSid: session.streamSid,
       remainderBytes: remainder,
+      paddedToBytes: session.outboundChunkBytes,
       message: 'Flushed final padded outbound frame',
     });
   }

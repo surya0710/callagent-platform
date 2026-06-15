@@ -7,6 +7,7 @@ export class VoiceSocketRegistry {
   private readonly byStreamSid = new Map<string, WebSocket>();
   private readonly socketToStreamSid = new Map<string, string>();
   private readonly outboundChunkByStreamSid = new Map<string, number>();
+  private readonly outboundSequenceByStreamSid = new Map<string, number>();
   private readonly outboundTimestampByStreamSid = new Map<string, number>();
 
   registerSocket(socketSessionId: string, client: WebSocket): void {
@@ -23,6 +24,7 @@ export class VoiceSocketRegistry {
     this.socketToStreamSid.set(socketSessionId, streamSid);
     if (!this.outboundChunkByStreamSid.has(streamSid)) {
       this.outboundChunkByStreamSid.set(streamSid, 1);
+      this.outboundSequenceByStreamSid.set(streamSid, 1);
       this.outboundTimestampByStreamSid.set(streamSid, 0);
     }
   }
@@ -39,6 +41,12 @@ export class VoiceSocketRegistry {
     const chunk = this.outboundChunkByStreamSid.get(streamSid) ?? 1;
     this.outboundChunkByStreamSid.set(streamSid, chunk + 1);
     return chunk;
+  }
+
+  nextOutboundSequenceNumber(streamSid: string): number {
+    const sequence = this.outboundSequenceByStreamSid.get(streamSid) ?? 1;
+    this.outboundSequenceByStreamSid.set(streamSid, sequence + 1);
+    return sequence;
   }
 
   nextOutboundTimestamp(streamSid: string, chunkDurationMs: number): number {
@@ -58,6 +66,7 @@ export class VoiceSocketRegistry {
       this.byStreamSid.delete(streamSid);
       this.socketToStreamSid.delete(socketSessionId);
       this.outboundChunkByStreamSid.delete(streamSid);
+      this.outboundSequenceByStreamSid.delete(streamSid);
       this.outboundTimestampByStreamSid.delete(streamSid);
     }
   }
@@ -65,6 +74,7 @@ export class VoiceSocketRegistry {
   removeByStreamSid(streamSid: string): void {
     this.byStreamSid.delete(streamSid);
     this.outboundChunkByStreamSid.delete(streamSid);
+    this.outboundSequenceByStreamSid.delete(streamSid);
     this.outboundTimestampByStreamSid.delete(streamSid);
 
     for (const [socketSessionId, mappedStreamSid] of this.socketToStreamSid) {

@@ -195,6 +195,10 @@ export class VoiceController {
       openAiRealtimeModel:
         this.configService.get<string>('OPENAI_REALTIME_MODEL') ?? null,
       voiceAudioGain: this.voiceAudioConfigService.getGain(),
+      voiceAudioAutoNormalize:
+        this.voiceAudioConfigService.isAutoNormalizeEnabled(),
+      voiceOutboundChunkBytes:
+        this.voiceAudioConfigService.getOutboundChunkBytes(),
       timestamp: new Date().toISOString(),
     };
   }

@@ -8,6 +8,7 @@ import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
 import { VoiceRecordingService } from './audio/voice-recording.service';
+import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
 
@@ -16,7 +17,6 @@ interface VoiceWebSocket extends WebSocket {
 }
 
 const MULAW_FRAME_BYTES = 160;
-const OUTBOUND_CHUNK_MS = 20;
 
 @WebSocketGateway({ path: '/api/voice/stream' })
 export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -27,6 +27,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly voiceSocketRegistry: VoiceSocketRegistry,
     private readonly smartfloStreamAdapter: SmartfloStreamAdapter,
     private readonly voiceRecordingService: VoiceRecordingService,
+    private readonly voiceAudioConfigService: VoiceAudioConfigService,
   ) {}
 
   handleConnection(client: VoiceWebSocket, request: IncomingMessage): void {
@@ -140,13 +141,17 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const chunkNumber =
       chunk ?? this.voiceSocketRegistry.nextOutboundChunk(streamSid);
+    const chunkDurationMs = this.voiceAudioConfigService.getOutboundChunkMs();
     const timestamp = this.voiceSocketRegistry.nextOutboundTimestamp(
       streamSid,
-      OUTBOUND_CHUNK_MS,
+      chunkDurationMs,
     );
+    const sequenceNumber =
+      this.voiceSocketRegistry.nextOutboundSequenceNumber(streamSid);
 
     this.logger.log({
       streamSid,
+      sequenceNumber,
       chunk: chunkNumber,
       timestamp,
       payloadBase64Length: base64MulawPayload.length,
@@ -158,14 +163,16 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.voiceRecordingService.appendOutboundMulawBase64(
       streamSid,
       base64MulawPayload,
+      timestamp,
     );
 
     const outboundMessage = JSON.stringify({
       event: 'media',
       streamSid,
+      sequenceNumber,
       media: {
         payload: base64MulawPayload,
-        chunk: String(chunkNumber),
+        chunk: chunkNumber,
         timestamp: String(timestamp),
       },
     });

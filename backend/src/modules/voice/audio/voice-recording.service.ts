@@ -1,23 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Readable } from 'node:stream';
-import { applyPcm16Gain } from './audio-gain.util';
 import {
   analyzePcm16,
   formatPcm16Stats,
 } from './pcm-stats.util';
-import { VoiceAudioConfigService } from './voice-audio-config.service';
-import {
-  decodeMulawBuffer,
-  decodeMulawSample,
-  encodePcm16ToMulaw,
-} from './mulaw-codec';
+import { buildMixedPcmTimeline } from './pcm-recording-mix.util';
+import { VoiceSessionService } from '../voice-session.service';
 import {
   buildVoiceRecordingStorageKey,
   toSafeRecordingFileName,
 } from './storage/voice-recording-storage.interface';
 import { VoiceRecordingStorageFactory } from './storage/voice-recording-storage.factory';
 import { createWavBuffer } from './wav-writer';
-import { VoiceSessionService } from '../voice-session.service';
 
 export interface VoiceRecordingMetadata {
   streamSid: string;
@@ -57,7 +51,6 @@ interface ActiveRecording {
 const SAMPLE_RATE = 8000;
 const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
-const MULAW_SILENCE_BYTE = 0xff;
 const MAX_METADATA_ENTRIES = 100;
 
 @Injectable()
@@ -71,7 +64,6 @@ export class VoiceRecordingService {
 
   constructor(
     private readonly storageFactory: VoiceRecordingStorageFactory,
-    private readonly voiceAudioConfigService: VoiceAudioConfigService,
     private readonly voiceSessionService: VoiceSessionService,
   ) {}
 
@@ -169,6 +161,14 @@ export class VoiceRecordingService {
           }
           resolvedOffsetMs = active.outboundCursorMs;
           active.outboundCursorMs += chunkDurationMs;
+        } else {
+          const chunkEndMs = resolvedOffsetMs + chunkDurationMs;
+          if (
+            active.outboundCursorMs == null ||
+            chunkEndMs > active.outboundCursorMs
+          ) {
+            active.outboundCursorMs = chunkEndMs;
+          }
         }
       } else if (resolvedOffsetMs == null) {
         resolvedOffsetMs = Date.now() - active.streamStartedAtMs;
@@ -219,20 +219,13 @@ export class VoiceRecordingService {
     }
 
     try {
-      const mulawBuffer = buildMixedMulawTimeline(
+      const pcmBuffer = buildMixedPcmTimeline(
         active.inboundChunks,
         active.outboundChunks,
+        SAMPLE_RATE,
       );
-      let pcmBuffer = decodeMulawBuffer(mulawBuffer);
-      const pcmStatsBeforeGain = analyzePcm16(pcmBuffer);
-      const gain = this.voiceAudioConfigService.getGain();
-
-      if (gain !== 1) {
-        pcmBuffer = applyPcm16Gain(pcmBuffer, gain);
-      }
-
-      const pcmStatsAfterGain = analyzePcm16(pcmBuffer);
-      this.voiceSessionService.setAudioGainApplied(streamSid, gain);
+      const pcmStats = analyzePcm16(pcmBuffer);
+      this.voiceSessionService.setAudioGainApplied(streamSid, 1);
 
       const wavBuffer = createWavBuffer(pcmBuffer, {
         sampleRate: SAMPLE_RATE,
@@ -256,11 +249,12 @@ export class VoiceRecordingService {
         sampleRate: SAMPLE_RATE,
         channels: CHANNELS,
         bitsPerSample: BITS_PER_SAMPLE,
-        mulawBytes: mulawBuffer.length,
+        mulawBytes: active.inboundChunks.reduce((sum, c) => sum + c.mulaw.length, 0) +
+          active.outboundChunks.reduce((sum, c) => sum + c.mulaw.length, 0),
         pcmBytes: pcmBuffer.length,
         wavBytes: wavBuffer.length,
         chunks: active.inboundChunks.length + active.outboundChunks.length,
-        durationMsEstimate: Math.round((mulawBuffer.length / SAMPLE_RATE) * 1000),
+        durationMsEstimate: Math.round((pcmBuffer.length / 2 / SAMPLE_RATE) * 1000),
         createdAt: new Date().toISOString(),
       };
 
@@ -276,9 +270,8 @@ export class VoiceRecordingService {
         inboundChunks: active.inboundChunks.length,
         outboundChunks: active.outboundChunks.length,
         chunks: metadata.chunks,
-        gain,
-        pcmBeforeGain: formatPcm16Stats(pcmStatsBeforeGain),
-        pcmAfterGain: formatPcm16Stats(pcmStatsAfterGain),
+        pcmStats: formatPcm16Stats(pcmStats),
+        mixStrategy: 'pcm_timeline_outbound_priority',
         message: 'Voice recording finalized',
       });
 
@@ -346,53 +339,4 @@ export class VoiceRecordingService {
   private trimMetadataEntries(): void {
     this.clearOldRecordings(MAX_METADATA_ENTRIES);
   }
-}
-
-function buildMixedMulawTimeline(
-  inboundChunks: TimelineChunk[],
-  outboundChunks: TimelineChunk[],
-): Buffer {
-  const allChunks = [...inboundChunks, ...outboundChunks];
-  if (allChunks.length === 0) {
-    return Buffer.alloc(0);
-  }
-
-  const totalMs = allChunks.reduce((maxEndMs, chunk) => {
-    const endMs = chunk.offsetMs + (chunk.mulaw.length / SAMPLE_RATE) * 1000;
-    return Math.max(maxEndMs, endMs);
-  }, 0);
-  const totalSamples = Math.max(1, Math.ceil((totalMs / 1000) * SAMPLE_RATE));
-  const output = Buffer.alloc(totalSamples, MULAW_SILENCE_BYTE);
-
-  for (const chunk of allChunks) {
-    const startSample = Math.floor((chunk.offsetMs / 1000) * SAMPLE_RATE);
-    for (let i = 0; i < chunk.mulaw.length; i += 1) {
-      const position = startSample + i;
-      if (position >= output.length) {
-        break;
-      }
-
-      const incoming = chunk.mulaw[i]!;
-      if (incoming === MULAW_SILENCE_BYTE) {
-        continue;
-      }
-
-      const existing = output[position]!;
-      output[position] =
-        existing === MULAW_SILENCE_BYTE
-          ? incoming
-          : mixMulawBytes(existing, incoming);
-    }
-  }
-
-  return output;
-}
-
-function mixMulawBytes(existing: number, incoming: number): number {
-  const pcmA = decodeMulawSample(existing);
-  const pcmB = decodeMulawSample(incoming);
-  const mixed = Math.max(-32768, Math.min(32767, Math.round((pcmA + pcmB) / 2)));
-  const mixedPcm = Buffer.alloc(2);
-  mixedPcm.writeInt16LE(mixed, 0);
-  return encodePcm16ToMulaw(mixedPcm)[0]!;
 }

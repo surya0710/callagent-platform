@@ -149,6 +149,14 @@ export class EnvironmentVariables {
   VOICE_AUDIO_GAIN?: string;
 
   @IsOptional()
+  @IsString()
+  VOICE_AUDIO_AUTO_NORMALIZE?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_OUTBOUND_CHUNK_BYTES?: string;
+
+  @IsOptional()
   @IsEnum(VoiceRecordingStorageDriver)
   VOICE_RECORDINGS_STORAGE_DRIVER?: VoiceRecordingStorageDriver;
 
