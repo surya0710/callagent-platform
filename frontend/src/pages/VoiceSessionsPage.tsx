@@ -95,7 +95,10 @@ export function VoiceSessionsPage() {
   });
 
   const activeSessions = sessionsQuery.data?.active ?? [];
-  const recentEnded = sessionsQuery.data?.recentEnded ?? [];
+  const recentEnded = [...(sessionsQuery.data?.recentEnded ?? [])].sort(
+    (a, b) =>
+      new Date(b.endedAt ?? 0).getTime() - new Date(a.endedAt ?? 0).getTime(),
+  );
   const hasActiveSessions = activeSessions.length > 0;
 
   useEffect(() => {
@@ -267,55 +270,6 @@ export function VoiceSessionsPage() {
         <ErrorState message="Failed to load voice sessions. Showing last successful data if available." />
       )}
 
-      <Card title="Active Sessions">
-        {activeSessions.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-700 p-10 text-center text-slate-400">
-            No active Smartflo calls
-          </div>
-        ) : (
-          <Table
-            headers={[
-              'Status',
-              'streamSid',
-              'callSid',
-              'From',
-              'To',
-              'Direction',
-              'Packets',
-              'Last Event',
-              'Last Event At',
-              'Duration',
-              'Actions',
-            ]}
-          >
-            {activeSessions.map((session) => (
-              <tr key={session.socketSessionId} className="text-slate-300">
-                <td className="px-4 py-3">
-                  <StatusBadge status={session.status} />
-                </td>
-                <td className="px-4 py-3 font-mono text-xs">{safeValue(session.streamSid)}</td>
-                <td className="px-4 py-3 font-mono text-xs">{safeValue(session.callSid)}</td>
-                <td className="px-4 py-3">{safeValue(session.from)}</td>
-                <td className="px-4 py-3">{safeValue(session.to)}</td>
-                <td className="px-4 py-3 capitalize">{safeValue(session.direction)}</td>
-                <td className="px-4 py-3">{session.packetsReceived}</td>
-                <td className="px-4 py-3">{safeValue(session.lastEvent)}</td>
-                <td className="px-4 py-3">{formatDateTime(session.lastEventAt)}</td>
-                <td className="px-4 py-3">{sessionDuration(session, now)}</td>
-                <td className="px-4 py-3">
-                  <SessionActions
-                    session={session}
-                    onViewDetails={setSelectedSession}
-                    copiedKey={copiedKey}
-                    onCopy={handleCopy}
-                  />
-                </td>
-              </tr>
-            ))}
-          </Table>
-        )}
-      </Card>
-
       <Card title="Recent Ended Sessions">
         {recentEnded.length === 0 ? (
           <div className="rounded-lg border border-dashed border-slate-700 p-10 text-center text-slate-400">
@@ -365,6 +319,55 @@ export function VoiceSessionsPage() {
                 <td className="px-4 py-3">{formatDateTime(session.startedAt ?? session.connectedAt)}</td>
                 <td className="px-4 py-3">{formatDateTime(session.endedAt ?? undefined)}</td>
                 <td className="px-4 py-3">{sessionDuration(session)}</td>
+                <td className="px-4 py-3">
+                  <SessionActions
+                    session={session}
+                    onViewDetails={setSelectedSession}
+                    copiedKey={copiedKey}
+                    onCopy={handleCopy}
+                  />
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Card>
+
+      <Card title="Active Sessions">
+        {activeSessions.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-700 p-10 text-center text-slate-400">
+            No active Smartflo calls
+          </div>
+        ) : (
+          <Table
+            headers={[
+              'Status',
+              'streamSid',
+              'callSid',
+              'From',
+              'To',
+              'Direction',
+              'Packets',
+              'Last Event',
+              'Last Event At',
+              'Duration',
+              'Actions',
+            ]}
+          >
+            {activeSessions.map((session) => (
+              <tr key={session.socketSessionId} className="text-slate-300">
+                <td className="px-4 py-3">
+                  <StatusBadge status={session.status} />
+                </td>
+                <td className="px-4 py-3 font-mono text-xs">{safeValue(session.streamSid)}</td>
+                <td className="px-4 py-3 font-mono text-xs">{safeValue(session.callSid)}</td>
+                <td className="px-4 py-3">{safeValue(session.from)}</td>
+                <td className="px-4 py-3">{safeValue(session.to)}</td>
+                <td className="px-4 py-3 capitalize">{safeValue(session.direction)}</td>
+                <td className="px-4 py-3">{session.packetsReceived}</td>
+                <td className="px-4 py-3">{safeValue(session.lastEvent)}</td>
+                <td className="px-4 py-3">{formatDateTime(session.lastEventAt)}</td>
+                <td className="px-4 py-3">{sessionDuration(session, now)}</td>
                 <td className="px-4 py-3">
                   <SessionActions
                     session={session}

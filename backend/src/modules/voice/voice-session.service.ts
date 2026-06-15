@@ -273,7 +273,9 @@ export class VoiceSessionService {
   }
 
   getRecentEndedSessions(): VoiceSession[] {
-    return [...this.recentEndedSessions];
+    return [...this.recentEndedSessions].sort(
+      (a, b) => (b.endedAt?.getTime() ?? 0) - (a.endedAt?.getTime() ?? 0),
+    );
   }
 
   getSessionCounts(): { active: number; recentEnded: number } {
