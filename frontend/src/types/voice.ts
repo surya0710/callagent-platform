@@ -74,6 +74,7 @@ export interface VoiceHealthResponse {
   service: string;
   activeSessions: number;
   recentEndedSessions: number;
+  voiceRequireAppAuthorization?: boolean;
   timestamp: string;
   serverOrigin?: VoiceServerOrigin;
 }
@@ -89,6 +90,8 @@ export interface VoiceTestCallResponse {
   requestedCustomerNumber: string;
   normalizedCustomerNumber: string;
   callOrigin: VoiceCallRequestOrigin;
+  authorizationId?: string;
+  providerCallSid?: string | null;
 }
 
 export function voiceRecordingDownloadUrl(streamSid: string): string {

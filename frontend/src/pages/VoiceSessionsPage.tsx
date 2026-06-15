@@ -148,7 +148,7 @@ export function VoiceSessionsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Voice Sessions</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Monitor Smartflo bidirectional audio streams in real time.
+            Monitor Smartflo bidirectional audio streams from app-initiated calls only.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">

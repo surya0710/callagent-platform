@@ -25,6 +25,10 @@ export interface VoiceSession {
   mediaFormat?: unknown;
   customParameters?: unknown;
   status: VoiceSessionStatus;
+  isAppInitiated?: boolean;
+  authorizationSource?: string;
+  authorizationId?: string;
+  rejectionReason?: string;
   connectedAt: Date;
   startedAt?: Date;
   endedAt?: Date;
@@ -112,6 +116,10 @@ export interface VoiceSessionResponse {
   mediaFormat?: unknown;
   customParameters?: unknown;
   status: VoiceSessionStatus;
+  isAppInitiated?: boolean;
+  authorizationSource?: string;
+  authorizationId?: string;
+  rejectionReason?: string;
   connectedAt: string;
   startedAt?: string | null;
   endedAt?: string | null;
@@ -200,6 +208,10 @@ export function toVoiceSessionResponse(
     mediaFormat: session.mediaFormat,
     customParameters: session.customParameters,
     status: session.status,
+    isAppInitiated: session.isAppInitiated,
+    authorizationSource: session.authorizationSource,
+    authorizationId: session.authorizationId,
+    rejectionReason: session.rejectionReason,
     connectedAt: session.connectedAt.toISOString(),
     startedAt: toIso(session.startedAt) ?? null,
     endedAt: toIso(session.endedAt) ?? null,
@@ -314,20 +326,50 @@ export class VoiceSessionService {
   }
 
   getActiveSessions(): VoiceSession[] {
-    return Array.from(this.activeBySocketSessionId.values());
+    return Array.from(this.activeBySocketSessionId.values()).filter(
+      (session) => session.isAppInitiated === true,
+    );
   }
 
   getRecentEndedSessions(): VoiceSession[] {
-    return [...this.recentEndedSessions].sort(
-      (a, b) => (b.endedAt?.getTime() ?? 0) - (a.endedAt?.getTime() ?? 0),
-    );
+    return [...this.recentEndedSessions]
+      .filter((session) => session.isAppInitiated === true)
+      .sort(
+        (a, b) => (b.endedAt?.getTime() ?? 0) - (a.endedAt?.getTime() ?? 0),
+      );
   }
 
   getSessionCounts(): { active: number; recentEnded: number } {
     return {
-      active: this.activeBySocketSessionId.size,
-      recentEnded: this.recentEndedSessions.length,
+      active: this.getActiveSessions().length,
+      recentEnded: this.getRecentEndedSessions().length,
     };
+  }
+
+  isAppInitiatedStream(streamSid: string): boolean {
+    const session = this.getByStreamSid(streamSid);
+    return session?.isAppInitiated === true;
+  }
+
+  markAppInitiated(
+    streamSid: string,
+    appInitiated: boolean,
+    metadata?: {
+      authorizationSource?: string;
+      authorizationId?: string;
+      callId?: string;
+      rejectionReason?: string;
+    },
+  ): void {
+    const session = this.activeByStreamSid.get(streamSid);
+    if (!session) {
+      return;
+    }
+
+    session.isAppInitiated = appInitiated;
+    session.authorizationSource = metadata?.authorizationSource;
+    session.authorizationId = metadata?.authorizationId;
+    session.rejectionReason = metadata?.rejectionReason;
   }
 
   recordConnected(socketSessionId: string): void {
@@ -738,6 +780,11 @@ export class VoiceSessionService {
       return;
     }
 
+    if (session.isAppInitiated !== true) {
+      this.discardSession(session, stopReason ?? null, 'stop');
+      return;
+    }
+
     this.endSession(session, stopReason ?? null, 'stop');
   }
 
@@ -747,7 +794,32 @@ export class VoiceSessionService {
       return;
     }
 
+    if (session.isAppInitiated !== true) {
+      this.discardSession(session, 'websocket_disconnected', 'disconnect');
+      return;
+    }
+
     this.endSession(session, 'websocket_disconnected', 'disconnect');
+  }
+
+  private discardSession(
+    session: VoiceSession,
+    stopReason: string | null,
+    lastEvent: string,
+  ): void {
+    session.status = 'ENDED';
+    session.endedAt = new Date();
+    session.stopReason = stopReason;
+    session.lastEvent = lastEvent;
+    session.lastEventAt = new Date();
+
+    this.activeBySocketSessionId.delete(session.socketSessionId);
+    if (session.streamSid) {
+      this.activeByStreamSid.delete(session.streamSid);
+      this.socketToStreamSid.delete(session.socketSessionId);
+      this.inboundStatsByStreamSid.delete(session.streamSid);
+      this.outboundStatsByStreamSid.delete(session.streamSid);
+    }
   }
 
   private endSession(

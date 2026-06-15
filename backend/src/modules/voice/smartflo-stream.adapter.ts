@@ -8,6 +8,7 @@ import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import { parseSmartfloInboundMedia } from './smartflo-media.util';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
+import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
@@ -26,6 +27,7 @@ export class SmartfloStreamAdapter {
     private readonly voiceSocketRegistry: VoiceSocketRegistry,
     private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
     private readonly voiceRecordingService: VoiceRecordingService,
+    private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
   ) {}
 
   private get voiceRuntime() {
@@ -129,14 +131,50 @@ export class SmartfloStreamAdapter {
 
     this.voiceSessionService.bindStreamSid(socketSessionId, startData);
     this.voiceSocketRegistry.bindStreamSid(socketSessionId, streamSid);
+
+    const authorization = this.voiceCallAuthorizationService.authorizeStart({
+      streamSid,
+      callSid: startData.callSid,
+      from: startData.from,
+      to: startData.to,
+      customParameters: startData.customParameters,
+    });
+
+    if (!authorization.authorized) {
+      this.voiceSessionService.markAppInitiated(streamSid, false, {
+        rejectionReason: authorization.reason,
+      });
+
+      this.logger.warn({
+        socketSessionId,
+        streamSid,
+        callSid: startData.callSid,
+        from: startData.from,
+        to: startData.to,
+        reason: authorization.reason,
+        message:
+          'Smartflo stream rejected — skipping OpenAI runtime and recording (not app-initiated)',
+      });
+      return;
+    }
+
+    this.voiceSessionService.markAppInitiated(streamSid, true, {
+      authorizationSource: authorization.source,
+      authorizationId: authorization.authorizationId,
+      callId: authorization.callId,
+    });
+
     this.voiceRecordingService.start(streamSid, startData.callSid);
 
     this.logger.log({
       socketSessionId,
       streamSid,
       callSid: startData.callSid,
+      authorizationSource: authorization.source,
+      authorizationId: authorization.authorizationId,
       runtimeProvider: this.voiceRuntime.name,
-      message: 'Smartflo start event received — voice session bound to streamSid',
+      message:
+        'Smartflo start event received — authorized app call bound to streamSid',
     });
 
     void this.voiceRuntime.createSession({
@@ -163,6 +201,10 @@ export class SmartfloStreamAdapter {
         socketSessionId,
         message: 'Media event received before streamSid binding',
       });
+      return;
+    }
+
+    if (!this.voiceSessionService.isAppInitiatedStream(streamSid)) {
       return;
     }
 
@@ -375,6 +417,11 @@ export class SmartfloStreamAdapter {
     streamSid: string,
     callSid?: string,
   ): Promise<void> {
+    if (!this.voiceSessionService.isAppInitiatedStream(streamSid)) {
+      await this.endRuntimeForStream(streamSid);
+      return;
+    }
+
     await this.endRuntimeForStream(streamSid);
     await this.finalizeRecording(streamSid, callSid);
   }
@@ -385,9 +432,12 @@ export class SmartfloStreamAdapter {
     callSid: string | undefined,
     stopReason: string | null,
   ): Promise<void> {
-    // Keep Smartflo socket open while OpenAI finishes its response.
-    await this.endRuntimeForStream(streamSid);
-    await this.finalizeRecording(streamSid, callSid);
+    const appInitiated = this.voiceSessionService.isAppInitiatedStream(streamSid);
+
+    if (appInitiated) {
+      await this.endRuntimeForStream(streamSid);
+      await this.finalizeRecording(streamSid, callSid);
+    }
 
     this.voiceSessionService.endByStreamSid(streamSid, stopReason);
     this.voiceSocketRegistry.removeByStreamSid(streamSid);
@@ -396,7 +446,10 @@ export class SmartfloStreamAdapter {
       socketSessionId,
       streamSid,
       stopReason,
-      message: 'Smartflo stop event received — finalizing voice session',
+      appInitiated,
+      message: appInitiated
+        ? 'Smartflo stop event received — finalizing voice session'
+        : 'Smartflo stop event received — discarded unauthorized stream',
     });
   }
 

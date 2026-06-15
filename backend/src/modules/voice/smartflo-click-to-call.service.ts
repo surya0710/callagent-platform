@@ -9,6 +9,10 @@ import {
   buildCallRequestOriginInfo,
   CallRequestOriginInfo,
 } from '../../common/server-origin.util';
+import {
+  extractSmartfloProviderCallSid,
+  VoiceCallAuthorizationService,
+} from './voice-call-authorization.service';
 
 export interface VoiceTestCallResult {
   success: boolean;
@@ -17,13 +21,18 @@ export interface VoiceTestCallResult {
   requestedCustomerNumber: string;
   normalizedCustomerNumber: string;
   callOrigin: CallRequestOriginInfo;
+  authorizationId?: string;
+  providerCallSid?: string | null;
 }
 
 @Injectable()
 export class SmartfloClickToCallService {
   private readonly logger = new Logger(SmartfloClickToCallService.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
+  ) {}
 
   async initiateTestCall(
     customerNumber: string,
@@ -114,6 +123,13 @@ export class SmartfloClickToCallService {
       message: 'Smartflo click-to-call accepted',
     });
 
+    const providerCallSid = extractSmartfloProviderCallSid(providerResponse);
+    const authorizationId = this.voiceCallAuthorizationService.register({
+      source: 'test-call',
+      customerNumber: normalizedCustomerNumber,
+      callSid: providerCallSid,
+    });
+
     return {
       success: true,
       message: 'Test call initiated successfully',
@@ -121,6 +137,8 @@ export class SmartfloClickToCallService {
       requestedCustomerNumber,
       normalizedCustomerNumber,
       callOrigin,
+      authorizationId,
+      providerCallSid: providerCallSid ?? null,
     };
   }
 

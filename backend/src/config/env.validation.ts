@@ -183,6 +183,10 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SMARTFLO_CALLER_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_REQUIRE_APP_AUTHORIZATION?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

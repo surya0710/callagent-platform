@@ -10,6 +10,7 @@ import { OpenAIRealtimeProvider } from './runtime/openai-realtime.provider';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import { SmartfloClickToCallService } from './smartflo-click-to-call.service';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
+import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
 import { VoiceController } from './voice.controller';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
@@ -27,11 +28,12 @@ import { VoiceTestCallController } from './voice-test-call.controller';
     VoiceAudioConfigService,
     SmartfloClickToCallService,
     SmartfloStreamAdapter,
+    VoiceCallAuthorizationService,
     MockVoiceRuntimeProvider,
     OpenAIRealtimeProvider,
     VoiceRuntimeFactory,
     AudioGateway,
   ],
-  exports: [AudioGateway],
+  exports: [AudioGateway, VoiceCallAuthorizationService],
 })
 export class VoiceModule {}

@@ -16,6 +16,7 @@ import { VoiceRuntimeType } from '../../config/env.validation';
 import { VoiceRecordingService } from './audio/voice-recording.service';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
+import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
 import {
   toVoiceSessionResponse,
   VoiceSessionService,
@@ -31,6 +32,7 @@ export class VoiceController {
     private readonly configService: ConfigService,
     private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
+    private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
   ) {}
 
   @Get('sessions')
@@ -222,6 +224,8 @@ export class VoiceController {
         this.voiceAudioConfigService.isAutoNormalizeEnabled(),
       voiceOutboundChunkBytes:
         this.voiceAudioConfigService.getOutboundChunkBytes(),
+      voiceRequireAppAuthorization:
+        this.voiceCallAuthorizationService.isAuthorizationRequired(),
       serverOrigin,
       timestamp: new Date().toISOString(),
     };
