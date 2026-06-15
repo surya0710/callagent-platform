@@ -10,6 +10,7 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
+import { buildServerOriginInfo } from '../../common/server-origin.util';
 import { ConfigService } from '@nestjs/config';
 import { VoiceRuntimeType } from '../../config/env.validation';
 import { VoiceRecordingService } from './audio/voice-recording.service';
@@ -19,8 +20,6 @@ import {
   toVoiceSessionResponse,
   VoiceSessionService,
 } from './voice-session.service';
-
-const DEFAULT_WSS_BASE_URL = 'wss://tatdai.in/api/voice/stream';
 
 @ApiTags('Voice')
 @Public()
@@ -183,6 +182,13 @@ export class VoiceController {
       this.configService.get<VoiceRuntimeType>('VOICE_RUNTIME') ??
       VoiceRuntimeType.MOCK;
     const openAiKey = this.configService.get<string>('OPENAI_API_KEY')?.trim();
+    const serverOrigin = buildServerOriginInfo({
+      nodeEnv: this.configService.get<string>('NODE_ENV'),
+      appVersion: this.configService.get<string>('APP_VERSION'),
+      serverId: this.configService.get<string>('APP_SERVER_ID'),
+      smartfloBaseUrl: this.configService.get<string>('SMARTFLO_BASE_URL'),
+      voiceWssBaseUrl: this.configService.get<string>('VOICE_WSS_BASE_URL'),
+    });
 
     return {
       success: true,
@@ -199,6 +205,7 @@ export class VoiceController {
         this.voiceAudioConfigService.isAutoNormalizeEnabled(),
       voiceOutboundChunkBytes:
         this.voiceAudioConfigService.getOutboundChunkBytes(),
+      serverOrigin,
       timestamp: new Date().toISOString(),
     };
   }
@@ -207,12 +214,18 @@ export class VoiceController {
   @HttpCode(200)
   @ApiOperation({ summary: 'Smartflo dynamic WebSocket URL resolver' })
   resolve() {
-    const wssUrl =
-      process.env.VOICE_WSS_BASE_URL?.trim() || DEFAULT_WSS_BASE_URL;
+    const serverOrigin = buildServerOriginInfo({
+      nodeEnv: this.configService.get<string>('NODE_ENV'),
+      appVersion: this.configService.get<string>('APP_VERSION'),
+      serverId: this.configService.get<string>('APP_SERVER_ID'),
+      smartfloBaseUrl: this.configService.get<string>('SMARTFLO_BASE_URL'),
+      voiceWssBaseUrl: this.configService.get<string>('VOICE_WSS_BASE_URL'),
+    });
 
     return {
       success: true,
-      wss_url: wssUrl,
+      wss_url: serverOrigin.voiceWssBaseUrl,
+      serverOrigin,
     };
   }
 }

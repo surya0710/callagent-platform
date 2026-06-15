@@ -185,17 +185,8 @@ export class SmartfloStreamAdapter {
     this.voiceSessionService.recordMedia(socketSessionId, payload);
 
     if (payloadStr) {
-      const timestampRaw = parsed.timestamp;
-      const parsedTimestamp = timestampRaw ? Number(timestampRaw) : Number.NaN;
-      const offsetMs = Number.isFinite(parsedTimestamp)
-        ? parsedTimestamp
-        : undefined;
-
-      this.voiceRecordingService.appendInboundMulawBase64(
-        streamSid,
-        payloadStr,
-        offsetMs,
-      );
+      // Recording uses wall-clock offsets from stream start (see VoiceRecordingService).
+      this.voiceRecordingService.appendInboundMulawBase64(streamSid, payloadStr);
 
       try {
         const mulawBuffer = Buffer.from(payloadStr, 'base64');
@@ -406,6 +397,12 @@ export class SmartfloStreamAdapter {
         durationMsEstimate: metadata.durationMsEstimate,
         mulawBytes: metadata.mulawBytes,
         wavBytes: metadata.wavBytes,
+        inboundTimelineStartMs: metadata.inboundTimelineStartMs,
+        inboundTimelineEndMs: metadata.inboundTimelineEndMs,
+        outboundTimelineStartMs: metadata.outboundTimelineStartMs,
+        outboundTimelineEndMs: metadata.outboundTimelineEndMs,
+        inboundChunkCount: metadata.inboundChunkCount,
+        outboundChunkCount: metadata.outboundChunkCount,
       });
 
       this.logger.log({
@@ -415,6 +412,10 @@ export class SmartfloStreamAdapter {
         pcmBytes: metadata.pcmBytes,
         chunks: metadata.chunks,
         durationMsEstimate: metadata.durationMsEstimate,
+        inboundTimelineStartMs: metadata.inboundTimelineStartMs,
+        inboundTimelineEndMs: metadata.inboundTimelineEndMs,
+        outboundTimelineStartMs: metadata.outboundTimelineStartMs,
+        outboundTimelineEndMs: metadata.outboundTimelineEndMs,
         message: 'Voice recording generated',
       });
     } catch (error) {

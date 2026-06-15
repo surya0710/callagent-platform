@@ -5,6 +5,10 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  buildCallRequestOriginInfo,
+  CallRequestOriginInfo,
+} from '../../common/server-origin.util';
 
 export interface VoiceTestCallResult {
   success: boolean;
@@ -12,6 +16,7 @@ export interface VoiceTestCallResult {
   providerResponse: unknown;
   requestedCustomerNumber: string;
   normalizedCustomerNumber: string;
+  callOrigin: CallRequestOriginInfo;
 }
 
 @Injectable()
@@ -20,9 +25,21 @@ export class SmartfloClickToCallService {
 
   constructor(private readonly configService: ConfigService) {}
 
-  async initiateTestCall(customerNumber: string): Promise<VoiceTestCallResult> {
+  async initiateTestCall(
+    customerNumber: string,
+    requestMeta?: {
+      requestedByIp?: string;
+      requestedByForwardedFor?: string;
+    },
+  ): Promise<VoiceTestCallResult> {
     const requestedCustomerNumber = customerNumber.trim();
-    this.logger.log(`Test call requested for customer number: ${requestedCustomerNumber}`);
+    const callOrigin = this.buildCallOrigin(requestMeta);
+
+    this.logger.log({
+      requestedCustomerNumber,
+      callOrigin,
+      message: 'Smartflo click-to-call requested',
+    });
 
     const normalizedCustomerNumber =
       this.normalizeCustomerNumber(requestedCustomerNumber);
@@ -31,10 +48,7 @@ export class SmartfloClickToCallService {
     const apiKey = this.configService
       .get<string>('SMARTFLO_CLICK_TO_CALL_API_KEY')
       ?.trim();
-    const baseUrl = (
-      this.configService.get<string>('SMARTFLO_BASE_URL') ??
-      'https://api-smartflo.tatateleservices.com'
-    ).replace(/\/+$/, '');
+    const baseUrl = callOrigin.smartfloApiBaseUrl.replace(/\/+$/, '');
     const callerId = this.configService.get<string>('SMARTFLO_CALLER_ID')?.trim();
 
     if (!apiKey) {
@@ -89,12 +103,16 @@ export class SmartfloClickToCallService {
         providerResponse,
         requestedCustomerNumber,
         normalizedCustomerNumber,
+        callOrigin,
       };
     }
 
-    this.logger.log(
-      `Smartflo click-to-call accepted for ${normalizedCustomerNumber}`,
-    );
+    this.logger.log({
+      normalizedCustomerNumber,
+      callOrigin,
+      smartfloStatus: response.status,
+      message: 'Smartflo click-to-call accepted',
+    });
 
     return {
       success: true,
@@ -102,7 +120,23 @@ export class SmartfloClickToCallService {
       providerResponse,
       requestedCustomerNumber,
       normalizedCustomerNumber,
+      callOrigin,
     };
+  }
+
+  private buildCallOrigin(requestMeta?: {
+    requestedByIp?: string;
+    requestedByForwardedFor?: string;
+  }): CallRequestOriginInfo {
+    return buildCallRequestOriginInfo({
+      nodeEnv: this.configService.get<string>('NODE_ENV'),
+      appVersion: this.configService.get<string>('APP_VERSION'),
+      serverId: this.configService.get<string>('APP_SERVER_ID'),
+      smartfloBaseUrl: this.configService.get<string>('SMARTFLO_BASE_URL'),
+      voiceWssBaseUrl: this.configService.get<string>('VOICE_WSS_BASE_URL'),
+      requestedByIp: requestMeta?.requestedByIp,
+      requestedByForwardedFor: requestMeta?.requestedByForwardedFor,
+    });
   }
 
   private normalizeCustomerNumber(input: string): string {

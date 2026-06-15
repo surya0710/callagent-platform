@@ -186,9 +186,11 @@ export function VoiceSessionsPage() {
           sub={
             healthError
               ? 'Health check failed'
-              : healthQuery.data
-                ? `Smartflo Voice: ${healthQuery.data.service}`
-                : undefined
+              : healthQuery.data?.serverOrigin
+                ? `${healthQuery.data.serverOrigin.serverId ?? healthQuery.data.serverOrigin.hostname} · WSS ${healthQuery.data.serverOrigin.voiceWssBaseUrl}`
+                : healthQuery.data
+                  ? `Smartflo Voice: ${healthQuery.data.service}`
+                  : undefined
           }
         />
         <StatCard
@@ -209,6 +211,51 @@ export function VoiceSessionsPage() {
           sub={healthQuery.data?.timestamp ? formatDateTime(healthQuery.data.timestamp) : undefined}
         />
       </div>
+
+      {hasActiveSessions && (
+        <div className="rounded-lg border border-amber-800/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
+          Live call in progress. After you hang up, wait for the session to show{' '}
+          <span className="font-medium text-amber-50">ENDED</span>, then download the WAV and
+          check session details for customer vs AI timeline alignment.
+        </div>
+      )}
+
+      {healthQuery.data?.serverOrigin && (
+        <Card title="Call server origin">
+          <dl className="grid gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-xs text-slate-500">API server hostname</dt>
+              <dd className="mt-0.5 text-slate-200">
+                {healthQuery.data.serverOrigin.serverId ??
+                  healthQuery.data.serverOrigin.hostname}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-500">Environment</dt>
+              <dd className="mt-0.5 text-slate-200">
+                {healthQuery.data.serverOrigin.environment ?? '—'}
+              </dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-xs text-slate-500">Smartflo API target</dt>
+              <dd className="mt-0.5 break-all text-slate-200">
+                {healthQuery.data.serverOrigin.smartfloApiBaseUrl}
+              </dd>
+            </div>
+            <div className="sm:col-span-2">
+              <dt className="text-xs text-slate-500">Voice stream (Smartflo connects here)</dt>
+              <dd className="mt-0.5 break-all text-slate-200">
+                {healthQuery.data.serverOrigin.voiceWssBaseUrl}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-xs text-slate-500">
+            Initiate Call hits this API server, which posts to Smartflo. Smartflo then opens audio
+            on the WSS URL above — it may differ from the API hostname if{' '}
+            <code className="text-slate-400">VOICE_WSS_BASE_URL</code> points elsewhere.
+          </p>
+        </Card>
+      )}
 
       {healthError && (
         <div className="rounded-lg border border-amber-900/50 bg-amber-950/30 p-4 text-amber-200">

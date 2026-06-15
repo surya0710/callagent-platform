@@ -160,10 +160,10 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       message: 'Sending outbound media to Smartflo WebSocket',
     });
 
+    // Recording uses wall-clock offsets; Smartflo media timestamps are sequential from 0.
     this.voiceRecordingService.appendOutboundMulawBase64(
       streamSid,
       base64MulawPayload,
-      timestamp,
     );
 
     const outboundMessage = JSON.stringify({

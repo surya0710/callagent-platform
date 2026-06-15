@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Modal';
@@ -29,6 +29,7 @@ function extractErrorMessage(error: unknown): string {
 }
 
 export function VoiceTestCallPage() {
+  const navigate = useNavigate();
   const [customerNumber, setCustomerNumber] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -46,7 +47,9 @@ export function VoiceTestCallPage() {
       });
       setResult(response);
 
-      if (!response.success) {
+      if (response.success) {
+        navigate('/voice/sessions');
+      } else {
         setError(response.message);
       }
     } catch (requestError) {
@@ -72,6 +75,22 @@ export function VoiceTestCallPage() {
           View Voice Sessions
         </Link>
       </div>
+
+      <Card title="How to verify the recording on a live call">
+        <ol className="list-decimal space-y-2 pl-5 text-sm text-slate-300">
+          <li>Click Initiate Call and answer your phone when Smartflo rings.</li>
+          <li>Speak a short question, wait for the AI reply, then hang up.</li>
+          <li>
+            On Voice Sessions, watch the row turn <span className="text-slate-100">ENDED</span>{' '}
+            and wait for <span className="text-slate-100">Download WAV</span> to appear.
+          </li>
+          <li>
+            Open session details and confirm{' '}
+            <span className="text-slate-100">AI timeline</span> starts after{' '}
+            <span className="text-slate-100">Customer timeline</span>.
+          </li>
+        </ol>
+      </Card>
 
       <Card title="Customer number">
         <form onSubmit={handleSubmit} className="max-w-xl space-y-4">

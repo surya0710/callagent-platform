@@ -4,7 +4,10 @@ import {
   analyzePcm16,
   formatPcm16Stats,
 } from './pcm-stats.util';
-import { buildMixedPcmTimeline } from './pcm-recording-mix.util';
+import {
+  buildMixedPcmTimeline,
+  summarizeRecordingTimeline,
+} from './pcm-recording-mix.util';
 import { VoiceSessionService } from '../voice-session.service';
 import {
   buildVoiceRecordingStorageKey,
@@ -27,6 +30,12 @@ export interface VoiceRecordingMetadata {
   chunks: number;
   durationMsEstimate: number;
   createdAt: string;
+  inboundTimelineStartMs?: number | null;
+  inboundTimelineEndMs?: number | null;
+  outboundTimelineStartMs?: number | null;
+  outboundTimelineEndMs?: number | null;
+  inboundChunkCount?: number;
+  outboundChunkCount?: number;
 }
 
 export type VoiceRecordingPublicMetadata = Omit<
@@ -43,6 +52,7 @@ interface ActiveRecording {
   streamSid: string;
   callSid?: string;
   streamStartedAtMs: number;
+  inboundCursorMs: number | null;
   outboundCursorMs: number | null;
   inboundChunks: TimelineChunk[];
   outboundChunks: TimelineChunk[];
@@ -88,23 +98,15 @@ export class VoiceRecordingService {
       streamSid,
       callSid,
       streamStartedAtMs: Date.now(),
+      inboundCursorMs: null,
       outboundCursorMs: null,
       inboundChunks: [],
       outboundChunks: [],
     });
   }
 
-  appendInboundMulawBase64(
-    streamSid: string,
-    base64Payload: string,
-    offsetMs?: number,
-  ): void {
-    this.appendTimelineMulawBase64(
-      streamSid,
-      base64Payload,
-      'inbound',
-      offsetMs,
-    );
+  appendInboundMulawBase64(streamSid: string, base64Payload: string): void {
+    this.appendTimelineMulawBase64(streamSid, base64Payload, 'inbound');
   }
 
   /** @deprecated Use appendInboundMulawBase64 */
@@ -112,24 +114,14 @@ export class VoiceRecordingService {
     this.appendInboundMulawBase64(streamSid, base64Payload);
   }
 
-  appendOutboundMulawBase64(
-    streamSid: string,
-    base64Payload: string,
-    offsetMs?: number,
-  ): void {
-    this.appendTimelineMulawBase64(
-      streamSid,
-      base64Payload,
-      'outbound',
-      offsetMs,
-    );
+  appendOutboundMulawBase64(streamSid: string, base64Payload: string): void {
+    this.appendTimelineMulawBase64(streamSid, base64Payload, 'outbound');
   }
 
   private appendTimelineMulawBase64(
     streamSid: string,
     base64Payload: string,
     direction: 'inbound' | 'outbound',
-    offsetMs?: number,
   ): void {
     if (!streamSid) {
       return;
@@ -152,27 +144,11 @@ export class VoiceRecordingService {
       }
 
       const chunkDurationMs = (mulaw.length / SAMPLE_RATE) * 1000;
-      let resolvedOffsetMs = offsetMs;
-
-      if (direction === 'outbound') {
-        if (resolvedOffsetMs == null) {
-          if (active.outboundCursorMs == null) {
-            active.outboundCursorMs = Date.now() - active.streamStartedAtMs;
-          }
-          resolvedOffsetMs = active.outboundCursorMs;
-          active.outboundCursorMs += chunkDurationMs;
-        } else {
-          const chunkEndMs = resolvedOffsetMs + chunkDurationMs;
-          if (
-            active.outboundCursorMs == null ||
-            chunkEndMs > active.outboundCursorMs
-          ) {
-            active.outboundCursorMs = chunkEndMs;
-          }
-        }
-      } else if (resolvedOffsetMs == null) {
-        resolvedOffsetMs = Date.now() - active.streamStartedAtMs;
-      }
+      const resolvedOffsetMs = this.resolveRecordingOffsetMs(
+        active,
+        direction,
+        chunkDurationMs,
+      );
 
       const timelineChunk: TimelineChunk = {
         offsetMs: Math.max(0, resolvedOffsetMs),
@@ -192,6 +168,31 @@ export class VoiceRecordingService {
         message: 'Invalid base64 media payload; skipping chunk',
       });
     }
+  }
+
+  /**
+   * Live-call recording timeline: wall-clock ms from Smartflo `start`, with a
+   * per-direction cursor so burst chunks stay sequential on the same clock.
+   */
+  private resolveRecordingOffsetMs(
+    active: ActiveRecording,
+    direction: 'inbound' | 'outbound',
+    chunkDurationMs: number,
+  ): number {
+    const wallOffsetMs = Math.max(0, Date.now() - active.streamStartedAtMs);
+    const cursor =
+      direction === 'inbound'
+        ? active.inboundCursorMs
+        : active.outboundCursorMs;
+    const resolvedMs = cursor == null ? wallOffsetMs : Math.max(wallOffsetMs, cursor);
+
+    if (direction === 'inbound') {
+      active.inboundCursorMs = resolvedMs + chunkDurationMs;
+    } else {
+      active.outboundCursorMs = resolvedMs + chunkDurationMs;
+    }
+
+    return resolvedMs;
   }
 
   async finalize(
@@ -219,6 +220,15 @@ export class VoiceRecordingService {
     }
 
     try {
+      const inboundTimeline = summarizeRecordingTimeline(
+        active.inboundChunks,
+        SAMPLE_RATE,
+      );
+      const outboundTimeline = summarizeRecordingTimeline(
+        active.outboundChunks,
+        SAMPLE_RATE,
+      );
+
       const pcmBuffer = buildMixedPcmTimeline(
         active.inboundChunks,
         active.outboundChunks,
@@ -256,6 +266,12 @@ export class VoiceRecordingService {
         chunks: active.inboundChunks.length + active.outboundChunks.length,
         durationMsEstimate: Math.round((pcmBuffer.length / 2 / SAMPLE_RATE) * 1000),
         createdAt: new Date().toISOString(),
+        inboundTimelineStartMs: inboundTimeline.startMs,
+        inboundTimelineEndMs: inboundTimeline.endMs,
+        outboundTimelineStartMs: outboundTimeline.startMs,
+        outboundTimelineEndMs: outboundTimeline.endMs,
+        inboundChunkCount: inboundTimeline.chunkCount,
+        outboundChunkCount: outboundTimeline.chunkCount,
       };
 
       this.finalizedByStreamSid.set(streamSid, metadata);
@@ -269,9 +285,11 @@ export class VoiceRecordingService {
         wavBytes: metadata.wavBytes,
         inboundChunks: active.inboundChunks.length,
         outboundChunks: active.outboundChunks.length,
+        inboundTimeline,
+        outboundTimeline,
         chunks: metadata.chunks,
         pcmStats: formatPcm16Stats(pcmStats),
-        mixStrategy: 'pcm_timeline_outbound_priority',
+        mixStrategy: 'live_call_wall_clock_additive',
         message: 'Voice recording finalized',
       });
 

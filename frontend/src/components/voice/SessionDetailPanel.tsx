@@ -7,7 +7,36 @@ import {
   statusBadgeClass,
 } from '../../lib/voice-utils';
 
-function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+function formatTimelineMs(value?: number | null): string {
+  if (value == null || !Number.isFinite(value)) {
+    return '—';
+  }
+  return `${Math.round(value)} ms`;
+}
+
+function formatTimelineRange(
+  startMs?: number | null,
+  endMs?: number | null,
+): string {
+  if (startMs == null && endMs == null) {
+    return '—';
+  }
+  return `${formatTimelineMs(startMs)} → ${formatTimelineMs(endMs)}`;
+}
+
+function recordingTimelineLooksValid(session: VoiceSession): boolean | null {
+  if (!session.recordingAvailable) {
+    return null;
+  }
+
+  const inboundEnd = session.recordingInboundTimelineEndMs;
+  const outboundStart = session.recordingOutboundTimelineStartMs;
+  if (inboundEnd == null || outboundStart == null) {
+    return null;
+  }
+
+  return outboundStart >= inboundEnd - 500;
+}
   return (
     <div>
       <dt className="text-xs text-slate-500">{label}</dt>
@@ -189,6 +218,32 @@ export function SessionDetailPanel({
             <DetailRow
               label="WAV Bytes"
               value={safeValue(session.recordingWavBytes)}
+            />
+            <DetailRow
+              label="Customer timeline"
+              value={formatTimelineRange(
+                session.recordingInboundTimelineStartMs,
+                session.recordingInboundTimelineEndMs,
+              )}
+            />
+            <DetailRow
+              label="AI timeline"
+              value={formatTimelineRange(
+                session.recordingOutboundTimelineStartMs,
+                session.recordingOutboundTimelineEndMs,
+              )}
+            />
+            <DetailRow
+              label="Timeline check"
+              value={(() => {
+                const valid = recordingTimelineLooksValid(session);
+                if (valid == null) {
+                  return '—';
+                }
+                return valid
+                  ? 'AI starts after customer speech (OK)'
+                  : 'AI may be misaligned — check WAV';
+              })()}
             />
             {session.recordingAvailable && session.streamSid && (
               <div className="sm:col-span-2">

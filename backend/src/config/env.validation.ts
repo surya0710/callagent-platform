@@ -137,6 +137,10 @@ export class EnvironmentVariables {
   APP_VERSION?: string;
 
   @IsOptional()
+  @IsString()
+  APP_SERVER_ID?: string;
+
+  @IsOptional()
   @IsEnum(VoiceRuntimeType)
   VOICE_RUNTIME?: VoiceRuntimeType;
 

@@ -43,6 +43,12 @@ export interface VoiceSession {
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
   recordingWavBytes?: number;
+  recordingInboundTimelineStartMs?: number | null;
+  recordingInboundTimelineEndMs?: number | null;
+  recordingOutboundTimelineStartMs?: number | null;
+  recordingOutboundTimelineEndMs?: number | null;
+  recordingInboundChunkCount?: number;
+  recordingOutboundChunkCount?: number;
   runtimeProvider?: string;
   runtimeStatus?: VoiceRuntimeStatus;
   runtimeConnectedAt?: Date;
@@ -109,6 +115,12 @@ export interface VoiceSessionResponse {
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
   recordingWavBytes?: number;
+  recordingInboundTimelineStartMs?: number | null;
+  recordingInboundTimelineEndMs?: number | null;
+  recordingOutboundTimelineStartMs?: number | null;
+  recordingOutboundTimelineEndMs?: number | null;
+  recordingInboundChunkCount?: number;
+  recordingOutboundChunkCount?: number;
   runtimeProvider?: string;
   runtimeStatus?: VoiceRuntimeStatus;
   runtimeConnectedAt?: string;
@@ -176,6 +188,12 @@ export function toVoiceSessionResponse(
     recordingDurationMsEstimate: session.recordingDurationMsEstimate,
     recordingMulawBytes: session.recordingMulawBytes,
     recordingWavBytes: session.recordingWavBytes,
+    recordingInboundTimelineStartMs: session.recordingInboundTimelineStartMs ?? null,
+    recordingInboundTimelineEndMs: session.recordingInboundTimelineEndMs ?? null,
+    recordingOutboundTimelineStartMs: session.recordingOutboundTimelineStartMs ?? null,
+    recordingOutboundTimelineEndMs: session.recordingOutboundTimelineEndMs ?? null,
+    recordingInboundChunkCount: session.recordingInboundChunkCount,
+    recordingOutboundChunkCount: session.recordingOutboundChunkCount,
     runtimeProvider: session.runtimeProvider,
     runtimeStatus: session.runtimeStatus,
     runtimeConnectedAt: session.runtimeConnectedAt?.toISOString(),
@@ -580,6 +598,12 @@ export class VoiceSessionService {
       durationMsEstimate: number;
       mulawBytes: number;
       wavBytes: number;
+      inboundTimelineStartMs?: number | null;
+      inboundTimelineEndMs?: number | null;
+      outboundTimelineStartMs?: number | null;
+      outboundTimelineEndMs?: number | null;
+      inboundChunkCount?: number;
+      outboundChunkCount?: number;
     },
   ): void {
     const session = this.getByStreamSid(streamSid);
@@ -592,6 +616,12 @@ export class VoiceSessionService {
     session.recordingDurationMsEstimate = metadata.durationMsEstimate;
     session.recordingMulawBytes = metadata.mulawBytes;
     session.recordingWavBytes = metadata.wavBytes;
+    session.recordingInboundTimelineStartMs = metadata.inboundTimelineStartMs ?? null;
+    session.recordingInboundTimelineEndMs = metadata.inboundTimelineEndMs ?? null;
+    session.recordingOutboundTimelineStartMs = metadata.outboundTimelineStartMs ?? null;
+    session.recordingOutboundTimelineEndMs = metadata.outboundTimelineEndMs ?? null;
+    session.recordingInboundChunkCount = metadata.inboundChunkCount;
+    session.recordingOutboundChunkCount = metadata.outboundChunkCount;
   }
 
   endByStreamSid(streamSid: string, stopReason?: string | null): void {

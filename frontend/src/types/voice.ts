@@ -36,6 +36,12 @@ export interface VoiceSession {
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
   recordingWavBytes?: number;
+  recordingInboundTimelineStartMs?: number | null;
+  recordingInboundTimelineEndMs?: number | null;
+  recordingOutboundTimelineStartMs?: number | null;
+  recordingOutboundTimelineEndMs?: number | null;
+  recordingInboundChunkCount?: number;
+  recordingOutboundChunkCount?: number;
   runtimeProvider?: string;
   runtimeStatus?: 'idle' | 'connecting' | 'connected' | 'error' | 'closed';
   runtimeConnectedAt?: string;
@@ -48,12 +54,28 @@ export interface VoiceSessionsResponse {
   recentEnded: VoiceSession[];
 }
 
+export interface VoiceServerOrigin {
+  hostname: string;
+  serverId: string | null;
+  environment: string | null;
+  appVersion: string | null;
+  smartfloApiBaseUrl: string;
+  voiceWssBaseUrl: string;
+}
+
+export interface VoiceCallRequestOrigin extends VoiceServerOrigin {
+  smartfloRequestUrl: string;
+  requestedByIp?: string;
+  requestedByForwardedFor?: string;
+}
+
 export interface VoiceHealthResponse {
   success: boolean;
   service: string;
   activeSessions: number;
   recentEndedSessions: number;
   timestamp: string;
+  serverOrigin?: VoiceServerOrigin;
 }
 
 export interface VoiceTestCallRequest {
@@ -66,6 +88,7 @@ export interface VoiceTestCallResponse {
   providerResponse: unknown;
   requestedCustomerNumber: string;
   normalizedCustomerNumber: string;
+  callOrigin: VoiceCallRequestOrigin;
 }
 
 export function voiceRecordingDownloadUrl(streamSid: string): string {

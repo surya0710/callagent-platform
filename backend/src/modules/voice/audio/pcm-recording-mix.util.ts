@@ -1,11 +1,52 @@
 import { decodeMulawBuffer } from './mulaw-codec';
 
 const MULAW_SILENCE_BYTE = 0xff;
-const PCM_SILENCE_THRESHOLD = 64;
 
 export interface RecordingTimelineChunk {
   offsetMs: number;
   mulaw: Buffer;
+}
+
+export interface RecordingTimelineSummary {
+  startMs: number | null;
+  endMs: number | null;
+  chunkCount: number;
+}
+
+export function summarizeRecordingTimeline(
+  chunks: RecordingTimelineChunk[],
+  sampleRate: number,
+): RecordingTimelineSummary {
+  if (chunks.length === 0) {
+    return { startMs: null, endMs: null, chunkCount: 0 };
+  }
+
+  let startMs = Number.POSITIVE_INFINITY;
+  let endMs = 0;
+
+  for (const chunk of chunks) {
+    startMs = Math.min(startMs, chunk.offsetMs);
+    endMs = Math.max(
+      endMs,
+      chunk.offsetMs + (chunk.mulaw.length / sampleRate) * 1000,
+    );
+  }
+
+  return {
+    startMs: Number.isFinite(startMs) ? startMs : null,
+    endMs,
+    chunkCount: chunks.length,
+  };
+}
+
+function clampInt16(value: number): number {
+  if (value > 32767) {
+    return 32767;
+  }
+  if (value < -32768) {
+    return -32768;
+  }
+  return value;
 }
 
 export function buildMixedPcmTimeline(
@@ -26,11 +67,11 @@ export function buildMixedPcmTimeline(
   const samples = new Int16Array(totalSamples);
 
   for (const chunk of inboundChunks) {
-    writeMulawChunkToPcmTimeline(samples, chunk, sampleRate, false);
+    writeMulawChunkToPcmTimeline(samples, chunk, sampleRate, 'inbound');
   }
 
   for (const chunk of outboundChunks) {
-    writeMulawChunkToPcmTimeline(samples, chunk, sampleRate, true);
+    writeMulawChunkToPcmTimeline(samples, chunk, sampleRate, 'outbound');
   }
 
   const output = Buffer.allocUnsafe(totalSamples * 2);
@@ -45,7 +86,7 @@ function writeMulawChunkToPcmTimeline(
   timeline: Int16Array,
   chunk: RecordingTimelineChunk,
   sampleRate: number,
-  overwrite: boolean,
+  direction: 'inbound' | 'outbound',
 ): void {
   if (chunk.mulaw.length === 0) {
     return;
@@ -61,24 +102,19 @@ function writeMulawChunkToPcmTimeline(
       break;
     }
 
+    const mulawByte = chunk.mulaw[i]!;
+    if (isMulawSilenceByte(mulawByte)) {
+      continue;
+    }
+
     const sample = pcm.readInt16LE(i * 2);
-    if (!isMeaningfulPcmSample(sample)) {
-      continue;
-    }
-
-    if (overwrite) {
+    if (direction === 'inbound') {
       timeline[position] = sample;
       continue;
     }
 
-    if (!isMeaningfulPcmSample(timeline[position]!)) {
-      timeline[position] = sample;
-    }
+    timeline[position] = clampInt16(timeline[position]! + sample);
   }
-}
-
-function isMeaningfulPcmSample(sample: number | undefined): boolean {
-  return sample !== undefined && Math.abs(sample) >= PCM_SILENCE_THRESHOLD;
 }
 
 export function isMulawSilenceByte(value: number): boolean {
