@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { decodeMulawBuffer } from './audio/mulaw-codec';
+import { isSpeechLikePcm16 } from './audio/speech-detection.util';
 import { VoiceRecordingService } from './audio/voice-recording.service';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
+import { parseSmartfloInboundMedia } from './smartflo-media.util';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
 
@@ -14,6 +16,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 @Injectable()
 export class SmartfloStreamAdapter {
   private readonly logger = new Logger(SmartfloStreamAdapter.name);
+  private readonly loggedMediaShapeByStreamSid = new Set<string>();
 
   constructor(
     private readonly voiceSessionService: VoiceSessionService,
@@ -83,7 +86,11 @@ export class SmartfloStreamAdapter {
     payload: Record<string, unknown>,
   ): void {
     this.voiceSessionService.recordConnected(socketSessionId);
-    this.logger.log({ socketSessionId, smartfloEvent: payload });
+    this.logger.log({
+      socketSessionId,
+      smartfloEvent: 'connected',
+      message: 'Smartflo connected event received',
+    });
     this.voiceRuntime.onSocketConnected?.(socketSessionId);
   }
 
@@ -124,9 +131,9 @@ export class SmartfloStreamAdapter {
     this.logger.log({
       socketSessionId,
       streamSid,
+      callSid: startData.callSid,
       runtimeProvider: this.voiceRuntime.name,
-      smartfloEvent: payload,
-      message: 'Voice session bound to streamSid',
+      message: 'Smartflo start event received — voice session bound to streamSid',
     });
 
     void this.voiceRuntime.createSession({
@@ -156,15 +163,27 @@ export class SmartfloStreamAdapter {
       return;
     }
 
-    const media = asRecord(payload.media);
-    const payloadStr =
-      media && typeof media.payload === 'string' ? media.payload : undefined;
+    const parsed = parseSmartfloInboundMedia(payload);
+    const payloadStr = parsed.payloadBase64;
+
+    if (!this.loggedMediaShapeByStreamSid.has(streamSid)) {
+      this.loggedMediaShapeByStreamSid.add(streamSid);
+      this.logger.log({
+        streamSid,
+        parseSource: parsed.parseSource,
+        track: parsed.track,
+        chunk: parsed.chunk,
+        timestamp: parsed.timestamp,
+        payloadByteLength: parsed.payloadByteLength,
+        topLevelStreamSid: typeof payload.streamSid === 'string',
+        message: 'First inbound Smartflo media event shape',
+      });
+    }
 
     this.voiceSessionService.recordMedia(socketSessionId, payload);
 
     if (payloadStr) {
-      const timestampRaw =
-        media && media.timestamp != null ? String(media.timestamp) : undefined;
+      const timestampRaw = parsed.timestamp;
       const parsedTimestamp = timestampRaw ? Number(timestampRaw) : Number.NaN;
       const offsetMs = Number.isFinite(parsedTimestamp)
         ? parsedTimestamp
@@ -180,6 +199,15 @@ export class SmartfloStreamAdapter {
         const mulawBuffer = Buffer.from(payloadStr, 'base64');
         if (mulawBuffer.length > 0) {
           const pcm16Audio = decodeMulawBuffer(mulawBuffer);
+          const now = new Date();
+          const speechLike = isSpeechLikePcm16(pcm16Audio);
+
+          this.voiceSessionService.updateRuntimeState(streamSid, {
+            hasReceivedCallerAudio: true,
+            lastCallerAudioAt: now,
+            ...(speechLike ? { lastSpeechLikeAudioAt: now } : {}),
+          });
+
           this.voiceRuntime.handleAudio(streamSid, pcm16Audio);
         }
       } catch (error) {
@@ -189,6 +217,22 @@ export class SmartfloStreamAdapter {
           message: 'Failed to decode inbound media for runtime provider',
         });
       }
+    } else if (parsed.track === 'outbound') {
+      this.logger.debug({
+        streamSid,
+        track: parsed.track,
+        message: 'Ignoring outbound-track inbound media event',
+      });
+    } else if (parsed.parseSource === 'none') {
+      this.logger.warn({
+        streamSid,
+        message: 'Media event missing payload — check Smartflo payload shape',
+        payloadKeys: Object.keys(payload),
+        mediaKeys:
+          payload.media && typeof payload.media === 'object'
+            ? Object.keys(payload.media as Record<string, unknown>)
+            : [],
+      });
     }
   }
 
@@ -324,7 +368,8 @@ export class SmartfloStreamAdapter {
     this.logger.log({
       socketSessionId,
       streamSid,
-      message: 'Voice session ended on stop event',
+      stopReason,
+      message: 'Smartflo stop event received — finalizing voice session',
     });
   }
 
@@ -346,6 +391,16 @@ export class SmartfloStreamAdapter {
         durationMsEstimate: metadata.durationMsEstimate,
         mulawBytes: metadata.mulawBytes,
         wavBytes: metadata.wavBytes,
+      });
+
+      this.logger.log({
+        streamSid,
+        fileName: metadata.fileName,
+        mulawBytes: metadata.mulawBytes,
+        pcmBytes: metadata.pcmBytes,
+        chunks: metadata.chunks,
+        durationMsEstimate: metadata.durationMsEstimate,
+        message: 'Voice recording generated',
       });
     } catch (error) {
       this.logger.error(

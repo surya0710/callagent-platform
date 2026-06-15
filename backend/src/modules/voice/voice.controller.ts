@@ -61,6 +61,45 @@ export class VoiceController {
       .map(toVoiceSessionResponse);
   }
 
+  @Get('sessions/:streamSid/runtime-debug')
+  @ApiOperation({ summary: 'Runtime debug snapshot for a voice session' })
+  getRuntimeDebug(@Param('streamSid') streamSid: string) {
+    const session = this.voiceSessionService.getByStreamSid(streamSid);
+    if (!session) {
+      throw new NotFoundException(`Voice session not found: ${streamSid}`);
+    }
+
+    const response = toVoiceSessionResponse(session);
+
+    return {
+      streamSid,
+      runtimeStatus: response.runtimeStatus ?? 'idle',
+      runtimeProvider: response.runtimeProvider,
+      runtimeError: response.runtimeError ?? null,
+      isOpenAiConnected: response.isOpenAiConnected ?? false,
+      hasReceivedCallerAudio: response.hasReceivedCallerAudio ?? false,
+      lastCallerAudioAt: response.lastCallerAudioAt ?? null,
+      lastSpeechLikeAudioAt: response.lastSpeechLikeAudioAt ?? null,
+      isAwaitingOpenAiResponse: response.isAwaitingOpenAiResponse ?? false,
+      isAiSpeaking: response.isAiSpeaking ?? false,
+      lastOpenAiAudioAt: response.lastOpenAiAudioAt ?? null,
+      responseCount: response.responseCount ?? 0,
+      appendCount: response.appendCount ?? 0,
+      commitCount: response.commitCount ?? 0,
+      outboundMediaCount: response.outboundMediaCount ?? 0,
+      inboundPacketsReceived: response.packetsReceived,
+      openAiEventCounts: response.openAiEventCounts ?? {},
+      sessionStatus: response.status,
+      lastEvent: response.lastEvent ?? null,
+      recordingAvailable: response.recordingAvailable ?? false,
+      recordingDurationMsEstimate: response.recordingDurationMsEstimate ?? null,
+      recordingMulawBytes: response.recordingMulawBytes ?? null,
+      lastMediaPayloadLength: response.lastMediaPayloadLength ?? null,
+      lastMediaChunk: response.lastMediaChunk ?? null,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
   @Get('sessions/:streamSid')
   @ApiOperation({ summary: 'Get a voice session by streamSid' })
   getSessionByStreamSid(@Param('streamSid') streamSid: string) {

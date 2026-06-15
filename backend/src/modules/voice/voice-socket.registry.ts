@@ -7,6 +7,7 @@ export class VoiceSocketRegistry {
   private readonly byStreamSid = new Map<string, WebSocket>();
   private readonly socketToStreamSid = new Map<string, string>();
   private readonly outboundChunkByStreamSid = new Map<string, number>();
+  private readonly outboundTimestampByStreamSid = new Map<string, number>();
 
   registerSocket(socketSessionId: string, client: WebSocket): void {
     this.bySocketSessionId.set(socketSessionId, client);
@@ -22,6 +23,7 @@ export class VoiceSocketRegistry {
     this.socketToStreamSid.set(socketSessionId, streamSid);
     if (!this.outboundChunkByStreamSid.has(streamSid)) {
       this.outboundChunkByStreamSid.set(streamSid, 1);
+      this.outboundTimestampByStreamSid.set(streamSid, 0);
     }
   }
 
@@ -39,6 +41,15 @@ export class VoiceSocketRegistry {
     return chunk;
   }
 
+  nextOutboundTimestamp(streamSid: string, chunkDurationMs: number): number {
+    const timestamp = this.outboundTimestampByStreamSid.get(streamSid) ?? 0;
+    this.outboundTimestampByStreamSid.set(
+      streamSid,
+      timestamp + chunkDurationMs,
+    );
+    return timestamp;
+  }
+
   removeBySocketSessionId(socketSessionId: string): void {
     const streamSid = this.socketToStreamSid.get(socketSessionId);
     this.bySocketSessionId.delete(socketSessionId);
@@ -47,12 +58,14 @@ export class VoiceSocketRegistry {
       this.byStreamSid.delete(streamSid);
       this.socketToStreamSid.delete(socketSessionId);
       this.outboundChunkByStreamSid.delete(streamSid);
+      this.outboundTimestampByStreamSid.delete(streamSid);
     }
   }
 
   removeByStreamSid(streamSid: string): void {
     this.byStreamSid.delete(streamSid);
     this.outboundChunkByStreamSid.delete(streamSid);
+    this.outboundTimestampByStreamSid.delete(streamSid);
 
     for (const [socketSessionId, mappedStreamSid] of this.socketToStreamSid) {
       if (mappedStreamSid === streamSid) {

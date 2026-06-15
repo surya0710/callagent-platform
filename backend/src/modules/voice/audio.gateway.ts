@@ -16,6 +16,7 @@ interface VoiceWebSocket extends WebSocket {
 }
 
 const MULAW_FRAME_BYTES = 160;
+const OUTBOUND_CHUNK_MS = 20;
 
 @WebSocketGateway({ path: '/api/voice/stream' })
 export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -139,14 +140,19 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const chunkNumber =
       chunk ?? this.voiceSocketRegistry.nextOutboundChunk(streamSid);
+    const timestamp = this.voiceSocketRegistry.nextOutboundTimestamp(
+      streamSid,
+      OUTBOUND_CHUNK_MS,
+    );
 
     this.logger.log({
       streamSid,
       chunk: chunkNumber,
+      timestamp,
       payloadBase64Length: base64MulawPayload.length,
       mulawBytes: decodedLength,
       socketFound: true,
-      message: 'Writing outbound media to Smartflo WebSocket',
+      message: 'Sending outbound media to Smartflo WebSocket',
     });
 
     this.voiceRecordingService.appendOutboundMulawBase64(
@@ -154,16 +160,31 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       base64MulawPayload,
     );
 
-    client!.send(
-      JSON.stringify({
-        event: 'media',
+    const outboundMessage = JSON.stringify({
+      event: 'media',
+      streamSid,
+      media: {
+        payload: base64MulawPayload,
+        chunk: String(chunkNumber),
+        timestamp: String(timestamp),
+      },
+    });
+
+    try {
+      client!.send(outboundMessage);
+      this.logger.debug({
         streamSid,
-        media: {
-          payload: base64MulawPayload,
-          chunk: chunkNumber,
-        },
-      }),
-    );
+        chunk: chunkNumber,
+        message: 'Outbound media WebSocket send succeeded',
+      });
+    } catch (error) {
+      this.logger.error({
+        streamSid,
+        chunk: chunkNumber,
+        err: error,
+        message: 'Outbound media WebSocket send failed',
+      });
+    }
   }
 
   sendMark(streamSid: string, name: string): void {
