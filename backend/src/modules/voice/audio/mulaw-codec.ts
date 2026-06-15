@@ -1,5 +1,7 @@
 const MULAW_BIAS = 33;
 
+/** ITU-T G.711 μ-law decode (8-bit) to linear PCM16. */
+
 function clampInt16(value: number): number {
   if (value > 32767) {
     return 32767;
@@ -28,6 +30,7 @@ export function decodeMulawBuffer(input: Buffer): Buffer {
 }
 
 function linearToMulawSample(sample: number): number {
+  /** ITU-T G.711 μ-law encode from linear PCM16 sample. */
   const sign = sample < 0 ? 0x80 : 0;
   if (sample < 0) {
     sample = -sample;

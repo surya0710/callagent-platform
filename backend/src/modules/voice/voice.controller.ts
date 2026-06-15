@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { VoiceRuntimeType } from '../../config/env.validation';
 import { VoiceRecordingService } from './audio/voice-recording.service';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
+import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
 import {
   toVoiceSessionResponse,
   VoiceSessionService,
@@ -30,6 +31,7 @@ export class VoiceController {
     private readonly voiceRecordingService: VoiceRecordingService,
     private readonly configService: ConfigService,
     private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
+    private readonly voiceAudioConfigService: VoiceAudioConfigService,
   ) {}
 
   @Get('sessions')
@@ -96,6 +98,13 @@ export class VoiceController {
       recordingMulawBytes: response.recordingMulawBytes ?? null,
       lastMediaPayloadLength: response.lastMediaPayloadLength ?? null,
       lastMediaChunk: response.lastMediaChunk ?? null,
+      audioGainApplied: response.audioGainApplied ?? 1,
+      inboundPeakAmplitude: response.inboundPeakAmplitude ?? null,
+      inboundAvgAmplitude: response.inboundAvgAmplitude ?? null,
+      inboundRms: response.inboundRms ?? null,
+      outboundPeakAmplitude: response.outboundPeakAmplitude ?? null,
+      outboundAvgAmplitude: response.outboundAvgAmplitude ?? null,
+      outboundRms: response.outboundRms ?? null,
       timestamp: new Date().toISOString(),
     };
   }
@@ -185,6 +194,7 @@ export class VoiceController {
       openAiKeyConfigured: Boolean(openAiKey),
       openAiRealtimeModel:
         this.configService.get<string>('OPENAI_REALTIME_MODEL') ?? null,
+      voiceAudioGain: this.voiceAudioConfigService.getGain(),
       timestamp: new Date().toISOString(),
     };
   }

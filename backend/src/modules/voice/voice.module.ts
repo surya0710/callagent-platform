@@ -4,6 +4,7 @@ import { LocalVoiceRecordingStorage } from './audio/storage/local-voice-recordin
 import { S3VoiceRecordingStorage } from './audio/storage/s3-voice-recording-storage.provider';
 import { VoiceRecordingStorageFactory } from './audio/storage/voice-recording-storage.factory';
 import { VoiceRecordingService } from './audio/voice-recording.service';
+import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
 import { MockVoiceRuntimeProvider } from './runtime/mock-voice-runtime.provider';
 import { OpenAIRealtimeProvider } from './runtime/openai-realtime.provider';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
@@ -23,6 +24,7 @@ import { VoiceTestCallController } from './voice-test-call.controller';
     S3VoiceRecordingStorage,
     VoiceRecordingStorageFactory,
     VoiceRecordingService,
+    VoiceAudioConfigService,
     SmartfloClickToCallService,
     SmartfloStreamAdapter,
     MockVoiceRuntimeProvider,

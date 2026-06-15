@@ -1,9 +1,12 @@
 import { Inject, Injectable, Logger, OnModuleInit, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebSocket } from 'ws';
-import { encodePcm16ToMulaw } from '../audio/mulaw-codec';
+import { encodePcm16ToMulaw, decodeMulawBuffer } from '../audio/mulaw-codec';
+import { applyPcm16Gain } from '../audio/audio-gain.util';
 import { resamplePcm16 } from '../audio/pcm-resampler';
+import { analyzePcm16, formatPcm16Stats } from '../audio/pcm-stats.util';
 import { isSpeechLikePcm16 } from '../audio/speech-detection.util';
+import { VoiceAudioConfigService } from '../audio/voice-audio-config.service';
 import { AudioGateway } from '../audio.gateway';
 import { VoiceSessionService } from '../voice-session.service';
 import {
@@ -92,12 +95,14 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   readonly name = 'openai-realtime';
   private readonly logger = new Logger(OpenAIRealtimeProvider.name);
   private readonly sessions = new Map<string, OpenAiRealtimeSession>();
+  private readonly loggedOpenAiOutputByStreamSid = new Set<string>();
 
   constructor(
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => AudioGateway))
     private readonly audioGateway: AudioGateway,
     private readonly voiceSessionService: VoiceSessionService,
+    private readonly voiceAudioConfigService: VoiceAudioConfigService,
   ) {}
 
   private getTurnDetectionMode(): OpenAiTurnDetectionMode {
@@ -719,7 +724,42 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       OPENAI_SAMPLE_RATE,
       SMARTFLO_SAMPLE_RATE,
     );
-    const mulaw = encodePcm16ToMulaw(pcm8);
+
+    const openAiStats = analyzePcm16(pcm24);
+    const pcm8Stats = analyzePcm16(pcm8);
+    const gain = this.voiceAudioConfigService.getGain();
+    const pcm8ForEncode = gain !== 1 ? applyPcm16Gain(pcm8, gain) : pcm8;
+    const encodeInputStats = analyzePcm16(pcm8ForEncode);
+
+    if (!this.loggedOpenAiOutputByStreamSid.has(session.streamSid)) {
+      this.loggedOpenAiOutputByStreamSid.add(session.streamSid);
+      this.logger.log({
+        streamSid: session.streamSid,
+        openAiPcm24: formatPcm16Stats(openAiStats),
+        pcm8AfterResample: formatPcm16Stats(pcm8Stats),
+        pcm8BeforeMulawEncode: formatPcm16Stats(encodeInputStats),
+        gain,
+        message: 'OpenAI output audio level stats (first delta)',
+      });
+    }
+
+    this.voiceSessionService.recordOutboundAudioStats(
+      session.streamSid,
+      encodeInputStats,
+    );
+    this.voiceSessionService.setAudioGainApplied(session.streamSid, gain);
+
+    const mulaw = encodePcm16ToMulaw(pcm8ForEncode);
+    const mulawRoundtripStats = analyzePcm16(decodeMulawBuffer(mulaw));
+    if (!this.loggedOpenAiOutputByStreamSid.has(`${session.streamSid}:mulaw`)) {
+      this.loggedOpenAiOutputByStreamSid.add(`${session.streamSid}:mulaw`);
+      this.logger.log({
+        streamSid: session.streamSid,
+        mulawEncodeRoundtrip: formatPcm16Stats(mulawRoundtripStats),
+        message: 'Outbound μ-law encode roundtrip stats (first delta)',
+      });
+    }
+
     session.outboundMulawBuffer = Buffer.concat([
       session.outboundMulawBuffer,
       mulaw,
@@ -730,6 +770,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       pcm24Bytes: pcm24.length,
       pcm8Bytes: pcm8.length,
       mulawBytes: mulaw.length,
+      openAiPeak: openAiStats.peak,
+      openAiRms: Number(openAiStats.rms.toFixed(2)),
+      outboundPeak: encodeInputStats.peak,
+      outboundRms: Number(encodeInputStats.rms.toFixed(2)),
+      gain,
       message: 'response.output_audio.delta received',
     });
 

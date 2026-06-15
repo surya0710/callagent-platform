@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import {
+  mergePcm16Stats,
+  Pcm16Stats,
+} from './audio/pcm-stats.util';
 
 export type VoiceSessionStatus = 'PENDING' | 'ACTIVE' | 'ENDED';
 
@@ -56,6 +60,13 @@ export interface VoiceSession {
   commitCount?: number;
   outboundMediaCount?: number;
   openAiEventCounts?: Record<string, number>;
+  inboundPeakAmplitude?: number;
+  inboundAvgAmplitude?: number;
+  inboundRms?: number;
+  outboundPeakAmplitude?: number;
+  outboundAvgAmplitude?: number;
+  outboundRms?: number;
+  audioGainApplied?: number;
 }
 
 export interface VoiceSessionStartData {
@@ -115,6 +126,13 @@ export interface VoiceSessionResponse {
   commitCount?: number;
   outboundMediaCount?: number;
   openAiEventCounts?: Record<string, number>;
+  inboundPeakAmplitude?: number;
+  inboundAvgAmplitude?: number;
+  inboundRms?: number;
+  outboundPeakAmplitude?: number;
+  outboundAvgAmplitude?: number;
+  outboundRms?: number;
+  audioGainApplied?: number;
 }
 
 const MAX_RECENT_ENDED_SESSIONS = 100;
@@ -177,6 +195,13 @@ export function toVoiceSessionResponse(
     openAiEventCounts: session.openAiEventCounts
       ? { ...session.openAiEventCounts }
       : undefined,
+    inboundPeakAmplitude: session.inboundPeakAmplitude,
+    inboundAvgAmplitude: session.inboundAvgAmplitude,
+    inboundRms: session.inboundRms,
+    outboundPeakAmplitude: session.outboundPeakAmplitude,
+    outboundAvgAmplitude: session.outboundAvgAmplitude,
+    outboundRms: session.outboundRms,
+    audioGainApplied: session.audioGainApplied,
   };
 }
 
@@ -187,6 +212,8 @@ export class VoiceSessionService {
   private readonly socketToStreamSid = new Map<string, string>();
   private readonly recentEndedSessions: VoiceSession[] = [];
   private readonly recentEndedByStreamSid = new Map<string, VoiceSession>();
+  private readonly inboundStatsByStreamSid = new Map<string, Pcm16Stats>();
+  private readonly outboundStatsByStreamSid = new Map<string, Pcm16Stats>();
 
   createSocketSession(remoteAddress?: string): VoiceSession {
     const socketSessionId = randomUUID();
@@ -498,6 +525,54 @@ export class VoiceSessionService {
     }
   }
 
+  recordInboundAudioStats(streamSid: string, chunk: Pcm16Stats): void {
+    const merged = mergePcm16Stats(
+      this.inboundStatsByStreamSid.get(streamSid),
+      chunk,
+    );
+    this.inboundStatsByStreamSid.set(streamSid, merged);
+    this.applyAudioStatsToSession(streamSid, 'inbound', merged);
+  }
+
+  recordOutboundAudioStats(streamSid: string, chunk: Pcm16Stats): void {
+    const merged = mergePcm16Stats(
+      this.outboundStatsByStreamSid.get(streamSid),
+      chunk,
+    );
+    this.outboundStatsByStreamSid.set(streamSid, merged);
+    this.applyAudioStatsToSession(streamSid, 'outbound', merged);
+  }
+
+  setAudioGainApplied(streamSid: string, gain: number): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+    session.audioGainApplied = gain;
+  }
+
+  private applyAudioStatsToSession(
+    streamSid: string,
+    direction: 'inbound' | 'outbound',
+    stats: Pcm16Stats,
+  ): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    if (direction === 'inbound') {
+      session.inboundPeakAmplitude = stats.peak;
+      session.inboundAvgAmplitude = Number(stats.avgAbs.toFixed(2));
+      session.inboundRms = Number(stats.rms.toFixed(2));
+      return;
+    }
+
+    session.outboundPeakAmplitude = stats.peak;
+    session.outboundAvgAmplitude = Number(stats.avgAbs.toFixed(2));
+    session.outboundRms = Number(stats.rms.toFixed(2));
+  }
+
   attachRecordingMetadata(
     streamSid: string,
     metadata: {
@@ -552,6 +627,8 @@ export class VoiceSessionService {
     if (session.streamSid) {
       this.activeByStreamSid.delete(session.streamSid);
       this.socketToStreamSid.delete(session.socketSessionId);
+      this.inboundStatsByStreamSid.delete(session.streamSid);
+      this.outboundStatsByStreamSid.delete(session.streamSid);
     }
 
     this.recentEndedSessions.push(session);

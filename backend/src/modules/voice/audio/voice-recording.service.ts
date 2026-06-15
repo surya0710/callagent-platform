@@ -1,5 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Readable } from 'node:stream';
+import { applyPcm16Gain } from './audio-gain.util';
+import {
+  analyzePcm16,
+  formatPcm16Stats,
+} from './pcm-stats.util';
+import { VoiceAudioConfigService } from './voice-audio-config.service';
 import {
   decodeMulawBuffer,
   decodeMulawSample,
@@ -11,6 +17,7 @@ import {
 } from './storage/voice-recording-storage.interface';
 import { VoiceRecordingStorageFactory } from './storage/voice-recording-storage.factory';
 import { createWavBuffer } from './wav-writer';
+import { VoiceSessionService } from '../voice-session.service';
 
 export interface VoiceRecordingMetadata {
   streamSid: string;
@@ -64,6 +71,8 @@ export class VoiceRecordingService {
 
   constructor(
     private readonly storageFactory: VoiceRecordingStorageFactory,
+    private readonly voiceAudioConfigService: VoiceAudioConfigService,
+    private readonly voiceSessionService: VoiceSessionService,
   ) {}
 
   start(streamSid: string, callSid?: string): void {
@@ -214,7 +223,17 @@ export class VoiceRecordingService {
         active.inboundChunks,
         active.outboundChunks,
       );
-      const pcmBuffer = decodeMulawBuffer(mulawBuffer);
+      let pcmBuffer = decodeMulawBuffer(mulawBuffer);
+      const pcmStatsBeforeGain = analyzePcm16(pcmBuffer);
+      const gain = this.voiceAudioConfigService.getGain();
+
+      if (gain !== 1) {
+        pcmBuffer = applyPcm16Gain(pcmBuffer, gain);
+      }
+
+      const pcmStatsAfterGain = analyzePcm16(pcmBuffer);
+      this.voiceSessionService.setAudioGainApplied(streamSid, gain);
+
       const wavBuffer = createWavBuffer(pcmBuffer, {
         sampleRate: SAMPLE_RATE,
         channels: CHANNELS,
@@ -257,6 +276,9 @@ export class VoiceRecordingService {
         inboundChunks: active.inboundChunks.length,
         outboundChunks: active.outboundChunks.length,
         chunks: metadata.chunks,
+        gain,
+        pcmBeforeGain: formatPcm16Stats(pcmStatsBeforeGain),
+        pcmAfterGain: formatPcm16Stats(pcmStatsAfterGain),
         message: 'Voice recording finalized',
       });
 

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { decodeMulawBuffer } from './audio/mulaw-codec';
+import { analyzePcm16, formatPcm16Stats } from './audio/pcm-stats.util';
 import { isSpeechLikePcm16 } from './audio/speech-detection.util';
 import { VoiceRecordingService } from './audio/voice-recording.service';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
@@ -17,6 +18,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 export class SmartfloStreamAdapter {
   private readonly logger = new Logger(SmartfloStreamAdapter.name);
   private readonly loggedMediaShapeByStreamSid = new Set<string>();
+  private readonly loggedInboundDecodeByStreamSid = new Set<string>();
 
   constructor(
     private readonly voiceSessionService: VoiceSessionService,
@@ -199,8 +201,21 @@ export class SmartfloStreamAdapter {
         const mulawBuffer = Buffer.from(payloadStr, 'base64');
         if (mulawBuffer.length > 0) {
           const pcm16Audio = decodeMulawBuffer(mulawBuffer);
+          const pcmStats = analyzePcm16(pcm16Audio);
           const now = new Date();
           const speechLike = isSpeechLikePcm16(pcm16Audio);
+
+          if (!this.loggedInboundDecodeByStreamSid.has(streamSid)) {
+            this.loggedInboundDecodeByStreamSid.add(streamSid);
+            this.logger.log({
+              streamSid,
+              mulawBytes: mulawBuffer.length,
+              pcmStats: formatPcm16Stats(pcmStats),
+              message: 'Inbound μ-law decode stats (first chunk)',
+            });
+          }
+
+          this.voiceSessionService.recordInboundAudioStats(streamSid, pcmStats);
 
           this.voiceSessionService.updateRuntimeState(streamSid, {
             hasReceivedCallerAudio: true,

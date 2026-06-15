@@ -145,6 +145,10 @@ export class EnvironmentVariables {
   VOICE_WSS_BASE_URL?: string;
 
   @IsOptional()
+  @IsString()
+  VOICE_AUDIO_GAIN?: string;
+
+  @IsOptional()
   @IsEnum(VoiceRecordingStorageDriver)
   VOICE_RECORDINGS_STORAGE_DRIVER?: VoiceRecordingStorageDriver;
 
