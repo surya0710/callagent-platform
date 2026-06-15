@@ -6,6 +6,7 @@ import { prepareOutboundPcm16 } from '../audio/audio-gain.util';
 import { Pcm16StreamDownsampler, resamplePcm16 } from '../audio/pcm-resampler';
 import { analyzePcm16, formatPcm16Stats } from '../audio/pcm-stats.util';
 import { isSpeechLikePcm16 } from '../audio/speech-detection.util';
+import { voiceDebugLog } from '../audio/voice-debug.util';
 import { VoiceAudioConfigService } from '../audio/voice-audio-config.service';
 import { AudioGateway } from '../audio.gateway';
 import { VoiceSessionService } from '../voice-session.service';
@@ -27,6 +28,7 @@ const OPENAI_SAMPLE_RATE = OPENAI_REALTIME_SAMPLE_RATE;
 const MULAW_FRAME_BYTES = 160;
 const MULAW_SILENCE_BYTE = 0xff;
 const INPUT_COMMIT_DELAY_MS = 600;
+const MANUAL_FALLBACK_SILENCE_MS = 800;
 const RESPONSE_WAIT_MS = 15000;
 const SESSION_READY_TIMEOUT_MS = 5000;
 const WS_OPEN_TIMEOUT_MS = 8000;
@@ -46,6 +48,9 @@ interface OpenAiRealtimeSession {
   pendingPcm8: Buffer[];
   closing: boolean;
   commitTimer?: NodeJS.Timeout;
+  manualFallbackSilenceTimer?: NodeJS.Timeout;
+  manualFallbackSpeechDetected: boolean;
+  manualFallbackCommitCount: number;
   responseRequested: boolean;
   responseInProgress: boolean;
   responseComplete: boolean;
@@ -55,6 +60,8 @@ interface OpenAiRealtimeSession {
   inputAppendCount: number;
   commitCount: number;
   responseCount: number;
+  responseCreateCount: number;
+  responseDoneCount: number;
   outboundMediaCount: number;
   lastCloseCode?: number;
   lastCloseReason?: string;
@@ -174,6 +181,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       outboundChunkBytes,
       pendingPcm8: [],
       closing: false,
+      manualFallbackSpeechDetected: false,
+      manualFallbackCommitCount: 0,
       responseRequested: false,
       responseInProgress: false,
       responseComplete: false,
@@ -183,6 +192,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       inputAppendCount: 0,
       commitCount: 0,
       responseCount: 0,
+      responseCreateCount: 0,
+      responseDoneCount: 0,
       outboundMediaCount: 0,
       useServerVad,
     };
@@ -225,10 +236,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     ws.on('error', (error) => {
       this.logger.error({ streamSid, err: error }, 'OpenAI Realtime WebSocket error');
       session.status = 'error';
+      this.resetResponseGuards(session, 'openai_ws_error');
+      this.clearManualFallbackSilenceTimer(session);
       this.updateRuntimeState(streamSid, {
         runtimeStatus: 'error',
         runtimeLastEventAt: new Date(),
         runtimeError: error.message,
+        lastError: error.message,
       });
       this.resolveResponseWaiters(session);
     });
@@ -238,6 +252,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.lastCloseCode = code;
       session.lastCloseReason = reason.toString();
       this.clearCommitTimer(session);
+      this.clearManualFallbackSilenceTimer(session);
+      this.resetResponseGuards(session, 'openai_ws_close');
       this.resolveResponseWaiters(session);
 
       this.logger.warn({
@@ -301,6 +317,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     session.closing = true;
     this.clearCommitTimer(session);
+    this.clearManualFallbackSilenceTimer(session);
 
     const wsOpen = await this.waitForWebSocketOpen(session, WS_OPEN_TIMEOUT_MS);
     if (wsOpen) {
@@ -345,6 +362,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.updateRuntimeState(streamSid, {
       runtimeStatus: 'closed',
       runtimeLastEventAt: new Date(),
+      responsePending: false,
+      isAwaitingOpenAiResponse: false,
     });
   }
 
@@ -400,6 +419,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     const now = new Date();
     const speechLike = isSpeechLikePcm16(pcm8);
 
+    voiceDebugLog(this.logger, session.streamSid, 'openai_handle_audio', {
+      bytes: pcm8.length,
+      appendCount: session.inputAppendCount,
+    });
+
     this.logger.log({
       streamSid: session.streamSid,
       pcm8Bytes: pcm8.length,
@@ -413,12 +437,31 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.updateRuntimeState(session.streamSid, {
       runtimeLastEventAt: now,
       appendCount: session.inputAppendCount,
+      lastOpenAiAppendAt: now,
       incrementOpenAiEvent: 'input_audio_buffer.append',
     });
 
     if (!session.closing && !session.useServerVad && !session.responseInProgress) {
       if (speechLike) {
         this.scheduleInputCommit(session);
+      }
+      return;
+    }
+
+    if (
+      !session.closing &&
+      session.useServerVad &&
+      !session.responseInProgress &&
+      !session.responseRequested
+    ) {
+      if (speechLike) {
+        session.manualFallbackSpeechDetected = true;
+        this.clearManualFallbackSilenceTimer(session);
+        voiceDebugLog(this.logger, session.streamSid, 'manual_fallback_speech_detected', {
+          appendCount: session.inputAppendCount,
+        });
+      } else if (session.manualFallbackSpeechDetected) {
+        this.scheduleManualFallbackSilenceCommit(session);
       }
     }
   }
@@ -454,18 +497,108 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
+  private scheduleManualFallbackSilenceCommit(session: OpenAiRealtimeSession): void {
+    if (session.manualFallbackSilenceTimer) {
+      return;
+    }
+
+    session.manualFallbackSilenceTimer = setTimeout(() => {
+      session.manualFallbackSilenceTimer = undefined;
+      if (
+        session.closing ||
+        !session.manualFallbackSpeechDetected ||
+        session.responseRequested ||
+        session.responseInProgress
+      ) {
+        return;
+      }
+
+      session.manualFallbackCommitCount += 1;
+      this.updateRuntimeState(session.streamSid, {
+        manualFallbackCommitCount: session.manualFallbackCommitCount,
+      });
+
+      voiceDebugLog(
+        this.logger,
+        session.streamSid,
+        'manual_fallback_commit',
+        {
+          commitCount: session.commitCount + 1,
+          silenceMs: MANUAL_FALLBACK_SILENCE_MS,
+        },
+        { bypassThrottle: true },
+      );
+
+      void this.commitInputAndCreateResponse(session, {
+        manualFallback: true,
+        reason: 'manual_fallback',
+      });
+    }, MANUAL_FALLBACK_SILENCE_MS);
+  }
+
+  private clearManualFallbackSilenceTimer(session: OpenAiRealtimeSession): void {
+    if (session.manualFallbackSilenceTimer) {
+      clearTimeout(session.manualFallbackSilenceTimer);
+      session.manualFallbackSilenceTimer = undefined;
+    }
+  }
+
+  private resetResponseGuards(
+    session: OpenAiRealtimeSession,
+    reason: string,
+  ): void {
+    if (session.responseRequested || session.responseInProgress) {
+      this.logger.log({
+        streamSid: session.streamSid,
+        reason,
+        message: 'Resetting OpenAI response guards',
+      });
+    }
+
+    session.responseRequested = false;
+    session.responseInProgress = false;
+    this.updateRuntimeState(session.streamSid, {
+      responsePending: false,
+      isAwaitingOpenAiResponse: false,
+    });
+  }
+
   private async commitInputAndCreateResponse(
     session: OpenAiRealtimeSession,
-    options?: { forceOnEnd?: boolean },
+    options?: { forceOnEnd?: boolean; manualFallback?: boolean; reason?: string },
   ): Promise<void> {
     if (session.ws.readyState !== WebSocket.OPEN) {
       return;
     }
 
+    const commitReason =
+      options?.reason ??
+      (options?.manualFallback
+        ? 'manual_fallback'
+        : session.useServerVad
+          ? 'server_vad'
+          : 'manual');
+
+    if (session.responseRequested || session.responseInProgress) {
+      voiceDebugLog(this.logger, session.streamSid, 'openai_response_create', {
+        responseCount: session.responseCreateCount,
+        reason: commitReason,
+        skipped: 1,
+      });
+      this.logger.debug({
+        streamSid: session.streamSid,
+        responseRequested: session.responseRequested,
+        responseInProgress: session.responseInProgress,
+        reason: commitReason,
+        message: 'Skipping response.create — response already pending',
+      });
+      return;
+    }
+
     if (
-      session.responseRequested ||
-      session.responseInProgress ||
-      (session.useServerVad && !options?.forceOnEnd)
+      session.useServerVad &&
+      !options?.forceOnEnd &&
+      !options?.manualFallback
     ) {
       return;
     }
@@ -481,22 +614,41 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     session.responseRequested = true;
     session.commitCount += 1;
+    session.responseCreateCount += 1;
+    session.manualFallbackSpeechDetected = false;
+    this.clearManualFallbackSilenceTimer(session);
 
+    const now = new Date();
     session.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
     session.ws.send(JSON.stringify({ type: 'response.create' }));
+
+    voiceDebugLog(this.logger, session.streamSid, 'openai_commit', {
+      commitCount: session.commitCount,
+      reason: commitReason,
+    });
+    voiceDebugLog(this.logger, session.streamSid, 'openai_response_create', {
+      responseCount: session.responseCreateCount,
+      reason: commitReason,
+    });
 
     this.logger.log({
       streamSid: session.streamSid,
       inputAppendCount: session.inputAppendCount,
       commitCount: session.commitCount,
+      responseCreateCount: session.responseCreateCount,
       totalInputPcm24Sent: session.totalInputPcm24Sent,
       turnDetection: session.useServerVad ? 'server_vad' : 'manual',
+      commitReason,
       message: 'input_audio_buffer.commit and response.create sent',
     });
 
     this.updateRuntimeState(session.streamSid, {
-      runtimeLastEventAt: new Date(),
+      runtimeLastEventAt: now,
       commitCount: session.commitCount,
+      responseCreateCount: session.responseCreateCount,
+      lastCommitAt: now,
+      lastResponseCreateAt: now,
+      responsePending: true,
       isAwaitingOpenAiResponse: true,
       incrementOpenAiEvent: 'input_audio_buffer.commit',
     });
@@ -607,7 +759,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     if (isImportant) {
       this.logger.log({ streamSid, openaiEvent: type, eventId: event.event_id });
-      this.updateRuntimeState(streamSid, { incrementOpenAiEvent: type });
+      voiceDebugLog(this.logger, streamSid, 'openai_event', { event: type });
+      this.updateRuntimeState(streamSid, {
+        incrementOpenAiEvent: type,
+        lastOpenAiEvent: type,
+      });
     }
 
     if (type === 'session.updated' || type === 'session.created') {
@@ -618,25 +774,37 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     if (type === 'input_audio_buffer.speech_started') {
+      const now = new Date();
+      session.manualFallbackSpeechDetected = true;
+      this.clearManualFallbackSilenceTimer(session);
       this.updateRuntimeState(streamSid, {
-        lastSpeechLikeAudioAt: new Date(),
+        lastSpeechLikeAudioAt: now,
+        lastSpeechStartedAt: now,
       });
       return;
     }
 
     if (type === 'input_audio_buffer.speech_stopped') {
+      const now = new Date();
       this.logger.log({
         streamSid,
         turnDetection: session.useServerVad ? 'server_vad' : 'manual',
         message: 'OpenAI detected end of caller speech',
       });
+      this.updateRuntimeState(streamSid, {
+        lastSpeechStoppedAt: now,
+      });
       return;
     }
 
     if (type === 'input_audio_buffer.committed') {
+      const now = new Date();
       this.logger.log({
         streamSid,
         message: 'OpenAI input_audio_buffer.committed',
+      });
+      this.updateRuntimeState(streamSid, {
+        lastCommitAt: now,
       });
       return;
     }
@@ -648,9 +816,22 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           ? error.message
           : JSON.stringify(event.error ?? event);
       this.logger.error({ streamSid, error: event.error ?? event }, message);
+      this.resetResponseGuards(session, 'openai_error_event');
+      this.clearManualFallbackSilenceTimer(session);
       this.updateRuntimeState(streamSid, {
         runtimeStatus: 'error',
         runtimeError: message,
+        lastError: message,
+      });
+      return;
+    }
+
+    if (type === 'response.cancelled') {
+      this.resetResponseGuards(session, 'response_cancelled');
+      this.clearManualFallbackSilenceTimer(session);
+      this.updateRuntimeState(streamSid, {
+        isAiSpeaking: false,
+        lastOpenAiEvent: type,
       });
       return;
     }
@@ -663,6 +844,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.outboundMulawBuffer = Buffer.alloc(0);
       this.updateRuntimeState(streamSid, {
         responseCount: session.responseCount,
+        responsePending: true,
         isAwaitingOpenAiResponse: true,
         isAiSpeaking: true,
       });
@@ -696,19 +878,27 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.responseInProgress = false;
       session.responseComplete = true;
       session.responseRequested = false;
+      session.responseDoneCount += 1;
+      session.manualFallbackSpeechDetected = false;
+      this.clearManualFallbackSilenceTimer(session);
       this.flushOutboundPcmRemainder(session);
       this.flushRemainingOutbound(session);
       this.resolveResponseWaiters(session);
+      const now = new Date();
       this.logger.log({
         streamSid,
         totalOutputMulawSent: session.totalOutputMulawSent,
         outboundMediaCount: session.outboundMediaCount,
         responseCount: session.responseCount,
+        responseDoneCount: session.responseDoneCount,
         message: 'response.done received',
       });
       this.updateRuntimeState(streamSid, {
         isAwaitingOpenAiResponse: false,
         isAiSpeaking: false,
+        responsePending: false,
+        responseDoneCount: session.responseDoneCount,
+        lastResponseDoneAt: now,
       });
     }
   }
@@ -791,6 +981,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       message: 'response.output_audio.delta received',
     });
 
+    voiceDebugLog(this.logger, session.streamSid, 'openai_audio_delta', {
+      bytes: pcm24.length,
+    });
+
     this.updateRuntimeState(session.streamSid, {
       lastOpenAiAudioAt: new Date(),
       isAiSpeaking: true,
@@ -833,7 +1027,12 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       const payload = frame.toString('base64');
       session.totalOutputMulawSent += frame.length;
       session.outboundMediaCount += 1;
-      this.sendOutboundMedia(session.streamSid, payload, frame.length);
+      this.sendOutboundMedia(
+        session.streamSid,
+        payload,
+        frame.length,
+        session.outboundMediaCount,
+      );
       this.updateRuntimeState(session.streamSid, {
         outboundMediaCount: session.outboundMediaCount,
       });
@@ -865,7 +1064,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     streamSid: string,
     base64MulawPayload: string,
     mulawBytes: number,
+    outboundMediaCount?: number,
   ): void {
+    voiceDebugLog(this.logger, streamSid, 'smartflo_send_media', {
+      bytes: mulawBytes,
+      outboundMediaCount,
+    });
+
     this.logger.log({
       streamSid,
       mulawBytes,
@@ -887,14 +1092,27 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       isOpenAiConnected?: boolean;
       hasReceivedCallerAudio?: boolean;
       lastCallerAudioAt?: Date;
+      lastMediaAt?: Date;
       lastSpeechLikeAudioAt?: Date;
+      lastOpenAiAppendAt?: Date;
+      lastSpeechStartedAt?: Date;
+      lastSpeechStoppedAt?: Date;
+      lastCommitAt?: Date;
+      lastResponseCreateAt?: Date;
+      lastResponseDoneAt?: Date;
+      lastOpenAiEvent?: string;
+      lastError?: string;
+      responsePending?: boolean;
       isAwaitingOpenAiResponse?: boolean;
       isAiSpeaking?: boolean;
       lastOpenAiAudioAt?: Date;
       responseCount?: number;
+      responseCreateCount?: number;
+      responseDoneCount?: number;
       appendCount?: number;
       commitCount?: number;
       outboundMediaCount?: number;
+      manualFallbackCommitCount?: number;
       incrementOpenAiEvent?: string;
     },
   ): void {

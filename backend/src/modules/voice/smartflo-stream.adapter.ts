@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { decodeMulawBuffer } from './audio/mulaw-codec';
 import { analyzePcm16, formatPcm16Stats } from './audio/pcm-stats.util';
 import { isSpeechLikePcm16 } from './audio/speech-detection.util';
+import { voiceDebugLog } from './audio/voice-debug.util';
 import { VoiceRecordingService } from './audio/voice-recording.service';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import { parseSmartfloInboundMedia } from './smartflo-media.util';
@@ -185,9 +186,6 @@ export class SmartfloStreamAdapter {
     this.voiceSessionService.recordMedia(socketSessionId, payload);
 
     if (payloadStr) {
-      // Recording uses wall-clock offsets from stream start (see VoiceRecordingService).
-      this.voiceRecordingService.appendInboundMulawBase64(streamSid, payloadStr);
-
       try {
         const mulawBuffer = Buffer.from(payloadStr, 'base64');
         if (mulawBuffer.length > 0) {
@@ -196,12 +194,21 @@ export class SmartfloStreamAdapter {
           const now = new Date();
           const speechLike = isSpeechLikePcm16(pcm16Audio);
 
+          voiceDebugLog(this.logger, streamSid, 'smartflo_media', {
+            payloadBytes: mulawBuffer.length,
+            decodedSamples: Math.floor(pcm16Audio.length / 2),
+            rms: Number(pcmStats.rms.toFixed(2)),
+            silence: speechLike ? 0 : 1,
+            track: parsed.track,
+          });
+
           if (!this.loggedInboundDecodeByStreamSid.has(streamSid)) {
             this.loggedInboundDecodeByStreamSid.add(streamSid);
             this.logger.log({
               streamSid,
               mulawBytes: mulawBuffer.length,
               pcmStats: formatPcm16Stats(pcmStats),
+              track: parsed.track,
               message: 'Inbound μ-law decode stats (first chunk)',
             });
           }
@@ -211,7 +218,13 @@ export class SmartfloStreamAdapter {
           this.voiceSessionService.updateRuntimeState(streamSid, {
             hasReceivedCallerAudio: true,
             lastCallerAudioAt: now,
-            ...(speechLike ? { lastSpeechLikeAudioAt: now } : {}),
+            lastMediaAt: now,
+            ...(speechLike
+              ? {
+                  lastSpeechLikeAudioAt: now,
+                  incrementSpeechLikeFrame: true,
+                }
+              : { incrementSilenceFrame: true }),
           });
 
           this.voiceRuntime.handleAudio(streamSid, pcm16Audio);
@@ -223,15 +236,23 @@ export class SmartfloStreamAdapter {
           message: 'Failed to decode inbound media for runtime provider',
         });
       }
-    } else if (parsed.track === 'outbound') {
-      this.logger.debug({
-        streamSid,
-        track: parsed.track,
-        message: 'Ignoring outbound-track inbound media event',
-      });
+
+      try {
+        this.voiceRecordingService.appendInboundMulawBase64(streamSid, payloadStr);
+      } catch (error) {
+        voiceDebugLog(this.logger, streamSid, 'recording_error', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        this.logger.warn({
+          streamSid,
+          err: error,
+          message: 'Recording append failed; live audio path unaffected',
+        });
+      }
     } else if (parsed.parseSource === 'none') {
       this.logger.warn({
         streamSid,
+        track: parsed.track,
         message: 'Media event missing payload — check Smartflo payload shape',
         payloadKeys: Object.keys(payload),
         mediaKeys:

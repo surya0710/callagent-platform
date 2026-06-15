@@ -8,6 +8,7 @@ import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
 import { VoiceRecordingService } from './audio/voice-recording.service';
+import { voiceDebugLog } from './audio/voice-debug.util';
 import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
@@ -161,10 +162,21 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     // Recording uses wall-clock offsets; Smartflo media timestamps are sequential from 0.
-    this.voiceRecordingService.appendOutboundMulawBase64(
-      streamSid,
-      base64MulawPayload,
-    );
+    try {
+      this.voiceRecordingService.appendOutboundMulawBase64(
+        streamSid,
+        base64MulawPayload,
+      );
+    } catch (error) {
+      voiceDebugLog(this.logger, streamSid, 'recording_error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.logger.warn({
+        streamSid,
+        err: error,
+        message: 'Outbound recording append failed; live media send continues',
+      });
+    }
 
     const outboundMessage = JSON.stringify({
       event: 'media',

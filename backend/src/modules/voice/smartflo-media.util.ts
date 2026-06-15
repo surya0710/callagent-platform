@@ -20,13 +20,6 @@ export function parseSmartfloInboundMedia(
   const track =
     media && typeof media.track === 'string' ? media.track : undefined;
 
-  if (track === 'outbound') {
-    return {
-      track,
-      parseSource: 'none',
-    };
-  }
-
   if (media && typeof media.payload === 'string' && media.payload.length > 0) {
     return {
       payloadBase64: media.payload,

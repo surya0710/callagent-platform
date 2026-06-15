@@ -57,14 +57,29 @@ export interface VoiceSession {
   isOpenAiConnected?: boolean;
   hasReceivedCallerAudio?: boolean;
   lastCallerAudioAt?: Date;
+  lastMediaAt?: Date;
   lastSpeechLikeAudioAt?: Date;
+  lastOpenAiAppendAt?: Date;
+  lastSpeechStartedAt?: Date;
+  lastSpeechStoppedAt?: Date;
+  lastCommitAt?: Date;
+  lastResponseCreateAt?: Date;
+  lastResponseDoneAt?: Date;
+  lastOpenAiEvent?: string;
+  lastError?: string;
+  responsePending?: boolean;
   isAwaitingOpenAiResponse?: boolean;
   isAiSpeaking?: boolean;
   lastOpenAiAudioAt?: Date;
   responseCount?: number;
+  responseCreateCount?: number;
+  responseDoneCount?: number;
   appendCount?: number;
   commitCount?: number;
   outboundMediaCount?: number;
+  manualFallbackCommitCount?: number;
+  speechLikeFrameCount?: number;
+  silenceFrameCount?: number;
   openAiEventCounts?: Record<string, number>;
   inboundPeakAmplitude?: number;
   inboundAvgAmplitude?: number;
@@ -129,14 +144,29 @@ export interface VoiceSessionResponse {
   isOpenAiConnected?: boolean;
   hasReceivedCallerAudio?: boolean;
   lastCallerAudioAt?: string;
+  lastMediaAt?: string;
   lastSpeechLikeAudioAt?: string;
+  lastOpenAiAppendAt?: string;
+  lastSpeechStartedAt?: string;
+  lastSpeechStoppedAt?: string;
+  lastCommitAt?: string;
+  lastResponseCreateAt?: string;
+  lastResponseDoneAt?: string;
+  lastOpenAiEvent?: string;
+  lastError?: string;
+  responsePending?: boolean;
   isAwaitingOpenAiResponse?: boolean;
   isAiSpeaking?: boolean;
   lastOpenAiAudioAt?: string;
   responseCount?: number;
+  responseCreateCount?: number;
+  responseDoneCount?: number;
   appendCount?: number;
   commitCount?: number;
   outboundMediaCount?: number;
+  manualFallbackCommitCount?: number;
+  speechLikeFrameCount?: number;
+  silenceFrameCount?: number;
   openAiEventCounts?: Record<string, number>;
   inboundPeakAmplitude?: number;
   inboundAvgAmplitude?: number;
@@ -202,14 +232,29 @@ export function toVoiceSessionResponse(
     isOpenAiConnected: session.isOpenAiConnected,
     hasReceivedCallerAudio: session.hasReceivedCallerAudio,
     lastCallerAudioAt: session.lastCallerAudioAt?.toISOString(),
+    lastMediaAt: session.lastMediaAt?.toISOString(),
     lastSpeechLikeAudioAt: session.lastSpeechLikeAudioAt?.toISOString(),
+    lastOpenAiAppendAt: session.lastOpenAiAppendAt?.toISOString(),
+    lastSpeechStartedAt: session.lastSpeechStartedAt?.toISOString(),
+    lastSpeechStoppedAt: session.lastSpeechStoppedAt?.toISOString(),
+    lastCommitAt: session.lastCommitAt?.toISOString(),
+    lastResponseCreateAt: session.lastResponseCreateAt?.toISOString(),
+    lastResponseDoneAt: session.lastResponseDoneAt?.toISOString(),
+    lastOpenAiEvent: session.lastOpenAiEvent,
+    lastError: session.lastError,
+    responsePending: session.responsePending,
     isAwaitingOpenAiResponse: session.isAwaitingOpenAiResponse,
     isAiSpeaking: session.isAiSpeaking,
     lastOpenAiAudioAt: session.lastOpenAiAudioAt?.toISOString(),
     responseCount: session.responseCount,
+    responseCreateCount: session.responseCreateCount,
+    responseDoneCount: session.responseDoneCount,
     appendCount: session.appendCount,
     commitCount: session.commitCount,
     outboundMediaCount: session.outboundMediaCount,
+    manualFallbackCommitCount: session.manualFallbackCommitCount,
+    speechLikeFrameCount: session.speechLikeFrameCount,
+    silenceFrameCount: session.silenceFrameCount,
     openAiEventCounts: session.openAiEventCounts
       ? { ...session.openAiEventCounts }
       : undefined,
@@ -363,6 +408,7 @@ export class VoiceSessionService {
     session.packetsReceived += 1;
     session.lastEvent = 'media';
     session.lastEventAt = now;
+    session.lastMediaAt = now;
 
     const media =
       payload.media && typeof payload.media === 'object'
@@ -461,14 +507,29 @@ export class VoiceSessionService {
       isOpenAiConnected?: boolean;
       hasReceivedCallerAudio?: boolean;
       lastCallerAudioAt?: Date;
+      lastMediaAt?: Date;
       lastSpeechLikeAudioAt?: Date;
+      lastOpenAiAppendAt?: Date;
+      lastSpeechStartedAt?: Date;
+      lastSpeechStoppedAt?: Date;
+      lastCommitAt?: Date;
+      lastResponseCreateAt?: Date;
+      lastResponseDoneAt?: Date;
+      lastOpenAiEvent?: string;
+      lastError?: string;
+      responsePending?: boolean;
       isAwaitingOpenAiResponse?: boolean;
       isAiSpeaking?: boolean;
       lastOpenAiAudioAt?: Date;
       responseCount?: number;
+      responseCreateCount?: number;
+      responseDoneCount?: number;
       appendCount?: number;
       commitCount?: number;
       outboundMediaCount?: number;
+      manualFallbackCommitCount?: number;
+      incrementSpeechLikeFrame?: boolean;
+      incrementSilenceFrame?: boolean;
       openAiEventCounts?: Record<string, number>;
       incrementOpenAiEvent?: string;
     },
@@ -510,8 +571,38 @@ export class VoiceSessionService {
     if (update.lastCallerAudioAt !== undefined) {
       session.lastCallerAudioAt = update.lastCallerAudioAt;
     }
+    if (update.lastMediaAt !== undefined) {
+      session.lastMediaAt = update.lastMediaAt;
+    }
     if (update.lastSpeechLikeAudioAt !== undefined) {
       session.lastSpeechLikeAudioAt = update.lastSpeechLikeAudioAt;
+    }
+    if (update.lastOpenAiAppendAt !== undefined) {
+      session.lastOpenAiAppendAt = update.lastOpenAiAppendAt;
+    }
+    if (update.lastSpeechStartedAt !== undefined) {
+      session.lastSpeechStartedAt = update.lastSpeechStartedAt;
+    }
+    if (update.lastSpeechStoppedAt !== undefined) {
+      session.lastSpeechStoppedAt = update.lastSpeechStoppedAt;
+    }
+    if (update.lastCommitAt !== undefined) {
+      session.lastCommitAt = update.lastCommitAt;
+    }
+    if (update.lastResponseCreateAt !== undefined) {
+      session.lastResponseCreateAt = update.lastResponseCreateAt;
+    }
+    if (update.lastResponseDoneAt !== undefined) {
+      session.lastResponseDoneAt = update.lastResponseDoneAt;
+    }
+    if (update.lastOpenAiEvent !== undefined) {
+      session.lastOpenAiEvent = update.lastOpenAiEvent;
+    }
+    if (update.lastError !== undefined) {
+      session.lastError = update.lastError;
+    }
+    if (update.responsePending !== undefined) {
+      session.responsePending = update.responsePending;
     }
     if (update.isAwaitingOpenAiResponse !== undefined) {
       session.isAwaitingOpenAiResponse = update.isAwaitingOpenAiResponse;
@@ -525,6 +616,12 @@ export class VoiceSessionService {
     if (update.responseCount !== undefined) {
       session.responseCount = update.responseCount;
     }
+    if (update.responseCreateCount !== undefined) {
+      session.responseCreateCount = update.responseCreateCount;
+    }
+    if (update.responseDoneCount !== undefined) {
+      session.responseDoneCount = update.responseDoneCount;
+    }
     if (update.appendCount !== undefined) {
       session.appendCount = update.appendCount;
     }
@@ -533,6 +630,15 @@ export class VoiceSessionService {
     }
     if (update.outboundMediaCount !== undefined) {
       session.outboundMediaCount = update.outboundMediaCount;
+    }
+    if (update.manualFallbackCommitCount !== undefined) {
+      session.manualFallbackCommitCount = update.manualFallbackCommitCount;
+    }
+    if (update.incrementSpeechLikeFrame) {
+      session.speechLikeFrameCount = (session.speechLikeFrameCount ?? 0) + 1;
+    }
+    if (update.incrementSilenceFrame) {
+      session.silenceFrameCount = (session.silenceFrameCount ?? 0) + 1;
     }
     if (update.openAiEventCounts !== undefined) {
       session.openAiEventCounts = update.openAiEventCounts;
