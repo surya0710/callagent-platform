@@ -37,6 +37,8 @@ function recordingTimelineLooksValid(session: VoiceSession): boolean | null {
 
   return outboundStart >= inboundEnd - 500;
 }
+
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <dt className="text-xs text-slate-500">{label}</dt>
