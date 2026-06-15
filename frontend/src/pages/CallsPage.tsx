@@ -30,7 +30,17 @@ export function CallsPage() {
   if (error) return <ErrorState message="Failed to load calls" />;
 
   return (
-    <Card title="Calls">
+    <Card
+      title="Calls"
+      action={
+        <Link
+          to="/voice/test-call"
+          className="inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500"
+        >
+          Initiate Call
+        </Link>
+      }
+    >
       <Table headers={['Customer', 'Phone', 'Source', 'Ref / Purpose', 'Status', 'Date', '']} empty={!data?.data.length}>
         {data?.data.map((call) => (
           <tr key={call.id} className="text-slate-300">

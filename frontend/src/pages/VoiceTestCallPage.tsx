@@ -60,9 +60,9 @@ export function VoiceTestCallPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">AI Voice Test Call</h1>
+          <h1 className="text-2xl font-bold text-white">Initiate Call</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Internal Smartflo click-to-call trigger for live voice streaming tests.
+            Enter a customer mobile number to start a Smartflo outbound test call.
           </p>
         </div>
         <Link
@@ -73,7 +73,7 @@ export function VoiceTestCallPage() {
         </Link>
       </div>
 
-      <Card title="Start Test Call">
+      <Card title="Customer number">
         <form onSubmit={handleSubmit} className="max-w-xl space-y-4">
           <Input
             label="Customer mobile number"
@@ -109,7 +109,7 @@ export function VoiceTestCallPage() {
           )}
 
           <Button type="submit" disabled={loading || !customerNumber.trim()}>
-            {loading ? 'Starting Test Call...' : 'Start Test Call'}
+            {loading ? 'Initiating call...' : 'Initiate Call'}
           </Button>
         </form>
       </Card>
