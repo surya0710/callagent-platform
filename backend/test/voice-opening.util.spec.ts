@@ -1,8 +1,11 @@
 import {
   buildExampleOpeningMessage,
+  buildOpeningResponseInstructions,
   buildOpeningSessionInstructions,
+  buildPostOpeningSessionInstructions,
   mergeOpeningContext,
   parseAskPermissionBeforePitch,
+  sanitizeBaseInstructionsForOpening,
   VOICE_OPENING_DEFAULTS,
 } from '../src/modules/voice/voice-opening.util';
 
@@ -70,6 +73,59 @@ describe('voice-opening.util', () => {
       expect(instructions).toContain('Aisha');
       expect(instructions).toContain('TATD');
       expect(instructions).not.toContain('Do not greet or speak first');
+    });
+
+    it('strips conflicting caller-first env instructions', () => {
+      const instructions = buildOpeningSessionInstructions(
+        {
+          agentName: 'Aisha',
+          companyName: 'TATD',
+          callPurpose: 'to discuss your interest in our services',
+        },
+        'Custom rule. Do not greet or speak first. Wait until the caller has finished speaking before responding.',
+      );
+
+      expect(instructions).not.toContain('Do not greet or speak first');
+      expect(instructions).toContain('Custom rule');
+    });
+  });
+
+  describe('buildOpeningResponseInstructions', () => {
+    it('requires a single scripted opening line and stop', () => {
+      const instructions = buildOpeningResponseInstructions({
+        agentName: 'Aisha',
+        companyName: 'TATD',
+        callPurpose: 'to discuss your interest in our services',
+        openingGreeting: 'Hi, good morning',
+      });
+
+      expect(instructions).toContain('Aisha');
+      expect(instructions).toContain('Then STOP immediately');
+      expect(instructions).toContain('good morning');
+    });
+  });
+
+  describe('buildPostOpeningSessionInstructions', () => {
+    it('waits for caller after opening', () => {
+      const instructions = buildPostOpeningSessionInstructions({
+        agentName: 'Aisha',
+        companyName: 'TATD',
+        callPurpose: 'to discuss your interest in our services',
+      });
+
+      expect(instructions).toContain('opening greeting is already complete');
+      expect(instructions).toContain('Wait for the caller');
+      expect(instructions).toContain('Never monologue');
+    });
+  });
+
+  describe('sanitizeBaseInstructionsForOpening', () => {
+    it('removes caller-first conflicts', () => {
+      const sanitized = sanitizeBaseInstructionsForOpening(
+        'Be helpful. Do not greet or speak first.',
+      );
+      expect(sanitized).not.toContain('Do not greet or speak first');
+      expect(sanitized).toContain('Be helpful');
     });
   });
 

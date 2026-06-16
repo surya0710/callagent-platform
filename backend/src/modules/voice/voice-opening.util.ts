@@ -58,6 +58,39 @@ export function buildExampleOpeningMessage(
   return `${greeting}. This is ${context.agentName} calling on behalf of ${context.companyName}. I'm reaching out ${context.callPurpose}.${permission}`;
 }
 
+/** Strip caller-first rules from env instructions when opening is active. */
+export function sanitizeBaseInstructionsForOpening(
+  baseInstructions?: string,
+): string {
+  const trimmed = baseInstructions?.trim();
+  if (!trimmed) {
+    return BASE_VOICE_INSTRUCTIONS;
+  }
+
+  return trimmed
+    .replace(/Do not greet or speak first\.?/gi, '')
+    .replace(
+      /Wait until the caller has finished speaking before responding\.?/gi,
+      '',
+    )
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/** Strict one-turn script for the initial response.create opening. */
+export function buildOpeningResponseInstructions(
+  context: VoiceOpeningContext,
+): string {
+  const line = buildExampleOpeningMessage(context);
+  return [
+    `Say ONLY this single opening line in a natural phone voice. Use the agent name "${context.agentName}".`,
+    `"${line}"`,
+    'Then STOP immediately and end your turn. Do not continue talking.',
+    'Do not pitch, explain further, or ask extra questions in this turn.',
+    'Do not mention AI, bots, systems, or models.',
+  ].join(' ');
+}
+
 export function buildOpeningSessionInstructions(
   context: VoiceOpeningContext,
   baseInstructions?: string,
@@ -83,8 +116,28 @@ export function buildOpeningSessionInstructions(
     '- Speak first when the call begins — deliver your opening greeting immediately.',
   ].join(' ');
 
-  const base = baseInstructions?.trim() || BASE_VOICE_INSTRUCTIONS;
+  const base = sanitizeBaseInstructionsForOpening(baseInstructions);
   return `${base} ${openingRules}`;
+}
+
+/** Session instructions after the opening turn — caller speaks next. */
+export function buildPostOpeningSessionInstructions(
+  context: VoiceOpeningContext,
+  baseInstructions?: string,
+): string {
+  const base = sanitizeBaseInstructionsForOpening(baseInstructions);
+  return [
+    base,
+    `You are ${context.agentName} representing ${context.companyName}.`,
+    `Call purpose: ${context.callPurpose}.`,
+    'The scripted opening greeting is already complete.',
+    'Wait for the caller to finish speaking before each reply.',
+    'Keep every reply concise — one or two short sentences. Never monologue.',
+    'Do not repeat the opening greeting unless the caller asks who is calling.',
+    'If they said it is not a good time, politely offer to call back later.',
+    `If they ask who is calling, say you are ${context.agentName} from ${context.companyName} regarding ${context.callPurpose}.`,
+    PASSIVE_CALLER_FIRST_SUFFIX,
+  ].join(' ');
 }
 
 export function parseAskPermissionBeforePitch(
