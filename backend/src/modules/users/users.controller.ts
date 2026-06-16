@@ -10,6 +10,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
+import { RequireRoles } from '../../common/decorators/roles.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -31,6 +32,7 @@ export class UsersController {
   }
 
   @Post()
+  @RequireRoles('admin')
   @RequirePermissions(PERMISSIONS.USERS_WRITE)
   @ApiOperation({ summary: 'Create user' })
   create(
@@ -48,6 +50,7 @@ export class UsersController {
   }
 
   @Patch(':id')
+  @RequireRoles('admin')
   @RequirePermissions(PERMISSIONS.USERS_WRITE)
   @ApiOperation({ summary: 'Update user' })
   update(
@@ -59,6 +62,7 @@ export class UsersController {
   }
 
   @Patch(':id/disable')
+  @RequireRoles('admin')
   @RequirePermissions(PERMISSIONS.USERS_WRITE)
   @ApiOperation({ summary: 'Disable user' })
   disable(
