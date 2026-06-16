@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { SessionDetailPanel } from '../components/voice/SessionDetailPanel';
@@ -91,7 +91,6 @@ export function VoiceSessionsPage() {
     queryKey: ['voice-sessions'],
     queryFn: voiceApi.getSessions,
     refetchInterval: pollInterval,
-    placeholderData: keepPreviousData,
   });
 
   const activeSessions = sessionsQuery.data?.active ?? [];
@@ -198,11 +197,11 @@ export function VoiceSessionsPage() {
         />
         <StatCard
           label="Active Sessions"
-          value={healthQuery.data?.activeSessions ?? activeSessions.length}
+          value={activeSessions.length}
         />
         <StatCard
           label="Recent Ended"
-          value={healthQuery.data?.recentEndedSessions ?? recentEnded.length}
+          value={recentEnded.length}
         />
         <StatCard
           label="Server Time"

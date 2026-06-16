@@ -17,6 +17,7 @@ import { VoiceRecordingService } from './audio/voice-recording.service';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
+import { VoiceSharedStateService } from './voice-shared-state.service';
 import {
   toVoiceSessionResponse,
   VoiceSessionService,
@@ -33,18 +34,18 @@ export class VoiceController {
     private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
     private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
+    private readonly voiceSharedStateService: VoiceSharedStateService,
   ) {}
 
   @Get('sessions')
   @ApiOperation({ summary: 'List active and recently ended voice sessions' })
-  listSessions() {
+  async listSessions() {
+    const recentEnded = await this.voiceSessionService.getRecentEndedSessions();
     return {
       active: this.voiceSessionService
         .getActiveSessions()
         .map(toVoiceSessionResponse),
-      recentEnded: this.voiceSessionService
-        .getRecentEndedSessions()
-        .map(toVoiceSessionResponse),
+      recentEnded: recentEnded.map(toVoiceSessionResponse),
     };
   }
 
@@ -58,16 +59,15 @@ export class VoiceController {
 
   @Get('sessions/recent')
   @ApiOperation({ summary: 'List recently ended voice sessions' })
-  listRecentSessions() {
-    return this.voiceSessionService
-      .getRecentEndedSessions()
-      .map(toVoiceSessionResponse);
+  async listRecentSessions() {
+    const recentEnded = await this.voiceSessionService.getRecentEndedSessions();
+    return recentEnded.map(toVoiceSessionResponse);
   }
 
   @Get('sessions/:streamSid/runtime-debug')
   @ApiOperation({ summary: 'Runtime debug snapshot for a voice session' })
-  getRuntimeDebug(@Param('streamSid') streamSid: string) {
-    const session = this.voiceSessionService.getByStreamSid(streamSid);
+  async getRuntimeDebug(@Param('streamSid') streamSid: string) {
+    const session = await this.voiceSessionService.resolveByStreamSid(streamSid);
     if (!session) {
       throw new NotFoundException(`Voice session not found: ${streamSid}`);
     }
@@ -138,8 +138,8 @@ export class VoiceController {
 
   @Get('sessions/:streamSid')
   @ApiOperation({ summary: 'Get a voice session by streamSid' })
-  getSessionByStreamSid(@Param('streamSid') streamSid: string) {
-    const session = this.voiceSessionService.getByStreamSid(streamSid);
+  async getSessionByStreamSid(@Param('streamSid') streamSid: string) {
+    const session = await this.voiceSessionService.resolveByStreamSid(streamSid);
     if (!session) {
       throw new NotFoundException(`Voice session not found: ${streamSid}`);
     }
@@ -204,8 +204,8 @@ export class VoiceController {
 
   @Get('health')
   @ApiOperation({ summary: 'Smartflo voice service health' })
-  health() {
-    const counts = this.voiceSessionService.getSessionCounts();
+  async health() {
+    const counts = await this.voiceSessionService.getSessionCounts();
     const voiceRuntime =
       this.configService.get<VoiceRuntimeType>('VOICE_RUNTIME') ??
       VoiceRuntimeType.MOCK;
@@ -235,6 +235,7 @@ export class VoiceController {
         this.voiceAudioConfigService.getOutboundChunkBytes(),
       voiceRequireAppAuthorization:
         this.voiceCallAuthorizationService.isAuthorizationRequired(),
+      voiceSharedStateUsesRedis: this.voiceSharedStateService.usesRedis,
       serverOrigin,
       timestamp: new Date().toISOString(),
     };

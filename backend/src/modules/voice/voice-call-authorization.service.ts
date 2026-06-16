@@ -2,6 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { normalizeVoicePhoneNumber } from './voice-phone.util';
+import {
+  SharedPendingAuthorization,
+  VoiceSharedStateService,
+} from './voice-shared-state.service';
 
 export type VoiceCallSource =
   | 'test-call'
@@ -61,7 +65,10 @@ export class VoiceCallAuthorizationService {
   private readonly pendingByCallSid = new Map<string, string>();
   private readonly pendingByPhone = new Map<string, string[]>();
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly voiceSharedStateService: VoiceSharedStateService,
+  ) {}
 
   isAuthorizationRequired(): boolean {
     const raw = this.configService
@@ -110,6 +117,8 @@ export class VoiceCallAuthorizationService {
       this.pendingByPhone.set(customerNumber, phoneList);
     }
 
+    void this.voiceSharedStateService.saveAuthorization(entry);
+
     this.trimPendingEntries();
 
     this.logger.log({
@@ -124,9 +133,9 @@ export class VoiceCallAuthorizationService {
     return authorizationId;
   }
 
-  authorizeStart(
+  async authorizeStart(
     input: VoiceCallStartAuthorizationInput,
-  ): VoiceCallAuthorizationResult {
+  ): Promise<VoiceCallAuthorizationResult> {
     if (!this.isAuthorizationRequired()) {
       return {
         authorized: true,
@@ -141,7 +150,7 @@ export class VoiceCallAuthorizationService {
       input.customParameters,
     );
     if (customAuthorizationId) {
-      const byCustom = this.consumeAuthorization(customAuthorizationId);
+      const byCustom = await this.consumeAuthorization(customAuthorizationId);
       if (byCustom) {
         return byCustom;
       }
@@ -151,7 +160,16 @@ export class VoiceCallAuthorizationService {
     if (callSid) {
       const authorizationId = this.pendingByCallSid.get(callSid);
       if (authorizationId) {
-        const match = this.consumeAuthorization(authorizationId);
+        const match = await this.consumeAuthorization(authorizationId);
+        if (match) {
+          return match;
+        }
+      }
+
+      const redisEntry =
+        await this.voiceSharedStateService.loadAuthorizationByCallSid(callSid);
+      if (redisEntry) {
+        const match = await this.consumeAuthorization(redisEntry.authorizationId);
         if (match) {
           return match;
         }
@@ -166,7 +184,7 @@ export class VoiceCallAuthorizationService {
     );
 
     for (const phone of candidatePhones) {
-      const match = this.consumeLatestPhoneAuthorization(phone);
+      const match = await this.consumeLatestPhoneAuthorization(phone);
       if (match) {
         return match;
       }
@@ -177,6 +195,7 @@ export class VoiceCallAuthorizationService {
       callSid: input.callSid,
       from: input.from,
       to: input.to,
+      sharedState: this.voiceSharedStateService.usesRedis ? 'redis' : 'memory',
       message:
         'Rejected Smartflo stream — no matching app-initiated call authorization',
     });
@@ -187,30 +206,41 @@ export class VoiceCallAuthorizationService {
     };
   }
 
-  private consumeLatestPhoneAuthorization(
+  private async consumeLatestPhoneAuthorization(
     phone: string,
-  ): VoiceCallAuthorizationMatch | undefined {
+  ): Promise<VoiceCallAuthorizationMatch | undefined> {
     const authorizationIds = this.pendingByPhone.get(phone) ?? [];
 
     for (const authorizationId of authorizationIds) {
-      const match = this.consumeAuthorization(authorizationId);
+      const match = await this.consumeAuthorization(authorizationId);
       if (match) {
         return match;
       }
     }
 
+    const redisEntry =
+      await this.voiceSharedStateService.loadLatestAuthorizationByPhone(phone);
+    if (redisEntry) {
+      return this.consumeAuthorization(redisEntry.authorizationId);
+    }
+
     return undefined;
   }
 
-  private consumeAuthorization(
+  private async consumeAuthorization(
     authorizationId: string,
-  ): VoiceCallAuthorizationMatch | undefined {
-    const entry = this.pending.get(authorizationId);
+  ): Promise<VoiceCallAuthorizationMatch | undefined> {
+    const entry = await this.resolveAuthorization(authorizationId);
     if (!entry || entry.consumed || entry.expiresAt.getTime() <= Date.now()) {
       return undefined;
     }
 
     entry.consumed = true;
+    const local = this.pending.get(authorizationId);
+    if (local) {
+      local.consumed = true;
+    }
+    await this.voiceSharedStateService.markAuthorizationConsumed(authorizationId);
 
     this.logger.log({
       authorizationId: entry.authorizationId,
@@ -226,6 +256,17 @@ export class VoiceCallAuthorizationService {
       source: entry.source,
       callId: entry.callId,
     };
+  }
+
+  private async resolveAuthorization(
+    authorizationId: string,
+  ): Promise<PendingAuthorization | SharedPendingAuthorization | undefined> {
+    const local = this.pending.get(authorizationId);
+    if (local) {
+      return local;
+    }
+
+    return this.voiceSharedStateService.loadAuthorization(authorizationId);
   }
 
   private extractCustomAuthorizationId(

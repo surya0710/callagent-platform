@@ -64,7 +64,7 @@ export class SmartfloStreamAdapter {
         this.handleConnected(socketSessionId, payload);
         break;
       case 'start':
-        this.handleStart(socketSessionId, payload);
+        void this.handleStart(socketSessionId, payload);
         break;
       case 'media':
         this.handleMedia(socketSessionId, payload);
@@ -102,10 +102,10 @@ export class SmartfloStreamAdapter {
     this.voiceRuntime.onSocketConnected?.(socketSessionId);
   }
 
-  private handleStart(
+  private async handleStart(
     socketSessionId: string,
     payload: Record<string, unknown>,
-  ): void {
+  ): Promise<void> {
     const start = asRecord(payload.start) ?? {};
     const streamSid =
       (typeof start.streamSid === 'string' ? start.streamSid : undefined) ??
@@ -134,8 +134,27 @@ export class SmartfloStreamAdapter {
 
     this.voiceSessionService.bindStreamSid(socketSessionId, startData);
     this.voiceSocketRegistry.bindStreamSid(socketSessionId, streamSid);
+    this.voiceSessionService.markAuthorizationPending(streamSid);
+    this.voiceRecordingService.start(streamSid, startData.callSid);
 
-    const authorization = this.voiceCallAuthorizationService.authorizeStart({
+    await this.authorizeAndStartRuntime(socketSessionId, streamSid, startData);
+  }
+
+  private async authorizeAndStartRuntime(
+    socketSessionId: string,
+    streamSid: string,
+    startData: {
+      streamSid: string;
+      callSid?: string;
+      accountSid?: string;
+      from?: string;
+      to?: string;
+      direction?: string;
+      mediaFormat?: unknown;
+      customParameters?: unknown;
+    },
+  ): Promise<void> {
+    const authorization = await this.voiceCallAuthorizationService.authorizeStart({
       streamSid,
       callSid: startData.callSid,
       from: startData.from,
@@ -144,6 +163,7 @@ export class SmartfloStreamAdapter {
     });
 
     if (!authorization.authorized) {
+      this.voiceSessionService.clearAuthorizationPending(streamSid);
       this.voiceSessionService.markAppInitiated(streamSid, false, {
         rejectionReason: authorization.reason,
       });
@@ -161,13 +181,12 @@ export class SmartfloStreamAdapter {
       return;
     }
 
+    this.voiceSessionService.clearAuthorizationPending(streamSid);
     this.voiceSessionService.markAppInitiated(streamSid, true, {
       authorizationSource: authorization.source,
       authorizationId: authorization.authorizationId,
       callId: authorization.callId,
     });
-
-    this.voiceRecordingService.start(streamSid, startData.callSid);
 
     this.logger.log({
       socketSessionId,
@@ -177,7 +196,7 @@ export class SmartfloStreamAdapter {
       authorizationId: authorization.authorizationId,
       runtimeProvider: this.voiceRuntime.name,
       message:
-        'Smartflo start event received — authorized app call bound to streamSid',
+        'Smartflo start authorized — starting OpenAI runtime and recording',
     });
 
     void this.voiceRuntime.createSession({

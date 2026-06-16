@@ -4,6 +4,7 @@ import {
   mergePcm16Stats,
   Pcm16Stats,
 } from './audio/pcm-stats.util';
+import { VoiceSharedStateService } from './voice-shared-state.service';
 
 export type VoiceSessionStatus = 'PENDING' | 'ACTIVE' | 'ENDED';
 
@@ -316,6 +317,61 @@ export function toVoiceSessionResponse(
   };
 }
 
+function parseOptionalDate(value: string | null | undefined): Date | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function nullToUndefined<T>(value: T | null | undefined): T | undefined {
+  return value === null ? undefined : value;
+}
+
+export function fromVoiceSessionResponse(
+  response: VoiceSessionResponse,
+): VoiceSession {
+  return {
+    ...response,
+    connectedAt: new Date(response.connectedAt),
+    startedAt: parseOptionalDate(response.startedAt ?? undefined),
+    endedAt: parseOptionalDate(response.endedAt ?? undefined),
+    lastEventAt: parseOptionalDate(response.lastEventAt),
+    runtimeConnectedAt: parseOptionalDate(response.runtimeConnectedAt),
+    runtimeLastEventAt: parseOptionalDate(response.runtimeLastEventAt),
+    lastCallerAudioAt: parseOptionalDate(response.lastCallerAudioAt),
+    lastMediaAt: parseOptionalDate(response.lastMediaAt),
+    lastSpeechLikeAudioAt: parseOptionalDate(response.lastSpeechLikeAudioAt),
+    lastOpenAiAppendAt: parseOptionalDate(response.lastOpenAiAppendAt),
+    lastSpeechStartedAt: parseOptionalDate(response.lastSpeechStartedAt),
+    lastSpeechStoppedAt: parseOptionalDate(response.lastSpeechStoppedAt),
+    lastCommitAt: parseOptionalDate(response.lastCommitAt),
+    lastResponseCreateAt: parseOptionalDate(response.lastResponseCreateAt),
+    lastResponseDoneAt: parseOptionalDate(response.lastResponseDoneAt),
+    lastOpenAiAudioAt: parseOptionalDate(response.lastOpenAiAudioAt),
+    outboundFirstSentAt: parseOptionalDate(response.outboundFirstSentAt),
+    outboundLastSentAt: parseOptionalDate(response.outboundLastSentAt),
+    lastSmartfloSendAt: parseOptionalDate(response.lastSmartfloSendAt),
+    stopReason: nullToUndefined(response.stopReason),
+    recordingInboundTimelineStartMs: nullToUndefined(
+      response.recordingInboundTimelineStartMs,
+    ),
+    recordingInboundTimelineEndMs: nullToUndefined(
+      response.recordingInboundTimelineEndMs,
+    ),
+    recordingOutboundTimelineStartMs: nullToUndefined(
+      response.recordingOutboundTimelineStartMs,
+    ),
+    recordingOutboundTimelineEndMs: nullToUndefined(
+      response.recordingOutboundTimelineEndMs,
+    ),
+    outboundChunkMinBytes: nullToUndefined(response.outboundChunkMinBytes),
+    outboundChunkMaxBytes: nullToUndefined(response.outboundChunkMaxBytes),
+    smartfloWsReadyState: nullToUndefined(response.smartfloWsReadyState),
+  };
+}
+
 @Injectable()
 export class VoiceSessionService {
   private readonly activeBySocketSessionId = new Map<string, VoiceSession>();
@@ -325,6 +381,11 @@ export class VoiceSessionService {
   private readonly recentEndedByStreamSid = new Map<string, VoiceSession>();
   private readonly inboundStatsByStreamSid = new Map<string, Pcm16Stats>();
   private readonly outboundStatsByStreamSid = new Map<string, Pcm16Stats>();
+  private readonly authorizationPending = new Set<string>();
+
+  constructor(
+    private readonly voiceSharedStateService: VoiceSharedStateService,
+  ) {}
 
   createSocketSession(remoteAddress?: string): VoiceSession {
     const socketSessionId = randomUUID();
@@ -357,8 +418,15 @@ export class VoiceSessionService {
     );
   }
 
-  getStreamSidForSocket(socketSessionId: string): string | undefined {
-    return this.socketToStreamSid.get(socketSessionId);
+  async resolveByStreamSid(streamSid: string): Promise<VoiceSession | undefined> {
+    const local = this.getByStreamSid(streamSid);
+    if (local) {
+      return local;
+    }
+
+    const shared =
+      await this.voiceSharedStateService.getEndedSessionByStreamSid(streamSid);
+    return shared ? fromVoiceSessionResponse(shared) : undefined;
   }
 
   getActiveSessions(): VoiceSession[] {
@@ -367,24 +435,54 @@ export class VoiceSessionService {
     );
   }
 
-  getRecentEndedSessions(): VoiceSession[] {
-    return [...this.recentEndedSessions]
-      .filter((session) => session.isAppInitiated === true)
-      .sort(
-        (a, b) => (b.endedAt?.getTime() ?? 0) - (a.endedAt?.getTime() ?? 0),
-      );
+  async getRecentEndedSessions(): Promise<VoiceSession[]> {
+    const local = this.recentEndedSessions.filter(
+      (session) => session.isAppInitiated === true,
+    );
+    const shared = await this.voiceSharedStateService.listRecentEndedSessions();
+
+    const merged = new Map<string, VoiceSession>();
+    for (const session of shared.map(fromVoiceSessionResponse)) {
+      if (session.streamSid) {
+        merged.set(session.streamSid, session);
+      }
+    }
+    for (const session of local) {
+      if (session.streamSid) {
+        merged.set(session.streamSid, session);
+      }
+    }
+
+    return [...merged.values()].sort(
+      (a, b) => (b.endedAt?.getTime() ?? 0) - (a.endedAt?.getTime() ?? 0),
+    );
   }
 
-  getSessionCounts(): { active: number; recentEnded: number } {
+  async getSessionCounts(): Promise<{ active: number; recentEnded: number }> {
+    const recentEnded = await this.getRecentEndedSessions();
     return {
       active: this.getActiveSessions().length,
-      recentEnded: this.getRecentEndedSessions().length,
+      recentEnded: recentEnded.length,
     };
   }
 
   isAppInitiatedStream(streamSid: string): boolean {
     const session = this.getByStreamSid(streamSid);
-    return session?.isAppInitiated === true;
+    if (session?.isAppInitiated === true) {
+      return true;
+    }
+    if (session?.isAppInitiated === false) {
+      return false;
+    }
+    return this.authorizationPending.has(streamSid);
+  }
+
+  markAuthorizationPending(streamSid: string): void {
+    this.authorizationPending.add(streamSid);
+  }
+
+  clearAuthorizationPending(streamSid: string): void {
+    this.authorizationPending.delete(streamSid);
   }
 
   markAppInitiated(
@@ -928,5 +1026,9 @@ export class VoiceSessionService {
         this.recentEndedByStreamSid.delete(oldest.streamSid);
       }
     }
+
+    void this.voiceSharedStateService.saveEndedSession(
+      toVoiceSessionResponse(session),
+    );
   }
 }
