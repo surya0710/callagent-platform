@@ -123,6 +123,15 @@ export class VoiceController {
       outboundPeakAmplitude: response.outboundPeakAmplitude ?? null,
       outboundAvgAmplitude: response.outboundAvgAmplitude ?? null,
       outboundRms: response.outboundRms ?? null,
+      outboundBytesSent: response.outboundBytesSent ?? 0,
+      outboundFirstSentAt: response.outboundFirstSentAt ?? null,
+      outboundLastSentAt: response.outboundLastSentAt ?? null,
+      outboundChunkMinBytes: response.outboundChunkMinBytes ?? null,
+      outboundChunkMaxBytes: response.outboundChunkMaxBytes ?? null,
+      outboundChunkAvgBytes: response.outboundChunkAvgBytes ?? null,
+      smartfloWsReadyState: response.smartfloWsReadyState ?? null,
+      smartfloSendErrors: response.smartfloSendErrors ?? 0,
+      lastSmartfloSendAt: response.lastSmartfloSendAt ?? null,
       timestamp: new Date().toISOString(),
     };
   }

@@ -10,6 +10,11 @@ import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
 import { VoiceRecordingService } from './audio/voice-recording.service';
 import { voiceDebugLog } from './audio/voice-debug.util';
 import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
+import {
+  generateMulawToneBuffer,
+  isSyntheticToneDebugEnabled,
+  splitMulawIntoFixedChunks,
+} from './audio/smartflo-synthetic-tone.util';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
 
@@ -119,19 +124,34 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   sendMedia(streamSid: string, base64MulawPayload: string, chunk?: number): void {
     const client = this.voiceSocketRegistry.getByStreamSid(streamSid);
-    const socketFound = Boolean(client && client.readyState === WebSocket.OPEN);
+    const wsReadyState = client?.readyState ?? WebSocket.CLOSED;
+    const socketFound = Boolean(client && wsReadyState === WebSocket.OPEN);
+
+    voiceDebugLog(this.logger, streamSid, 'outbound_ws_ready_state', {
+      readyState: wsReadyState,
+    });
 
     if (!socketFound) {
+      this.voiceSessionService.recordSmartfloSendFailure(streamSid, wsReadyState);
+      voiceDebugLog(this.logger, streamSid, 'smartflo_send_error', {
+        reason: 'ws_not_open',
+        readyState: wsReadyState,
+      });
       this.logger.warn({
         streamSid,
         payloadBase64Length: base64MulawPayload.length,
         socketFound: false,
+        wsReadyState,
         message: 'Cannot send media: no active WebSocket for streamSid',
       });
       return;
     }
 
     const decodedLength = Buffer.from(base64MulawPayload, 'base64').length;
+    voiceDebugLog(this.logger, streamSid, 'outbound_payload_bytes', {
+      bytes: decodedLength,
+    });
+
     if (decodedLength < MULAW_FRAME_BYTES || decodedLength % MULAW_FRAME_BYTES !== 0) {
       this.logger.warn({
         streamSid,
@@ -150,6 +170,17 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const sequenceNumber =
       this.voiceSocketRegistry.nextOutboundSequenceNumber(streamSid);
 
+    const outboundMessage = JSON.stringify({
+      event: 'media',
+      streamSid,
+      sequenceNumber,
+      media: {
+        payload: base64MulawPayload,
+        chunk: String(chunkNumber),
+        timestamp: String(timestamp),
+      },
+    });
+
     this.logger.log({
       streamSid,
       sequenceNumber,
@@ -158,51 +189,85 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       payloadBase64Length: base64MulawPayload.length,
       mulawBytes: decodedLength,
       socketFound: true,
+      wsReadyState,
       message: 'Sending outbound media to Smartflo WebSocket',
-    });
-
-    // Recording uses wall-clock offsets; Smartflo media timestamps are sequential from 0.
-    try {
-      this.voiceRecordingService.appendOutboundMulawBase64(
-        streamSid,
-        base64MulawPayload,
-      );
-    } catch (error) {
-      voiceDebugLog(this.logger, streamSid, 'recording_error', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      this.logger.warn({
-        streamSid,
-        err: error,
-        message: 'Outbound recording append failed; live media send continues',
-      });
-    }
-
-    const outboundMessage = JSON.stringify({
-      event: 'media',
-      streamSid,
-      sequenceNumber,
-      media: {
-        payload: base64MulawPayload,
-        chunk: chunkNumber,
-        timestamp: String(timestamp),
-      },
     });
 
     try {
       client!.send(outboundMessage);
+      this.voiceSessionService.recordSmartfloOutboundSend(
+        streamSid,
+        decodedLength,
+        wsReadyState,
+      );
+      voiceDebugLog(this.logger, streamSid, 'outbound_audio_chunk', {
+        bytes: decodedLength,
+        chunk: chunkNumber,
+      });
       this.logger.debug({
         streamSid,
         chunk: chunkNumber,
+        mulawBytes: decodedLength,
         message: 'Outbound media WebSocket send succeeded',
       });
     } catch (error) {
+      this.voiceSessionService.recordSmartfloSendFailure(streamSid, wsReadyState);
+      voiceDebugLog(this.logger, streamSid, 'smartflo_send_error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       this.logger.error({
         streamSid,
         chunk: chunkNumber,
         err: error,
         message: 'Outbound media WebSocket send failed',
       });
+      return;
+    }
+
+    // Recording is off the live path — never block or prevent Smartflo playback.
+    setImmediate(() => {
+      try {
+        this.voiceRecordingService.appendOutboundMulawBase64(
+          streamSid,
+          base64MulawPayload,
+        );
+      } catch (error) {
+        voiceDebugLog(this.logger, streamSid, 'recording_error', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        this.logger.warn({
+          streamSid,
+          err: error,
+          message: 'Outbound recording append failed; live media send continues',
+        });
+      }
+    });
+  }
+
+  sendSyntheticTone(streamSid: string, durationMs = 1500): void {
+    if (!isSyntheticToneDebugEnabled()) {
+      return;
+    }
+
+    const chunkBytes = this.voiceAudioConfigService.getOutboundChunkBytes();
+    const tone = generateMulawToneBuffer({
+      frequencyHz: 440,
+      durationMs,
+      sampleRate: 8000,
+      amplitude: 8000,
+    });
+    const chunks = splitMulawIntoFixedChunks(tone, chunkBytes);
+
+    this.logger.warn({
+      streamSid,
+      durationMs,
+      chunkBytes,
+      chunkCount: chunks.length,
+      message: 'VOICE_DEBUG_SYNTHETIC_TONE enabled — sending diagnostic tone',
+    });
+
+    for (const chunk of chunks) {
+      this.sendMedia(streamSid, chunk.toString('base64'));
     }
   }
 

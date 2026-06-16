@@ -92,6 +92,16 @@ export interface VoiceSession {
   outboundAvgAmplitude?: number;
   outboundRms?: number;
   audioGainApplied?: number;
+  outboundBytesSent?: number;
+  outboundFirstSentAt?: Date;
+  outboundLastSentAt?: Date;
+  outboundChunkMinBytes?: number;
+  outboundChunkMaxBytes?: number;
+  outboundChunkTotalBytes?: number;
+  outboundChunkSendCount?: number;
+  smartfloWsReadyState?: number;
+  smartfloSendErrors?: number;
+  lastSmartfloSendAt?: Date;
 }
 
 export interface VoiceSessionStartData {
@@ -183,6 +193,15 @@ export interface VoiceSessionResponse {
   outboundAvgAmplitude?: number;
   outboundRms?: number;
   audioGainApplied?: number;
+  outboundBytesSent?: number;
+  outboundFirstSentAt?: string | null;
+  outboundLastSentAt?: string | null;
+  outboundChunkMinBytes?: number | null;
+  outboundChunkMaxBytes?: number | null;
+  outboundChunkAvgBytes?: number | null;
+  smartfloWsReadyState?: number | null;
+  smartfloSendErrors?: number;
+  lastSmartfloSendAt?: string | null;
 }
 
 const MAX_RECENT_ENDED_SESSIONS = 100;
@@ -277,6 +296,23 @@ export function toVoiceSessionResponse(
     outboundAvgAmplitude: session.outboundAvgAmplitude,
     outboundRms: session.outboundRms,
     audioGainApplied: session.audioGainApplied,
+    outboundBytesSent: session.outboundBytesSent,
+    outboundFirstSentAt: session.outboundFirstSentAt?.toISOString() ?? null,
+    outboundLastSentAt: session.outboundLastSentAt?.toISOString() ?? null,
+    outboundChunkMinBytes: session.outboundChunkMinBytes ?? null,
+    outboundChunkMaxBytes: session.outboundChunkMaxBytes ?? null,
+    outboundChunkAvgBytes:
+      session.outboundChunkSendCount && session.outboundChunkSendCount > 0
+        ? Number(
+            (
+              (session.outboundChunkTotalBytes ?? 0) /
+              session.outboundChunkSendCount
+            ).toFixed(2),
+          )
+        : null,
+    smartfloWsReadyState: session.smartfloWsReadyState ?? null,
+    smartfloSendErrors: session.smartfloSendErrors,
+    lastSmartfloSendAt: session.lastSmartfloSendAt?.toISOString() ?? null,
   };
 }
 
@@ -717,6 +753,46 @@ export class VoiceSessionService {
       return;
     }
     session.audioGainApplied = gain;
+  }
+
+  recordSmartfloOutboundSend(
+    streamSid: string,
+    bytes: number,
+    wsReadyState: number,
+  ): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    const now = new Date();
+    session.outboundBytesSent = (session.outboundBytesSent ?? 0) + bytes;
+    session.outboundFirstSentAt ??= now;
+    session.outboundLastSentAt = now;
+    session.lastSmartfloSendAt = now;
+    session.smartfloWsReadyState = wsReadyState;
+
+    session.outboundChunkMinBytes =
+      session.outboundChunkMinBytes == null
+        ? bytes
+        : Math.min(session.outboundChunkMinBytes, bytes);
+    session.outboundChunkMaxBytes =
+      session.outboundChunkMaxBytes == null
+        ? bytes
+        : Math.max(session.outboundChunkMaxBytes, bytes);
+    session.outboundChunkTotalBytes =
+      (session.outboundChunkTotalBytes ?? 0) + bytes;
+    session.outboundChunkSendCount = (session.outboundChunkSendCount ?? 0) + 1;
+  }
+
+  recordSmartfloSendFailure(streamSid: string, wsReadyState: number): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    session.smartfloWsReadyState = wsReadyState;
+    session.smartfloSendErrors = (session.smartfloSendErrors ?? 0) + 1;
   }
 
   private applyAudioStatsToSession(

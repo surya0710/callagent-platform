@@ -72,3 +72,32 @@ export function buildGaSessionUpdate(options: {
 export function isOpenAiOutputAudioDeltaEvent(type: string): boolean {
   return type === 'response.output_audio.delta' || type === 'response.audio.delta';
 }
+
+export type OpenAiOutputAudioFormat = 'pcm' | 'g711_ulaw';
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/** Detect OpenAI Realtime output codec from session.created / session.updated payload. */
+export function parseOpenAiOutputAudioFormat(
+  sessionPayload: unknown,
+): OpenAiOutputAudioFormat {
+  const session = asRecord(sessionPayload);
+  const audio = asRecord(session?.audio);
+  const output = asRecord(audio?.output);
+  const format = asRecord(output?.format);
+  const type = typeof format?.type === 'string' ? format.type.toLowerCase() : '';
+
+  if (
+    type.includes('mulaw') ||
+    type.includes('pcmu') ||
+    type.includes('g711')
+  ) {
+    return 'g711_ulaw';
+  }
+
+  return 'pcm';
+}

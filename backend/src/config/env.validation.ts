@@ -161,6 +161,10 @@ export class EnvironmentVariables {
   VOICE_OUTBOUND_CHUNK_BYTES?: string;
 
   @IsOptional()
+  @IsString()
+  VOICE_DEBUG_SYNTHETIC_TONE?: string;
+
+  @IsOptional()
   @IsEnum(VoiceRecordingStorageDriver)
   VOICE_RECORDINGS_STORAGE_DRIVER?: VoiceRecordingStorageDriver;
 

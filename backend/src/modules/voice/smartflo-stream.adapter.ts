@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { decodeMulawBuffer } from './audio/mulaw-codec';
 import { analyzePcm16, formatPcm16Stats } from './audio/pcm-stats.util';
 import { isSpeechLikePcm16 } from './audio/speech-detection.util';
@@ -9,6 +9,7 @@ import { parseSmartfloInboundMedia } from './smartflo-media.util';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
+import { AudioGateway } from './audio.gateway';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
@@ -28,6 +29,8 @@ export class SmartfloStreamAdapter {
     private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
     private readonly voiceRecordingService: VoiceRecordingService,
     private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
+    @Inject(forwardRef(() => AudioGateway))
+    private readonly audioGateway: AudioGateway,
   ) {}
 
   private get voiceRuntime() {
@@ -184,6 +187,10 @@ export class SmartfloStreamAdapter {
       from: startData.from,
       to: startData.to,
       direction: startData.direction,
+    });
+
+    setImmediate(() => {
+      this.audioGateway.sendSyntheticTone(streamSid);
     });
   }
 
