@@ -34,8 +34,13 @@ const RESPONSE_WAIT_MS = 15000;
 const SESSION_READY_TIMEOUT_MS = 5000;
 const WS_OPEN_TIMEOUT_MS = 8000;
 
-const DEFAULT_INSTRUCTIONS =
-  'You are a helpful voice assistant on a phone call. Keep responses concise and conversational.';
+const DEFAULT_INSTRUCTIONS = [
+  'You are a helpful voice assistant on a phone call for customers in India.',
+  'Respond in the same language the caller uses: Hindi (Devanagari speech) or English.',
+  'If the caller mixes languages, prefer Hindi unless they are clearly speaking English only.',
+  'Never switch language mid-response. Keep each reply concise and conversational.',
+  'Wait until the caller has finished speaking before responding. Do not greet or speak first.',
+].join(' ');
 
 /** Live Smartflo path: no gain/normalize — recording applies its own mix at finalize. */
 const LIVE_OUTBOUND_PCM_OPTIONS = {
@@ -457,22 +462,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    if (
-      !session.closing &&
-      session.useServerVad &&
-      !session.responseInProgress &&
-      !session.responseRequested
-    ) {
-      if (speechLike) {
-        session.manualFallbackSpeechDetected = true;
-        this.clearManualFallbackSilenceTimer(session);
-        voiceDebugLog(this.logger, session.streamSid, 'manual_fallback_speech_detected', {
-          appendCount: session.inputAppendCount,
-        });
-      } else if (session.manualFallbackSpeechDetected) {
-        this.scheduleManualFallbackSilenceCommit(session);
-      }
-    }
+    // With server_vad, OpenAI handles turn detection — manual fallback commits
+    // duplicate response.create and cause overlapping / mixed-language replies.
   }
 
   private flushPendingInput(session: OpenAiRealtimeSession): void {
