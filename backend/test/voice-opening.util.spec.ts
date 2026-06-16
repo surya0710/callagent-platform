@@ -3,6 +3,7 @@ import {
   buildOpeningResponseInstructions,
   buildOpeningSessionInstructions,
   buildPostOpeningSessionInstructions,
+  formatCallPurposeLine,
   mergeOpeningContext,
   parseAskPermissionBeforePitch,
   sanitizeBaseInstructionsForOpening,
@@ -48,6 +49,32 @@ describe('voice-opening.util', () => {
       expect(message).toContain('good time');
     });
 
+    it('formats free-text call purpose naturally', () => {
+      const message = buildExampleOpeningMessage({
+        agentName: 'Suryakant',
+        companyName: 'tatd',
+        callPurpose:
+          'Recently you had a booking with us, how was your experience',
+        openingGreeting: 'Hi, good morning',
+      });
+
+      expect(message).toContain('calling about Recently you had a booking');
+      expect(message).not.toContain("I'm reaching out Recently");
+    });
+  });
+
+  describe('formatCallPurposeLine', () => {
+    it('prefixes purpose with about when needed', () => {
+      expect(formatCallPurposeLine('your recent booking')).toBe(
+        "I'm calling about your recent booking",
+      );
+      expect(formatCallPurposeLine('to follow up on your booking')).toBe(
+        "I'm calling to follow up on your booking",
+      );
+    });
+  });
+
+  describe('buildExampleOpeningMessage permission', () => {
     it('omits permission when disabled', () => {
       const message = buildExampleOpeningMessage({
         agentName: 'Aisha',
@@ -113,9 +140,9 @@ describe('voice-opening.util', () => {
         callPurpose: 'to discuss your interest in our services',
       });
 
-      expect(instructions).toContain('opening greeting is already complete');
-      expect(instructions).toContain('Wait for the caller');
-      expect(instructions).toContain('Never monologue');
+      expect(instructions).toContain('opening greeting is already done');
+      expect(instructions).toContain('Maximum 20 words');
+      expect(instructions).toContain('do not repeat unless asked');
     });
   });
 

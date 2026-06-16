@@ -29,7 +29,9 @@ import {
   buildOpeningResponseInstructions,
   buildOpeningSessionInstructions,
   buildPostOpeningSessionInstructions,
+  CONVERSATION_MAX_OUTPUT_TOKENS,
   DEFAULT_REALTIME_INSTRUCTIONS,
+  OPENING_MAX_OUTPUT_TOKENS,
 } from '../voice-opening.util';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
@@ -419,6 +421,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       instructions,
       model,
       turnDetection: session.useServerVad ? 'server_vad' : 'manual',
+      maxResponseOutputTokens:
+        phase === 'conversation' && session.openingContext
+          ? CONVERSATION_MAX_OUTPUT_TOKENS
+          : undefined,
     });
 
     this.logger.log({
@@ -554,6 +560,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
             instructions: buildOpeningResponseInstructions(
               session.openingContext,
             ),
+            max_output_tokens: OPENING_MAX_OUTPUT_TOKENS,
           },
         }),
       );

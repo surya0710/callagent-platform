@@ -17,17 +17,32 @@ export const VOICE_OPENING_DEFAULTS: Required<
   askPermissionBeforePitch: true,
 };
 
+export const CONVERSATION_MAX_OUTPUT_TOKENS = 180;
+export const OPENING_MAX_OUTPUT_TOKENS = 120;
+
+const OPENING_MAX_WORDS = 40;
+
 const BASE_VOICE_INSTRUCTIONS = [
   'You are a helpful voice assistant on a phone call for customers in India.',
   'Respond in the same language the caller uses: Hindi (Devanagari speech) or English.',
   'If the caller mixes languages, prefer Hindi unless they are clearly speaking English only.',
-  'Never switch language mid-response. Keep each reply concise and conversational.',
+  'Never switch language mid-response.',
+].join(' ');
+
+const BREVITY_RULES = [
+  'Maximum 20 words per reply unless the caller explicitly asks for more detail.',
+  'Use one short sentence when possible. Two sentences only if necessary.',
+  'Never repeat your name, company, or call purpose unless the caller asks.',
+  'Do not use filler openers like "Great", "Absolutely", "Of course", or "Wonderful".',
+  'Do not volunteer extra information, upsells, or unprompted follow-up questions.',
+  'Answer ONLY what the caller just asked, then stop.',
+  'Do not summarize, recap, or restate the conversation.',
 ].join(' ');
 
 const PASSIVE_CALLER_FIRST_SUFFIX =
   'Wait until the caller has finished speaking before responding. Do not greet or speak first.';
 
-export const DEFAULT_REALTIME_INSTRUCTIONS = `${BASE_VOICE_INSTRUCTIONS} ${PASSIVE_CALLER_FIRST_SUFFIX}`;
+export const DEFAULT_REALTIME_INSTRUCTIONS = `${BASE_VOICE_INSTRUCTIONS} ${BREVITY_RULES} ${PASSIVE_CALLER_FIRST_SUFFIX}`;
 
 export function mergeOpeningContext(
   partial?: Partial<VoiceOpeningContext>,
@@ -47,15 +62,36 @@ export function mergeOpeningContext(
   };
 }
 
+/** Format call purpose into a short spoken line for the opening script. */
+export function formatCallPurposeLine(callPurpose: string): string {
+  const purpose = callPurpose.trim().replace(/\.$/, '');
+  if (!purpose) {
+    return 'I have a quick update for you';
+  }
+  if (/^I'm calling/i.test(purpose)) {
+    return purpose;
+  }
+  if (/^(to |about |regarding )/i.test(purpose)) {
+    return `I'm calling ${purpose}`;
+  }
+  return `I'm calling about ${purpose}`;
+}
+
+export function countWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
 export function buildExampleOpeningMessage(
   context: VoiceOpeningContext,
 ): string {
-  const greeting = context.openingGreeting ?? VOICE_OPENING_DEFAULTS.openingGreeting;
+  const greeting =
+    context.openingGreeting ?? VOICE_OPENING_DEFAULTS.openingGreeting;
   const permission =
     context.askPermissionBeforePitch !== false
       ? ' Is this a good time to speak for a minute?'
       : '';
-  return `${greeting}. This is ${context.agentName} calling on behalf of ${context.companyName}. I'm reaching out ${context.callPurpose}.${permission}`;
+  const purposeLine = formatCallPurposeLine(context.callPurpose);
+  return `${greeting}. This is ${context.agentName} from ${context.companyName}. ${purposeLine}.${permission}`;
 }
 
 /** Strip caller-first rules from env instructions when opening is active. */
@@ -83,10 +119,11 @@ export function buildOpeningResponseInstructions(
 ): string {
   const line = buildExampleOpeningMessage(context);
   return [
-    `Say ONLY this single opening line in a natural phone voice. Use the agent name "${context.agentName}".`,
+    `Say ONLY the opening line below — nothing else. Use agent name "${context.agentName}".`,
+    `Maximum ${OPENING_MAX_WORDS} words total.`,
     `"${line}"`,
-    'Then STOP immediately and end your turn. Do not continue talking.',
-    'Do not pitch, explain further, or ask extra questions in this turn.',
+    'Do NOT add pleasantries, explanations, context, or extra questions beyond that line.',
+    'Then STOP immediately and end your turn.',
     'Do not mention AI, bots, systems, or models.',
   ].join(' ');
 }
@@ -98,22 +135,20 @@ export function buildOpeningSessionInstructions(
   const example = buildExampleOpeningMessage(context);
   const permissionRule =
     context.askPermissionBeforePitch !== false
-      ? 'Ask permission before continuing with the main conversation (for example: "Is this a good time to speak for a minute?").'
-      : 'After stating the purpose, pause briefly and wait for the customer response before continuing.';
+      ? 'End with one short permission question only.'
+      : 'After stating the purpose, stop and wait for the customer.';
 
   const openingRules = [
-    `You are ${context.agentName} calling on behalf of ${context.companyName}.`,
-    `The purpose of this call is ${context.callPurpose}.`,
+    `You are ${context.agentName} from ${context.companyName}.`,
+    `Call purpose: ${context.callPurpose}.`,
     'CALL OPENING RULES:',
-    `- Begin the call immediately with your opening greeting: start with "${context.openingGreeting ?? VOICE_OPENING_DEFAULTS.openingGreeting}", introduce yourself as ${context.agentName}, state you are calling on behalf of ${context.companyName}, and explain the purpose (${context.callPurpose}).`,
+    `- Deliver ONE short opening only, like: "${example}"`,
     `- ${permissionRule}`,
-    `- Keep the first message short and natural, similar to: "${example}"`,
-    '- Do not start with a sales pitch.',
-    '- Do not mention internal system details, APIs, or AI models.',
-    '- Wait for the customer response before continuing beyond the opening.',
-    '- If the customer says it is not a good time, politely offer to call back later.',
-    `- If the customer asks who is calling, repeat your name (${context.agentName}), company (${context.companyName}), and purpose clearly.`,
-    '- Speak first when the call begins — deliver your opening greeting immediately.',
+    `- Maximum ${OPENING_MAX_WORDS} words in the opening.`,
+    '- Do not pitch, elaborate, or add filler.',
+    '- Wait for the customer response before saying anything else.',
+    `- If asked who is calling, give a one-sentence reply with ${context.agentName}, ${context.companyName}, and purpose only.`,
+    '- Speak first when the call begins.',
   ].join(' ');
 
   const base = sanitizeBaseInstructionsForOpening(baseInstructions);
@@ -128,14 +163,13 @@ export function buildPostOpeningSessionInstructions(
   const base = sanitizeBaseInstructionsForOpening(baseInstructions);
   return [
     base,
-    `You are ${context.agentName} representing ${context.companyName}.`,
-    `Call purpose: ${context.callPurpose}.`,
-    'The scripted opening greeting is already complete.',
-    'Wait for the caller to finish speaking before each reply.',
-    'Keep every reply concise — one or two short sentences. Never monologue.',
-    'Do not repeat the opening greeting unless the caller asks who is calling.',
-    'If they said it is not a good time, politely offer to call back later.',
-    `If they ask who is calling, say you are ${context.agentName} from ${context.companyName} regarding ${context.callPurpose}.`,
+    BREVITY_RULES,
+    `You are ${context.agentName} from ${context.companyName}.`,
+    `Call purpose (do not repeat unless asked): ${context.callPurpose}.`,
+    'The opening greeting is already done.',
+    'Wait for the caller to finish before each reply.',
+    'If they said it is not a good time, offer to call back in one short sentence.',
+    `If they ask who is calling, reply in one sentence: ${context.agentName} from ${context.companyName}.`,
     PASSIVE_CALLER_FIRST_SUFFIX,
   ].join(' ');
 }

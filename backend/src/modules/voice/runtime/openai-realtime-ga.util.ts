@@ -36,6 +36,7 @@ export function buildGaSessionUpdate(options: {
   model?: string;
   turnDetection?: OpenAiTurnDetectionMode;
   serverVad?: OpenAiServerVadConfig;
+  maxResponseOutputTokens?: number;
 }): Record<string, unknown> {
   const turnDetection = buildTurnDetection(
     options.turnDetection ?? 'server_vad',
@@ -49,6 +50,9 @@ export function buildGaSessionUpdate(options: {
       ...(options.model ? { model: options.model } : {}),
       output_modalities: ['audio'],
       instructions: options.instructions,
+      ...(options.maxResponseOutputTokens
+        ? { max_response_output_tokens: options.maxResponseOutputTokens }
+        : {}),
       audio: {
         input: {
           format: {
