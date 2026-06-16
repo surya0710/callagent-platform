@@ -24,6 +24,7 @@ export interface SharedPendingAuthorization {
   customerNumber?: string;
   callSid?: string;
   callId?: string;
+  openingContext?: Record<string, unknown>;
   registeredAt: Date;
   expiresAt: Date;
   consumed: boolean;

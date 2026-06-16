@@ -191,6 +191,26 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   VOICE_REQUIRE_APP_AUTHORIZATION?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_AGENT_NAME?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_COMPANY_NAME?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_CALL_PURPOSE?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_OPENING_GREETING?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_ASK_PERMISSION_BEFORE_PITCH?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

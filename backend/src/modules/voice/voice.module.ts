@@ -8,6 +8,7 @@ import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
 import { MockVoiceRuntimeProvider } from './runtime/mock-voice-runtime.provider';
 import { OpenAIRealtimeProvider } from './runtime/openai-realtime.provider';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
+import { VoiceOpeningConfigService } from './voice-opening-config.service';
 import { SmartfloClickToCallService } from './smartflo-click-to-call.service';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
@@ -31,6 +32,7 @@ import { VoiceTestCallController } from './voice-test-call.controller';
     SmartfloClickToCallService,
     SmartfloStreamAdapter,
     VoiceCallAuthorizationService,
+    VoiceOpeningConfigService,
     MockVoiceRuntimeProvider,
     OpenAIRealtimeProvider,
     VoiceRuntimeFactory,

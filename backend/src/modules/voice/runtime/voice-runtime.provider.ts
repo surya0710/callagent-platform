@@ -1,3 +1,5 @@
+import { VoiceOpeningContext } from '../voice-opening.types';
+
 export type VoiceRuntimeStatus =
   | 'idle'
   | 'connecting'
@@ -12,6 +14,7 @@ export interface VoiceRuntimeSessionContext {
   from?: string;
   to?: string;
   direction?: string;
+  openingContext?: VoiceOpeningContext;
 }
 
 export interface VoiceRuntimeProvider {

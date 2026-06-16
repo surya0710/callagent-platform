@@ -6,6 +6,7 @@ import {
   SharedPendingAuthorization,
   VoiceSharedStateService,
 } from './voice-shared-state.service';
+import { VoiceOpeningContext } from './voice-opening.types';
 
 export type VoiceCallSource =
   | 'test-call'
@@ -18,6 +19,7 @@ export interface RegisterAuthorizedVoiceCallInput {
   customerNumber?: string;
   callSid?: string;
   callId?: string;
+  openingContext?: Partial<VoiceOpeningContext>;
 }
 
 export interface VoiceCallAuthorizationMatch {
@@ -25,6 +27,7 @@ export interface VoiceCallAuthorizationMatch {
   authorizationId: string;
   source: VoiceCallSource;
   callId?: string;
+  openingContext?: Partial<VoiceOpeningContext>;
 }
 
 export interface VoiceCallAuthorizationReject {
@@ -42,6 +45,7 @@ interface PendingAuthorization {
   customerNumber?: string;
   callSid?: string;
   callId?: string;
+  openingContext?: Partial<VoiceOpeningContext>;
   registeredAt: Date;
   expiresAt: Date;
   consumed: boolean;
@@ -100,6 +104,7 @@ export class VoiceCallAuthorizationService {
       customerNumber,
       callSid,
       callId: input.callId,
+      openingContext: input.openingContext,
       registeredAt,
       expiresAt: new Date(Date.now() + DEFAULT_AUTHORIZATION_TTL_MS),
       consumed: false,
@@ -255,6 +260,7 @@ export class VoiceCallAuthorizationService {
       authorizationId: entry.authorizationId,
       source: entry.source,
       callId: entry.callId,
+      openingContext: entry.openingContext,
     };
   }
 

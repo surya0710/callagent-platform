@@ -132,6 +132,11 @@ export class VoiceController {
       smartfloWsReadyState: response.smartfloWsReadyState ?? null,
       smartfloSendErrors: response.smartfloSendErrors ?? 0,
       lastSmartfloSendAt: response.lastSmartfloSendAt ?? null,
+      openingContext: response.openingContext ?? null,
+      openingGreetingRequestedAt: response.openingGreetingRequestedAt ?? null,
+      openingGreetingResponseCreatedAt:
+        response.openingGreetingResponseCreatedAt ?? null,
+      openingGreetingError: response.openingGreetingError ?? null,
       timestamp: new Date().toISOString(),
     };
   }

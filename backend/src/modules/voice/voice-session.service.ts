@@ -5,6 +5,7 @@ import {
   Pcm16Stats,
 } from './audio/pcm-stats.util';
 import { VoiceSharedStateService } from './voice-shared-state.service';
+import { VoiceOpeningContext } from './voice-opening.types';
 
 export type VoiceSessionStatus = 'PENDING' | 'ACTIVE' | 'ENDED';
 
@@ -103,6 +104,10 @@ export interface VoiceSession {
   smartfloWsReadyState?: number;
   smartfloSendErrors?: number;
   lastSmartfloSendAt?: Date;
+  openingContext?: VoiceOpeningContext;
+  openingGreetingRequestedAt?: Date;
+  openingGreetingResponseCreatedAt?: Date;
+  openingGreetingError?: string;
 }
 
 export interface VoiceSessionStartData {
@@ -203,6 +208,10 @@ export interface VoiceSessionResponse {
   smartfloWsReadyState?: number | null;
   smartfloSendErrors?: number;
   lastSmartfloSendAt?: string | null;
+  openingContext?: VoiceOpeningContext;
+  openingGreetingRequestedAt?: string | null;
+  openingGreetingResponseCreatedAt?: string | null;
+  openingGreetingError?: string | null;
 }
 
 const MAX_RECENT_ENDED_SESSIONS = 100;
@@ -314,6 +323,12 @@ export function toVoiceSessionResponse(
     smartfloWsReadyState: session.smartfloWsReadyState ?? null,
     smartfloSendErrors: session.smartfloSendErrors,
     lastSmartfloSendAt: session.lastSmartfloSendAt?.toISOString() ?? null,
+    openingContext: session.openingContext,
+    openingGreetingRequestedAt:
+      session.openingGreetingRequestedAt?.toISOString() ?? null,
+    openingGreetingResponseCreatedAt:
+      session.openingGreetingResponseCreatedAt?.toISOString() ?? null,
+    openingGreetingError: session.openingGreetingError ?? null,
   };
 }
 
@@ -353,6 +368,14 @@ export function fromVoiceSessionResponse(
     outboundFirstSentAt: parseOptionalDate(response.outboundFirstSentAt),
     outboundLastSentAt: parseOptionalDate(response.outboundLastSentAt),
     lastSmartfloSendAt: parseOptionalDate(response.lastSmartfloSendAt),
+    openingGreetingRequestedAt: parseOptionalDate(
+      response.openingGreetingRequestedAt ?? undefined,
+    ),
+    openingGreetingResponseCreatedAt: parseOptionalDate(
+      response.openingGreetingResponseCreatedAt ?? undefined,
+    ),
+    openingContext: response.openingContext,
+    openingGreetingError: nullToUndefined(response.openingGreetingError),
     stopReason: nullToUndefined(response.stopReason),
     recordingInboundTimelineStartMs: nullToUndefined(
       response.recordingInboundTimelineStartMs,
@@ -504,6 +527,44 @@ export class VoiceSessionService {
     session.authorizationSource = metadata?.authorizationSource;
     session.authorizationId = metadata?.authorizationId;
     session.rejectionReason = metadata?.rejectionReason;
+  }
+
+  setOpeningContext(streamSid: string, openingContext: VoiceOpeningContext): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    session.openingContext = openingContext;
+  }
+
+  updateOpeningState(
+    streamSid: string,
+    update: {
+      openingContext?: VoiceOpeningContext;
+      openingGreetingRequestedAt?: Date;
+      openingGreetingResponseCreatedAt?: Date;
+      openingGreetingError?: string;
+    },
+  ): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    if (update.openingContext !== undefined) {
+      session.openingContext = update.openingContext;
+    }
+    if (update.openingGreetingRequestedAt !== undefined) {
+      session.openingGreetingRequestedAt = update.openingGreetingRequestedAt;
+    }
+    if (update.openingGreetingResponseCreatedAt !== undefined) {
+      session.openingGreetingResponseCreatedAt =
+        update.openingGreetingResponseCreatedAt;
+    }
+    if (update.openingGreetingError !== undefined) {
+      session.openingGreetingError = update.openingGreetingError;
+    }
   }
 
   recordConnected(socketSessionId: string): void {

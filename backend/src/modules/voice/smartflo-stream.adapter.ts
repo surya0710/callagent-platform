@@ -9,6 +9,7 @@ import { parseSmartfloInboundMedia } from './smartflo-media.util';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
+import { VoiceOpeningConfigService } from './voice-opening-config.service';
 import { AudioGateway } from './audio.gateway';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -29,6 +30,7 @@ export class SmartfloStreamAdapter {
     private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
     private readonly voiceRecordingService: VoiceRecordingService,
     private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
+    private readonly voiceOpeningConfigService: VoiceOpeningConfigService,
     @Inject(forwardRef(() => AudioGateway))
     private readonly audioGateway: AudioGateway,
   ) {}
@@ -188,6 +190,11 @@ export class SmartfloStreamAdapter {
       callId: authorization.callId,
     });
 
+    const openingContext = this.voiceOpeningConfigService.resolve(
+      authorization.openingContext,
+    );
+    this.voiceSessionService.setOpeningContext(streamSid, openingContext);
+
     this.logger.log({
       socketSessionId,
       streamSid,
@@ -195,6 +202,8 @@ export class SmartfloStreamAdapter {
       authorizationSource: authorization.source,
       authorizationId: authorization.authorizationId,
       runtimeProvider: this.voiceRuntime.name,
+      agentName: openingContext.agentName,
+      companyName: openingContext.companyName,
       message:
         'Smartflo start authorized — starting OpenAI runtime and recording',
     });
@@ -206,6 +215,7 @@ export class SmartfloStreamAdapter {
       from: startData.from,
       to: startData.to,
       direction: startData.direction,
+      openingContext,
     });
 
     setImmediate(() => {
