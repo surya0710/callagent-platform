@@ -149,6 +149,7 @@ export function buildOpeningResponseInstructions(
     `"${line}"`,
     'Do not ask discovery questions, handle objections, pitch benefits, or use playbook content in this opening turn.',
     'Do NOT add pleasantries, explanations, context, or extra questions beyond that line.',
+    'After the permission question, stay silent until the customer responds.',
     'Then STOP immediately and end your turn.',
     'Do not mention AI, bots, systems, or models.',
   ].join(' ');
@@ -175,6 +176,7 @@ export function buildOpeningSessionInstructions(
     '- Do not pitch, elaborate, or add filler.',
     '- Do not ask discovery questions, handle objections, or use playbook content during the opening.',
     '- Wait for the customer response before saying anything else.',
+    '- If the customer is silent after the opening, remain silent.',
     `- If asked who is calling, give a one-sentence reply with ${context.agentName}, ${context.companyName}, and purpose only.`,
     '- Speak first when the call begins.',
   ].join(' ');

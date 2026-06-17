@@ -55,6 +55,7 @@ const RESPONSE_WAIT_MS = 15000;
 const SESSION_READY_TIMEOUT_MS = 5000;
 const WS_OPEN_TIMEOUT_MS = 8000;
 const PLAYBOOK_LOOKUP_TIMEOUT_MS = 750;
+const POST_OPENING_INPUT_IGNORE_MS = 1200;
 
 const LIVE_OUTBOUND_PCM_OPTIONS = {
   autoNormalize: false,
@@ -97,6 +98,7 @@ interface OpenAiRealtimeSession {
   activePlaybook?: RuntimeAgentPlaybook | null;
   playbookLookupComplete: boolean;
   playbookLoadError?: string;
+  ignoreInboundAudioUntilMs?: number;
   openingGreetingRequested: boolean;
   openingGreetingPending: boolean;
   openingGreetingComplete: boolean;
@@ -618,10 +620,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     session.openingGreetingComplete = true;
     session.openingGreetingPending = false;
+    session.pendingPcm8 = [];
+    session.ignoreInboundAudioUntilMs = Date.now() + POST_OPENING_INPUT_IGNORE_MS;
 
     this.logger.log({
       streamSid: session.streamSid,
       agentName: session.openingContext.agentName,
+      ignoreInboundAudioMs: POST_OPENING_INPUT_IGNORE_MS,
       message: 'voice_opening_greeting_complete',
     });
 
@@ -629,7 +634,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       void this.sendSessionUpdate(session, session.model, 'conversation');
     }
 
-    this.flushPendingInput(session);
+    this.logger.log({
+      streamSid: session.streamSid,
+      message: 'Dropped queued inbound audio captured during opening',
+    });
   }
 
   private flushPendingInputIfReady(session: OpenAiRealtimeSession): void {
@@ -644,6 +652,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session: OpenAiRealtimeSession,
   ): boolean {
     return Boolean(session.openingContext && !session.openingGreetingComplete);
+  }
+
+  private shouldIgnoreInboundAfterOpening(session: OpenAiRealtimeSession): boolean {
+    return Boolean(
+      session.ignoreInboundAudioUntilMs &&
+        Date.now() < session.ignoreInboundAudioUntilMs,
+    );
   }
 
   private tryStartOpeningGreeting(session: OpenAiRealtimeSession): void {
@@ -765,6 +780,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private appendInputAudio(session: OpenAiRealtimeSession, pcm8: Buffer): void {
     if (this.shouldQueueInboundUntilOpeningComplete(session)) {
       session.pendingPcm8.push(pcm8);
+      return;
+    }
+
+    if (this.shouldIgnoreInboundAfterOpening(session)) {
+      voiceDebugLog(this.logger, session.streamSid, 'post_opening_input_ignored', {
+        bytes: pcm8.length,
+      });
       return;
     }
 
