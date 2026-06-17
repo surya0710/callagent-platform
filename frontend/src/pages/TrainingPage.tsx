@@ -305,7 +305,10 @@ export function TrainingPage() {
 
   const analyzeAllMutation = useMutation({
     mutationFn: (recordingIds?: string[]) =>
-      api.post('/training/recordings/analyze-all', { recordingIds }),
+      api.post(
+        '/training/recordings/analyze-all',
+        recordingIds?.length ? { recordingIds } : {},
+      ),
     onSuccess: () => {
       setAnalysisError('');
       setSelectedIds([]);

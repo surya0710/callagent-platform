@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Param, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
@@ -7,14 +7,12 @@ import { TrainingCallAnalysisProcessor } from './training-call-analysis.processo
 import { TRAINING_ANALYSIS_JOB_NAMES } from './training-call-analysis.processor';
 import { TrainingCallAnalysisService } from './training-call-analysis.service';
 
-class AnalyzeAllDto {
-  recordingIds?: string[];
-}
-
 @ApiTags('Training')
 @ApiBearerAuth()
 @Controller('training')
 export class TrainingCallAnalysisController {
+  private readonly logger = new Logger(TrainingCallAnalysisController.name);
+
   constructor(
     private readonly analysisService: TrainingCallAnalysisService,
     private readonly analysisProcessor: TrainingCallAnalysisProcessor,
@@ -24,28 +22,36 @@ export class TrainingCallAnalysisController {
   @Post('recordings/analyze-all')
   @RequirePermissions(PERMISSIONS.TRAINING_WRITE)
   @ApiOperation({ summary: 'Queue analysis for all transcribed training recordings' })
-  async analyzeAll(@Body() body: AnalyzeAllDto) {
+  async analyzeAll(@Body('recordingIds') recordingIds?: string[]) {
     this.analysisService.assertEnabled();
-    const ids = await this.analysisService.findTranscribedRecordingIds(body.recordingIds);
+    const ids = await this.analysisService.findTranscribedRecordingIds(recordingIds);
 
     await Promise.all(
       ids.map((id) => this.analysisService.enqueueRecordingAnalysis(id, false)),
     );
 
-    const payload = { recordingIds: body.recordingIds };
+    const payload = { recordingIds };
     const result = await this.queueService.enqueueTrainingAnalysis(
       TRAINING_ANALYSIS_JOB_NAMES.ANALYZE_ALL,
       payload,
     );
 
     if (!result.queued) {
-      return this.analysisProcessor.process(
-        TRAINING_ANALYSIS_JOB_NAMES.ANALYZE_ALL,
-        payload,
-      );
+      void this.analysisProcessor
+        .process(TRAINING_ANALYSIS_JOB_NAMES.ANALYZE_ALL, payload)
+        .catch((err: Error) => {
+          this.logger.error(`Inline analyze-all failed: ${err.message}`);
+        });
+
+      return {
+        queued: false,
+        started: true,
+        total: ids.length,
+        message: 'Analysis started in background',
+      };
     }
 
-    return { queued: true, jobId: result.jobId };
+    return { queued: true, jobId: result.jobId, total: ids.length };
   }
 
   @Get('analysis')
@@ -68,10 +74,13 @@ export class TrainingCallAnalysisController {
     );
 
     if (!result.queued) {
-      return this.analysisProcessor.process(
-        TRAINING_ANALYSIS_JOB_NAMES.ANALYZE_CALL,
-        payload,
-      );
+      void this.analysisProcessor
+        .process(TRAINING_ANALYSIS_JOB_NAMES.ANALYZE_CALL, payload)
+        .catch((err: Error) => {
+          this.logger.error(`Inline analyze failed for ${id}: ${err.message}`);
+        });
+
+      return { queued: false, started: true, recordingId: id };
     }
 
     return { queued: true, jobId: result.jobId, recordingId: id };
@@ -90,10 +99,13 @@ export class TrainingCallAnalysisController {
     );
 
     if (!result.queued) {
-      return this.analysisProcessor.process(
-        TRAINING_ANALYSIS_JOB_NAMES.ANALYZE_CALL,
-        payload,
-      );
+      void this.analysisProcessor
+        .process(TRAINING_ANALYSIS_JOB_NAMES.ANALYZE_CALL, payload)
+        .catch((err: Error) => {
+          this.logger.error(`Inline reanalyze failed for ${id}: ${err.message}`);
+        });
+
+      return { queued: false, started: true, recordingId: id, reanalyze: true };
     }
 
     return { queued: true, jobId: result.jobId, recordingId: id, reanalyze: true };
