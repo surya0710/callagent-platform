@@ -22,6 +22,7 @@ interface TrainingRecording {
   labelOutcome?: string;
   transcript?: string;
   redactedTranscript?: string;
+  expectedResponse?: string;
   trainingApproved: boolean;
   errorMessage?: string;
   createdAt: string;
@@ -221,6 +222,7 @@ export function TrainingPage() {
         labelOutcome?: string;
         transcript?: string;
         redactedTranscript?: string;
+        expectedResponse?: string;
         resetTranscription?: boolean;
       };
     }) => api.patch(`/training/recordings/${id}`, body),
@@ -367,6 +369,9 @@ export function TrainingPage() {
         redactedTranscript: resetTranscription
           ? undefined
           : (fd.get('redactedTranscript') as string) || undefined,
+        expectedResponse: resetTranscription
+          ? undefined
+          : (fd.get('expectedResponse') as string) || undefined,
         resetTranscription,
       },
     });
@@ -510,7 +515,14 @@ export function TrainingPage() {
                     className="rounded border-slate-600"
                   />
                 </td>
-                <td className="px-4 py-3">{recording.originalFileName}</td>
+                <td className="px-4 py-3">
+                  <div>{recording.originalFileName}</div>
+                  {recording.expectedResponse && (
+                    <div className="mt-1 max-w-md truncate text-xs text-slate-500">
+                      Expected: {recording.expectedResponse}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-3 capitalize">{recording.language ?? 'auto'}</td>
                 <td className="px-4 py-3">
                   <div>{recording.status}</div>
@@ -694,6 +706,12 @@ export function TrainingPage() {
             rows={6}
             defaultValue={editRecording?.redactedTranscript ?? ''}
           />
+          <Textarea
+            label="Expected Model Response"
+            name="expectedResponse"
+            rows={5}
+            defaultValue={editRecording?.expectedResponse ?? ''}
+          />
           <label className="flex items-center gap-2 text-sm text-slate-300">
             <input type="checkbox" name="resetTranscription" className="rounded border-slate-600" />
             Reset transcription and allow re-transcribe
@@ -812,6 +830,7 @@ export function TrainingPage() {
             name="expectedResponse"
             rows={5}
             required
+            defaultValue={approveRecording?.expectedResponse ?? ''}
             placeholder="Customer was interested but needed pricing clarity. The ideal agent should acknowledge the concern, summarize the offer, and schedule a follow-up."
           />
           <Button type="submit" disabled={approveMutation.isPending}>

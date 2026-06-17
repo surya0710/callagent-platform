@@ -22,6 +22,11 @@ export class UpdateRecordingDto {
   @IsString()
   redactedTranscript?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  expectedResponse?: string;
+
   @ApiPropertyOptional({
     description: 'Clear transcript and allow re-transcription',
   })

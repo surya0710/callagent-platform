@@ -246,6 +246,10 @@ export class TrainingService {
           ? this.redactSensitiveData(dto.redactedTranscript)
           : null;
       }
+
+      if (dto.expectedResponse !== undefined) {
+        data.expectedResponse = dto.expectedResponse || null;
+      }
     }
 
     const updated = await this.prisma.trainingRecording.update({
