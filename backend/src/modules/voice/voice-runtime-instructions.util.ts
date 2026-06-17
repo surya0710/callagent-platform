@@ -22,7 +22,9 @@ export function buildVoiceRuntimeInstructions({
   campaignContext,
 }: VoiceRuntimeInstructionOptions): string {
   if (!activePlaybook) {
-    return [baseInstructions, campaignContext?.trim()].filter(Boolean).join('\n\n');
+    return [baseInstructions, campaignContext?.trim()]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   const playbookBlock = [

@@ -484,7 +484,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
             accent,
           )
       : (envInstructions ?? resolvedDefault);
-    const activePlaybook = await this.resolveActivePlaybookForSession(session);
+    const activePlaybook =
+      phase === 'conversation' || !session.openingContext
+        ? await this.resolveActivePlaybookForSession(session)
+        : null;
     const instructions = buildVoiceRuntimeInstructions({
       baseInstructions,
       activePlaybook,

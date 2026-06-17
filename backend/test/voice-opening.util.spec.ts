@@ -99,6 +99,7 @@ describe('voice-opening.util', () => {
       expect(instructions).toContain('Speak first when the call begins');
       expect(instructions).toContain('Aisha');
       expect(instructions).toContain('TATD');
+      expect(instructions).toContain('Do not ask discovery questions');
       expect(instructions).not.toContain('Do not greet or speak first');
     });
 
@@ -129,6 +130,7 @@ describe('voice-opening.util', () => {
       expect(instructions).toContain('Aisha');
       expect(instructions).toContain('Then STOP immediately');
       expect(instructions).toContain('good morning');
+      expect(instructions).toContain('Do not ask discovery questions');
     });
   });
 
