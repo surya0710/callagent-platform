@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+import { AgentPlaybookController } from './agent-playbook.controller';
+import { AgentPlaybookService } from './agent-playbook.service';
 import { BedrockTrainingProvider } from './providers/bedrock-training.provider';
 import { MockTrainingProvider } from './providers/mock-training.provider';
 import { OpenAiTrainingProvider } from './providers/openai-training.provider';
@@ -15,10 +17,15 @@ import { TrainingTranscriptionConfigService } from './utils/training-transcripti
 
 @Module({
   imports: [AuditLogsModule],
-  controllers: [TrainingController, TrainingCallAnalysisController],
+  controllers: [
+    TrainingController,
+    TrainingCallAnalysisController,
+    AgentPlaybookController,
+  ],
   providers: [
     TrainingService,
     TrainingCallAnalysisService,
+    AgentPlaybookService,
     TrainingCallAnalysisProcessor,
     TrainingCallAnalysisConfigService,
     TrainingProviderFactory,
@@ -28,6 +35,10 @@ import { TrainingTranscriptionConfigService } from './utils/training-transcripti
     TrainingTranscriptionConfigService,
     TrainingTranscriptPostProcessService,
   ],
-  exports: [TrainingCallAnalysisProcessor, TrainingCallAnalysisService],
+  exports: [
+    TrainingCallAnalysisProcessor,
+    TrainingCallAnalysisService,
+    AgentPlaybookService,
+  ],
 })
 export class TrainingModule {}

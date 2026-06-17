@@ -598,6 +598,33 @@ model TrainingInsightReport {
   @@map("training_insight_reports")
 }
 
+model AgentPlaybook {
+  id                       String    @id @default(cuid())
+  title                    String
+  description              String?   @db.Text
+  sourceInsightReportId    String?   @map("source_insight_report_id")
+  status                   String    @default("draft")
+  version                  Int       @default(1)
+  playbookText             String    @map("playbook_text") @db.Text
+  agentInstructions        String    @map("agent_instructions") @db.Text
+  commonObjectionsJson     Json?     @map("common_objections_json")
+  objectionResponsesJson   Json?     @map("objection_responses_json")
+  winningPhrasesJson       Json?     @map("winning_phrases_json")
+  badPhrasesJson           Json?     @map("bad_phrases_json")
+  qualificationSignalsJson Json?     @map("qualification_signals_json")
+  followUpRulesJson        Json?     @map("follow_up_rules_json")
+  safetyRulesJson          Json?     @map("safety_rules_json")
+  approvedBy               String?   @map("approved_by")
+  approvedAt               DateTime? @map("approved_at")
+  activatedAt              DateTime? @map("activated_at")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([sourceInsightReportId])
+  @@map("agent_playbooks")
+}
+
 model KnowledgeBaseEntry {
   id         String   @id @default(uuid())
   title      String

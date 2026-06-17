@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { TrainingModule } from '../training/training.module';
 import { AudioGateway } from './audio.gateway';
 import { LocalVoiceRecordingStorage } from './audio/storage/local-voice-recording-storage.provider';
 import { S3VoiceRecordingStorage } from './audio/storage/s3-voice-recording-storage.provider';
@@ -24,6 +25,7 @@ import { VoiceTranscriptService } from './transcript/voice-transcript.service';
 import { VoiceRecordingPathService } from './transcript/voice-recording-path.service';
 
 @Module({
+  imports: [TrainingModule],
   controllers: [VoiceController, VoiceTestCallController],
   providers: [
     VoiceSharedStateService,

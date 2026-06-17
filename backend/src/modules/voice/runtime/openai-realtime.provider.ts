@@ -1,6 +1,10 @@
 import { Inject, Injectable, Logger, OnModuleInit, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WebSocket } from 'ws';
+import {
+  AgentPlaybookService,
+  RuntimeAgentPlaybook,
+} from '../../training/agent-playbook.service';
 import { encodePcm16ToMulaw } from '../audio/mulaw-codec';
 import { prepareOutboundPcm16 } from '../audio/audio-gain.util';
 import { Pcm16StreamDownsampler, resamplePcm16 } from '../audio/pcm-resampler';
@@ -40,6 +44,7 @@ import {
 import { VoiceTranscriptConfigService } from '../transcript/voice-transcript-config.service';
 import { buildRealtimeTranscriptionPrompt } from '../transcript/voice-transcript-prompt.util';
 import { VoiceTranscriptService } from '../transcript/voice-transcript.service';
+import { buildVoiceRuntimeInstructions } from '../voice-runtime-instructions.util';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
 const OPENAI_SAMPLE_RATE = OPENAI_REALTIME_SAMPLE_RATE;
@@ -49,6 +54,7 @@ const MANUAL_FALLBACK_SILENCE_MS = 800;
 const RESPONSE_WAIT_MS = 15000;
 const SESSION_READY_TIMEOUT_MS = 5000;
 const WS_OPEN_TIMEOUT_MS = 8000;
+const PLAYBOOK_LOOKUP_TIMEOUT_MS = 750;
 
 const LIVE_OUTBOUND_PCM_OPTIONS = {
   autoNormalize: false,
@@ -88,6 +94,9 @@ interface OpenAiRealtimeSession {
   useServerVad: boolean;
   model: string;
   openingContext?: VoiceOpeningContext;
+  activePlaybook?: RuntimeAgentPlaybook | null;
+  playbookLookupComplete: boolean;
+  playbookLoadError?: string;
   openingGreetingRequested: boolean;
   openingGreetingPending: boolean;
   openingGreetingComplete: boolean;
@@ -182,6 +191,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
     private readonly voiceTranscriptConfig: VoiceTranscriptConfigService,
     private readonly voiceTranscriptService: VoiceTranscriptService,
+    private readonly agentPlaybookService: AgentPlaybookService,
   ) {}
 
   private getTurnDetectionMode(): OpenAiTurnDetectionMode {
@@ -269,6 +279,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       useServerVad,
       model,
       openingContext: context.openingContext,
+      activePlaybook: null,
+      playbookLookupComplete: false,
       openingGreetingRequested: false,
       openingGreetingPending: false,
       openingGreetingComplete: false,
@@ -286,7 +298,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         runtimeError: undefined,
         isOpenAiConnected: true,
       });
-      this.sendSessionUpdate(session, model);
+      void this.sendSessionUpdate(session, model);
       this.logger.log({
         streamSid,
         model,
@@ -445,11 +457,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
   }
 
-  private sendSessionUpdate(
+  private async sendSessionUpdate(
     session: OpenAiRealtimeSession,
     model: string,
     phase: 'opening' | 'conversation' = 'opening',
-  ): void {
+  ): Promise<void> {
     const voice =
       this.configService.get<string>('OPENAI_REALTIME_VOICE')?.trim() ??
       DEFAULT_REALTIME_VOICE;
@@ -459,7 +471,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     const envInstructions =
       this.configService.get<string>('OPENAI_REALTIME_INSTRUCTIONS')?.trim();
     const resolvedDefault = buildDefaultRealtimeInstructions(accent);
-    const instructions = session.openingContext
+    const baseInstructions = session.openingContext
       ? phase === 'opening'
         ? buildOpeningSessionInstructions(
             session.openingContext,
@@ -472,6 +484,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
             accent,
           )
       : (envInstructions ?? resolvedDefault);
+    const activePlaybook = await this.resolveActivePlaybookForSession(session);
+    const instructions = buildVoiceRuntimeInstructions({
+      baseInstructions,
+      activePlaybook,
+    });
 
     const payload = buildGaSessionUpdate({
       voice,
@@ -503,9 +520,92 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       turnDetection: session.useServerVad ? 'server_vad' : 'manual',
       hasOpeningContext: Boolean(session.openingContext),
       agentName: session.openingContext?.agentName,
+      activePlaybookId: activePlaybook?.id,
+      activePlaybookVersion: activePlaybook?.version,
+      playbookInjected: Boolean(activePlaybook),
       message: 'Sending OpenAI GA session.update',
     });
     session.ws.send(JSON.stringify(payload));
+  }
+
+  private async resolveActivePlaybookForSession(
+    session: OpenAiRealtimeSession,
+  ): Promise<RuntimeAgentPlaybook | null> {
+    if (session.playbookLookupComplete) {
+      return session.activePlaybook ?? null;
+    }
+
+    if (!this.agentPlaybookService.isPlaybookRuntimeEnabled()) {
+      session.playbookLookupComplete = true;
+      session.activePlaybook = null;
+      this.updateRuntimeState(session.streamSid, {
+        playbookInjected: false,
+      });
+      return null;
+    }
+
+    this.logger.log({
+      streamSid: session.streamSid,
+      message: 'voice_playbook_lookup_started',
+    });
+
+    const lookupPromise =
+      this.agentPlaybookService.getActivePlaybookForRuntime();
+    lookupPromise.catch(() => undefined);
+
+    try {
+      const playbook = await Promise.race([
+        lookupPromise,
+        new Promise<'timeout'>((resolve) =>
+          setTimeout(() => resolve('timeout'), PLAYBOOK_LOOKUP_TIMEOUT_MS),
+        ),
+      ]);
+
+      if (playbook === 'timeout') {
+        throw new Error('Active playbook lookup timed out');
+      }
+
+      session.playbookLookupComplete = true;
+      session.activePlaybook = playbook;
+      session.playbookLoadError = undefined;
+
+      this.updateRuntimeState(session.streamSid, {
+        activePlaybookId: playbook?.id,
+        activePlaybookVersion: playbook?.version,
+        playbookInjected: Boolean(playbook),
+        playbookLoadError: '',
+      });
+
+      if (playbook) {
+        this.logger.log({
+          streamSid: session.streamSid,
+          playbookId: playbook.id,
+          version: playbook.version,
+          message: 'voice_playbook_injected',
+        });
+      }
+
+      return playbook;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Active playbook load failed';
+      session.playbookLookupComplete = true;
+      session.activePlaybook = null;
+      session.playbookLoadError = message;
+
+      this.logger.error({
+        streamSid: session.streamSid,
+        err: error,
+        failOpen: this.agentPlaybookService.shouldFailOpenRuntime(),
+        message: 'voice_playbook_load_error',
+      });
+      this.updateRuntimeState(session.streamSid, {
+        playbookInjected: false,
+        playbookLoadError: message,
+      });
+
+      return null;
+    }
   }
 
   private completeOpeningGreeting(session: OpenAiRealtimeSession): void {
@@ -523,7 +623,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     if (session.ws.readyState === WebSocket.OPEN) {
-      this.sendSessionUpdate(session, session.model, 'conversation');
+      void this.sendSessionUpdate(session, session.model, 'conversation');
     }
 
     this.flushPendingInput(session);
@@ -1523,6 +1623,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       runtimeConnectedAt?: Date;
       runtimeLastEventAt?: Date;
       runtimeError?: string;
+      activePlaybookId?: string;
+      activePlaybookVersion?: number;
+      playbookInjected?: boolean;
+      playbookLoadError?: string;
       isOpenAiConnected?: boolean;
       hasReceivedCallerAudio?: boolean;
       lastCallerAudioAt?: Date;

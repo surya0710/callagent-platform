@@ -218,6 +218,18 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  VOICE_AGENT_PLAYBOOK_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_AGENT_PLAYBOOK_CACHE_TTL_SECONDS?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_AGENT_PLAYBOOK_FAIL_OPEN?: string;
+
+  @IsOptional()
+  @IsString()
   VOICE_TRANSCRIPT_ENABLED?: string;
 
   @IsOptional()

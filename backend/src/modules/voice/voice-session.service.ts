@@ -61,6 +61,10 @@ export interface VoiceSession {
   runtimeConnectedAt?: Date;
   runtimeLastEventAt?: Date;
   runtimeError?: string;
+  activePlaybookId?: string;
+  activePlaybookVersion?: number;
+  playbookInjected?: boolean;
+  playbookLoadError?: string;
   isOpenAiConnected?: boolean;
   hasReceivedCallerAudio?: boolean;
   lastCallerAudioAt?: Date;
@@ -172,6 +176,10 @@ export interface VoiceSessionResponse {
   runtimeConnectedAt?: string;
   runtimeLastEventAt?: string;
   runtimeError?: string;
+  activePlaybookId?: string;
+  activePlaybookVersion?: number;
+  playbookInjected?: boolean;
+  playbookLoadError?: string;
   isOpenAiConnected?: boolean;
   hasReceivedCallerAudio?: boolean;
   lastCallerAudioAt?: string;
@@ -282,6 +290,10 @@ export function toVoiceSessionResponse(
     runtimeConnectedAt: session.runtimeConnectedAt?.toISOString(),
     runtimeLastEventAt: session.runtimeLastEventAt?.toISOString(),
     runtimeError: session.runtimeError,
+    activePlaybookId: session.activePlaybookId,
+    activePlaybookVersion: session.activePlaybookVersion,
+    playbookInjected: session.playbookInjected,
+    playbookLoadError: session.playbookLoadError,
     isOpenAiConnected: session.isOpenAiConnected,
     hasReceivedCallerAudio: session.hasReceivedCallerAudio,
     lastCallerAudioAt: session.lastCallerAudioAt?.toISOString(),
@@ -799,6 +811,10 @@ export class VoiceSessionService {
       runtimeConnectedAt?: Date;
       runtimeLastEventAt?: Date;
       runtimeError?: string;
+      activePlaybookId?: string;
+      activePlaybookVersion?: number;
+      playbookInjected?: boolean;
+      playbookLoadError?: string;
       isOpenAiConnected?: boolean;
       hasReceivedCallerAudio?: boolean;
       lastCallerAudioAt?: Date;
@@ -856,6 +872,18 @@ export class VoiceSessionService {
     }
     if (update.runtimeError !== undefined) {
       session.runtimeError = update.runtimeError;
+    }
+    if (update.activePlaybookId !== undefined) {
+      session.activePlaybookId = update.activePlaybookId;
+    }
+    if (update.activePlaybookVersion !== undefined) {
+      session.activePlaybookVersion = update.activePlaybookVersion;
+    }
+    if (update.playbookInjected !== undefined) {
+      session.playbookInjected = update.playbookInjected;
+    }
+    if (update.playbookLoadError !== undefined) {
+      session.playbookLoadError = update.playbookLoadError;
     }
     if (update.isOpenAiConnected !== undefined) {
       session.isOpenAiConnected = update.isOpenAiConnected;
