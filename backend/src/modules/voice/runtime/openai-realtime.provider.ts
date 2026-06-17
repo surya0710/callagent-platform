@@ -99,6 +99,7 @@ interface OpenAiRealtimeSession {
   playbookLookupComplete: boolean;
   playbookLoadError?: string;
   ignoreInboundAudioUntilMs?: number;
+  acceptedCallerAudioAfterOpening: boolean;
   openingGreetingRequested: boolean;
   openingGreetingPending: boolean;
   openingGreetingComplete: boolean;
@@ -283,6 +284,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       openingContext: context.openingContext,
       activePlaybook: null,
       playbookLookupComplete: false,
+      acceptedCallerAudioAfterOpening: false,
       openingGreetingRequested: false,
       openingGreetingPending: false,
       openingGreetingComplete: false,
@@ -622,6 +624,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.openingGreetingPending = false;
     session.pendingPcm8 = [];
     session.ignoreInboundAudioUntilMs = Date.now() + POST_OPENING_INPUT_IGNORE_MS;
+    session.acceptedCallerAudioAfterOpening = false;
 
     this.logger.log({
       streamSid: session.streamSid,
@@ -790,6 +793,41 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
+    const speechLike = isSpeechLikePcm16(pcm8);
+    if (
+      session.openingContext &&
+      session.openingGreetingComplete &&
+      !session.acceptedCallerAudioAfterOpening &&
+      !speechLike
+    ) {
+      voiceDebugLog(
+        this.logger,
+        session.streamSid,
+        'post_opening_non_speech_ignored',
+        { bytes: pcm8.length },
+      );
+      return;
+    }
+
+    if (
+      session.openingContext &&
+      session.openingGreetingComplete &&
+      speechLike &&
+      !session.acceptedCallerAudioAfterOpening
+    ) {
+      const now = new Date();
+      session.acceptedCallerAudioAfterOpening = true;
+      this.logger.log({
+        streamSid: session.streamSid,
+        message: 'post_opening_customer_speech_detected',
+      });
+      this.updateRuntimeState(session.streamSid, {
+        hasReceivedCallerAudio: true,
+        lastCallerAudioAt: now,
+        lastSpeechLikeAudioAt: now,
+      });
+    }
+
     if (session.ws.readyState !== WebSocket.OPEN) {
       session.pendingPcm8.push(pcm8);
       return;
@@ -812,7 +850,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.totalInputPcm24Sent += pcm24.length;
 
     const now = new Date();
-    const speechLike = isSpeechLikePcm16(pcm8);
 
     voiceDebugLog(this.logger, session.streamSid, 'openai_handle_audio', {
       bytes: pcm8.length,
