@@ -26,13 +26,17 @@ import {
 } from './voice-runtime.provider';
 import { VoiceOpeningContext } from '../voice-opening.types';
 import {
+  buildDefaultRealtimeInstructions,
   buildOpeningResponseInstructions,
   buildOpeningSessionInstructions,
   buildPostOpeningSessionInstructions,
   CONVERSATION_MAX_OUTPUT_TOKENS,
-  DEFAULT_REALTIME_INSTRUCTIONS,
   OPENING_MAX_OUTPUT_TOKENS,
 } from '../voice-opening.util';
+import {
+  DEFAULT_REALTIME_VOICE,
+  parseVoiceAccent,
+} from '../voice-accent.util';
 import { VoiceTranscriptConfigService } from '../transcript/voice-transcript-config.service';
 import { buildRealtimeTranscriptionPrompt } from '../transcript/voice-transcript-prompt.util';
 import { VoiceTranscriptService } from '../transcript/voice-transcript.service';
@@ -46,9 +50,6 @@ const RESPONSE_WAIT_MS = 15000;
 const SESSION_READY_TIMEOUT_MS = 5000;
 const WS_OPEN_TIMEOUT_MS = 8000;
 
-const DEFAULT_INSTRUCTIONS = DEFAULT_REALTIME_INSTRUCTIONS;
-
-/** Live Smartflo path: no gain/normalize — recording applies its own mix at finalize. */
 const LIVE_OUTBOUND_PCM_OPTIONS = {
   autoNormalize: false,
   gain: 1,
@@ -450,20 +451,27 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     phase: 'opening' | 'conversation' = 'opening',
   ): void {
     const voice =
-      this.configService.get<string>('OPENAI_REALTIME_VOICE')?.trim() ?? 'alloy';
-    const baseInstructions =
+      this.configService.get<string>('OPENAI_REALTIME_VOICE')?.trim() ??
+      DEFAULT_REALTIME_VOICE;
+    const accent = parseVoiceAccent(
+      this.configService.get<string>('VOICE_ACCENT'),
+    );
+    const envInstructions =
       this.configService.get<string>('OPENAI_REALTIME_INSTRUCTIONS')?.trim();
+    const resolvedDefault = buildDefaultRealtimeInstructions(accent);
     const instructions = session.openingContext
       ? phase === 'opening'
         ? buildOpeningSessionInstructions(
             session.openingContext,
-            baseInstructions,
+            envInstructions,
+            accent,
           )
         : buildPostOpeningSessionInstructions(
             session.openingContext,
-            baseInstructions,
+            envInstructions,
+            accent,
           )
-      : (baseInstructions ?? DEFAULT_INSTRUCTIONS);
+      : (envInstructions ?? resolvedDefault);
 
     const payload = buildGaSessionUpdate({
       voice,

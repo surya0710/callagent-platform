@@ -1,4 +1,8 @@
 import { VoiceOpeningContext } from './voice-opening.types';
+import {
+  buildAccentInstructions,
+  VoiceAccentProfile,
+} from './voice-accent.util';
 
 export const VOICE_OPENING_DEFAULTS: Required<
   Pick<
@@ -13,7 +17,7 @@ export const VOICE_OPENING_DEFAULTS: Required<
   agentName: 'your AI assistant',
   companyName: 'our team',
   callPurpose: 'regarding your recent enquiry',
-  openingGreeting: 'Hi',
+  openingGreeting: 'Namaste',
   askPermissionBeforePitch: true,
 };
 
@@ -27,6 +31,7 @@ const BASE_VOICE_INSTRUCTIONS = [
   'Respond in the same language the caller uses: Hindi (Devanagari speech) or English.',
   'If the caller mixes languages, prefer Hindi unless they are clearly speaking English only.',
   'Never switch language mid-response.',
+  'Use phrasing natural to Indian phone conversations (Indian English or Hindi as appropriate).',
 ].join(' ');
 
 const BREVITY_RULES = [
@@ -42,7 +47,25 @@ const BREVITY_RULES = [
 const PASSIVE_CALLER_FIRST_SUFFIX =
   'Wait until the caller has finished speaking before responding. Do not greet or speak first.';
 
-export const DEFAULT_REALTIME_INSTRUCTIONS = `${BASE_VOICE_INSTRUCTIONS} ${BREVITY_RULES} ${PASSIVE_CALLER_FIRST_SUFFIX}`;
+export function buildBaseVoiceInstructions(
+  accent: VoiceAccentProfile = 'indian',
+): string {
+  const accentBlock = buildAccentInstructions(accent);
+  return [BASE_VOICE_INSTRUCTIONS, accentBlock].filter(Boolean).join(' ');
+}
+
+export function buildDefaultRealtimeInstructions(
+  accent: VoiceAccentProfile = 'indian',
+): string {
+  return [
+    buildBaseVoiceInstructions(accent),
+    BREVITY_RULES,
+    PASSIVE_CALLER_FIRST_SUFFIX,
+  ].join(' ');
+}
+
+export const DEFAULT_REALTIME_INSTRUCTIONS =
+  buildDefaultRealtimeInstructions('indian');
 
 export function mergeOpeningContext(
   partial?: Partial<VoiceOpeningContext>,
@@ -97,10 +120,11 @@ export function buildExampleOpeningMessage(
 /** Strip caller-first rules from env instructions when opening is active. */
 export function sanitizeBaseInstructionsForOpening(
   baseInstructions?: string,
+  accent: VoiceAccentProfile = 'indian',
 ): string {
   const trimmed = baseInstructions?.trim();
   if (!trimmed) {
-    return BASE_VOICE_INSTRUCTIONS;
+    return buildBaseVoiceInstructions(accent);
   }
 
   return trimmed
@@ -120,6 +144,7 @@ export function buildOpeningResponseInstructions(
   const line = buildExampleOpeningMessage(context);
   return [
     `Say ONLY the opening line below — nothing else. Use agent name "${context.agentName}".`,
+    'Use a natural Indian English accent unless the opening line is entirely in Hindi.',
     `Maximum ${OPENING_MAX_WORDS} words total.`,
     `"${line}"`,
     'Do NOT add pleasantries, explanations, context, or extra questions beyond that line.',
@@ -131,6 +156,7 @@ export function buildOpeningResponseInstructions(
 export function buildOpeningSessionInstructions(
   context: VoiceOpeningContext,
   baseInstructions?: string,
+  accent: VoiceAccentProfile = 'indian',
 ): string {
   const example = buildExampleOpeningMessage(context);
   const permissionRule =
@@ -151,7 +177,7 @@ export function buildOpeningSessionInstructions(
     '- Speak first when the call begins.',
   ].join(' ');
 
-  const base = sanitizeBaseInstructionsForOpening(baseInstructions);
+  const base = sanitizeBaseInstructionsForOpening(baseInstructions, accent);
   return `${base} ${openingRules}`;
 }
 
@@ -159,8 +185,9 @@ export function buildOpeningSessionInstructions(
 export function buildPostOpeningSessionInstructions(
   context: VoiceOpeningContext,
   baseInstructions?: string,
+  accent: VoiceAccentProfile = 'indian',
 ): string {
-  const base = sanitizeBaseInstructionsForOpening(baseInstructions);
+  const base = sanitizeBaseInstructionsForOpening(baseInstructions, accent);
   return [
     base,
     BREVITY_RULES,

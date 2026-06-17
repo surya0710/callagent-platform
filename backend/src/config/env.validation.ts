@@ -94,6 +94,10 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  VOICE_ACCENT?: string;
+
+  @IsOptional()
+  @IsString()
   AWS_REGION?: string;
 
   @IsOptional()
