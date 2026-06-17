@@ -9,6 +9,7 @@ export const QUEUE_NAMES = {
   CALL_RETRIES: 'call-retries',
   SUMMARIES: 'summaries',
   TRANSCRIPTS: 'transcripts',
+  TRAINING_ANALYSIS: 'training-analysis',
 } as const;
 
 @Module({})
@@ -34,6 +35,7 @@ export class QueuesModule {
             { name: QUEUE_NAMES.CALL_RETRIES },
             { name: QUEUE_NAMES.SUMMARIES },
             { name: QUEUE_NAMES.TRANSCRIPTS },
+            { name: QUEUE_NAMES.TRAINING_ANALYSIS },
           ),
         ]
       : [];

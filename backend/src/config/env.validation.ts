@@ -263,6 +263,22 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   TRAINING_TRANSCRIPT_GLOSSARY?: string;
+
+  @IsOptional()
+  @IsString()
+  TRAINING_CALL_ANALYSIS_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  TRAINING_CALL_ANALYSIS_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  TRAINING_CALL_ANALYSIS_BATCH_SIZE?: string;
+
+  @IsOptional()
+  @IsString()
+  TRAINING_INSIGHTS_MODEL?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

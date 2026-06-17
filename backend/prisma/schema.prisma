@@ -464,6 +464,7 @@ model TrainingRecording {
   uploadedBy User?             @relation("TrainingRecordingUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
   call       Call?             @relation(fields: [callId], references: [id], onDelete: SetNull)
   examples   TrainingExample[]
+  analysis   TrainingRecordingAnalysis?
 
   @@index([callId])
   @@index([status])
@@ -537,6 +538,64 @@ model TrainingJob {
   @@index([createdById])
   @@index([createdAt])
   @@map("training_jobs")
+}
+
+model TrainingRecordingAnalysis {
+  id                        String   @id @default(uuid())
+  trainingRecordingId       String   @unique @map("training_recording_id")
+  summary                   String?  @db.Text
+  outcome                   String?
+  leadQuality               String?  @map("lead_quality")
+  customerIntent            String?  @map("customer_intent") @db.Text
+  nextAction                String?  @map("next_action") @db.Text
+  customerRequirementsJson  Json?    @map("customer_requirements_json")
+  objectionsJson            Json?    @map("objections_json")
+  customerQuestionsJson     Json?    @map("customer_questions_json")
+  importantDetailsJson      Json?    @map("important_details_json")
+  callbackRequested         Boolean  @default(false) @map("callback_requested")
+  callbackDateTime          DateTime? @map("callback_date_time")
+  executiveScore            Int?     @map("executive_score")
+  executiveStrengthsJson    Json?    @map("executive_strengths_json")
+  executiveImprovementsJson Json?    @map("executive_improvements_json")
+  missedOpportunitiesJson   Json?    @map("missed_opportunities_json")
+  winningPhrasesJson        Json?    @map("winning_phrases_json")
+  badPhrasesJson            Json?    @map("bad_phrases_json")
+  confidence                Float?
+  status                    String   @default("pending")
+  error                     String?  @db.Text
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  recording TrainingRecording @relation(fields: [trainingRecordingId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([outcome])
+  @@index([leadQuality])
+  @@index([createdAt])
+  @@map("training_recording_analyses")
+}
+
+model TrainingInsightReport {
+  id                       String   @id @default(uuid())
+  title                    String
+  status                   String   @default("pending")
+  totalCalls               Int      @default(0) @map("total_calls")
+  commonObjectionsJson     Json?    @map("common_objections_json")
+  commonQuestionsJson      Json?    @map("common_questions_json")
+  commonRequirementsJson   Json?    @map("common_requirements_json")
+  winningPhrasesJson       Json?    @map("winning_phrases_json")
+  badPhrasesJson           Json?    @map("bad_phrases_json")
+  bestOpeningsJson         Json?    @map("best_openings_json")
+  followUpPatternsJson     Json?    @map("follow_up_patterns_json")
+  qualificationSignalsJson Json?    @map("qualification_signals_json")
+  recommendedPlaybook      String?  @map("recommended_playbook") @db.Text
+  aiAgentInstructions      String?  @map("ai_agent_instructions") @db.Text
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("training_insight_reports")
 }
 
 model KnowledgeBaseEntry {

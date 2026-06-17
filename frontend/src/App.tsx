@@ -14,6 +14,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrainingPage } from './pages/TrainingPage';
+import { TrainingInsightsPage } from './pages/TrainingInsightsPage';
 import { UsersPage } from './pages/UsersPage';
 import { VoiceSessionsPage } from './pages/VoiceSessionsPage';
 import { VoiceTestCallPage } from './pages/VoiceTestCallPage';
@@ -44,6 +45,7 @@ export function App() {
             <Route path="agent-prompts" element={<AgentPromptsPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="training" element={<TrainingPage />} />
+            <Route path="training/insights" element={<TrainingInsightsPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

@@ -16,6 +16,7 @@ export class QueueService {
     @Optional() @InjectQueue(QUEUE_NAMES.CALL_RETRIES) private readonly callRetriesQueue?: Queue,
     @Optional() @InjectQueue(QUEUE_NAMES.SUMMARIES) private readonly summariesQueue?: Queue,
     @Optional() @InjectQueue(QUEUE_NAMES.TRANSCRIPTS) private readonly transcriptsQueue?: Queue,
+    @Optional() @InjectQueue(QUEUE_NAMES.TRAINING_ANALYSIS) private readonly trainingAnalysisQueue?: Queue,
   ) {
     this.enabled = configService.get<string>('REDIS_ENABLED', 'true') === 'true';
   }
@@ -69,6 +70,16 @@ export class QueueService {
     }
 
     const job = await this.transcriptsQueue.add('transcribe', payload);
+    return { queued: true, jobId: job.id };
+  }
+
+  async enqueueTrainingAnalysis(jobName: string, payload: Record<string, unknown>) {
+    if (!this.enabled || !this.trainingAnalysisQueue) {
+      this.logger.warn('Redis disabled — training analysis job processed inline');
+      return { queued: false, payload, jobName };
+    }
+
+    const job = await this.trainingAnalysisQueue.add(jobName, payload);
     return { queued: true, jobId: job.id };
   }
 }
