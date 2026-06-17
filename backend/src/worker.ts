@@ -9,6 +9,7 @@ import { OnDemandCallProcessor } from './queues/processors/on-demand-call.proces
 import { CampaignCallProcessor } from './queues/processors/campaign-call.processor';
 import { CallRetryProcessor } from './queues/processors/call-retry.processor';
 import { SummaryProcessor } from './queues/processors/summary.processor';
+import { TranscriptProcessor } from './queues/processors/transcript.processor';
 import { QUEUE_NAMES } from './queues/queues.module';
 
 async function bootstrap() {
@@ -29,6 +30,7 @@ async function bootstrap() {
   const onDemandCallProcessor = app.get(OnDemandCallProcessor);
   const callRetryProcessor = app.get(CallRetryProcessor);
   const summaryProcessor = app.get(SummaryProcessor);
+  const transcriptProcessor = app.get(TranscriptProcessor);
 
   const connection = {
     host: configService.getOrThrow<string>('REDIS_HOST'),
@@ -54,6 +56,11 @@ async function bootstrap() {
     new Worker(
       QUEUE_NAMES.SUMMARIES,
       async (job) => summaryProcessor.process(job.data),
+      { connection },
+    ),
+    new Worker(
+      QUEUE_NAMES.TRANSCRIPTS,
+      async (job) => transcriptProcessor.process(job.data),
       { connection },
     ),
   ];

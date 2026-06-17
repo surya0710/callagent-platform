@@ -6,6 +6,7 @@ import {
 } from './pcm-stats.util';
 import {
   buildMixedPcmTimeline,
+  buildTrackPcmTimeline,
   summarizeRecordingTimeline,
 } from './pcm-recording-mix.util';
 import { VoiceSessionService } from '../voice-session.service';
@@ -21,6 +22,8 @@ export interface VoiceRecordingMetadata {
   callSid?: string;
   fileName: string;
   storageKey: string;
+  inboundStorageKey?: string;
+  outboundStorageKey?: string;
   sampleRate: number;
   channels: number;
   bitsPerSample: number;
@@ -198,6 +201,7 @@ export class VoiceRecordingService {
   async finalize(
     streamSid: string,
     callSid?: string,
+    options?: { includeSpeakerTracks?: boolean },
   ): Promise<VoiceRecordingMetadata | null> {
     if (!streamSid) {
       return null;
@@ -251,11 +255,62 @@ export class VoiceRecordingService {
         contentType: 'audio/wav',
       });
 
+      let inboundStorageKey: string | undefined;
+      let outboundStorageKey: string | undefined;
+
+      if (options?.includeSpeakerTracks) {
+        if (active.inboundChunks.length > 0) {
+          const inboundPcm = buildTrackPcmTimeline(
+            active.inboundChunks,
+            SAMPLE_RATE,
+            'inbound',
+          );
+          if (inboundPcm.length > 0) {
+            inboundStorageKey = buildVoiceRecordingStorageKey(
+              `${toSafeRecordingFileName(streamSid).replace(/\.wav$/, '')}_inbound.wav`,
+            );
+            await storage.write(
+              inboundStorageKey,
+              createWavBuffer(inboundPcm, {
+                sampleRate: SAMPLE_RATE,
+                channels: CHANNELS,
+                bitsPerSample: BITS_PER_SAMPLE,
+              }),
+              { contentType: 'audio/wav' },
+            );
+          }
+        }
+
+        if (active.outboundChunks.length > 0) {
+          const outboundPcm = buildTrackPcmTimeline(
+            active.outboundChunks,
+            SAMPLE_RATE,
+            'outbound',
+          );
+          if (outboundPcm.length > 0) {
+            outboundStorageKey = buildVoiceRecordingStorageKey(
+              `${toSafeRecordingFileName(streamSid).replace(/\.wav$/, '')}_outbound.wav`,
+            );
+            await storage.write(
+              outboundStorageKey,
+              createWavBuffer(outboundPcm, {
+                sampleRate: SAMPLE_RATE,
+                channels: CHANNELS,
+                bitsPerSample: BITS_PER_SAMPLE,
+              }),
+              { contentType: 'audio/wav' },
+            );
+          }
+        }
+      }
+
       const metadata: VoiceRecordingMetadata = {
         streamSid,
         callSid: callSid ?? active.callSid,
         fileName,
         storageKey,
+        inboundStorageKey,
+        outboundStorageKey,
         sampleRate: SAMPLE_RATE,
         channels: CHANNELS,
         bitsPerSample: BITS_PER_SAMPLE,

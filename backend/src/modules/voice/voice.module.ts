@@ -17,6 +17,11 @@ import { VoiceController } from './voice.controller';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
 import { VoiceTestCallController } from './voice-test-call.controller';
+import { VoiceTranscriptConfigService } from './transcript/voice-transcript-config.service';
+import { VoiceTranscriptPostCallService } from './transcript/voice-transcript-postcall.service';
+import { VoiceTranscriptPostProcessService } from './transcript/voice-transcript-postprocess.service';
+import { VoiceTranscriptService } from './transcript/voice-transcript.service';
+import { VoiceRecordingPathService } from './transcript/voice-recording-path.service';
 
 @Module({
   controllers: [VoiceController, VoiceTestCallController],
@@ -37,7 +42,12 @@ import { VoiceTestCallController } from './voice-test-call.controller';
     OpenAIRealtimeProvider,
     VoiceRuntimeFactory,
     AudioGateway,
+    VoiceTranscriptConfigService,
+    VoiceTranscriptPostCallService,
+    VoiceTranscriptPostProcessService,
+    VoiceTranscriptService,
+    VoiceRecordingPathService,
   ],
-  exports: [AudioGateway, VoiceCallAuthorizationService],
+  exports: [AudioGateway, VoiceCallAuthorizationService, VoiceTranscriptService],
 })
 export class VoiceModule {}

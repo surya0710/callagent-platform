@@ -3,6 +3,7 @@ export interface TranscribeAudioInput {
   fileName: string;
   mimeType: string;
   language?: string;
+  prompt?: string;
 }
 
 export interface TranscribeAudioOutput {

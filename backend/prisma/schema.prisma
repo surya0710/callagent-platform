@@ -71,6 +71,30 @@ enum SentimentLabel {
   negative
 }
 
+enum CallTranscriptLifecycleStatus {
+  none
+  draft
+  processing
+  final
+  failed
+}
+
+enum TranscriptSpeaker {
+  customer
+  assistant
+  unknown
+}
+
+enum TranscriptSegmentSource {
+  realtime
+  postcall
+}
+
+enum TranscriptSegmentStatus {
+  draft
+  final
+}
+
 enum AuditAction {
   create
   update
@@ -324,15 +348,41 @@ model CallEvent {
 }
 
 model CallTranscript {
-  id        String   @id @default(uuid())
-  callId    String   @unique @map("call_id")
-  content   String   @db.Text
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                         String                        @id @default(uuid())
+  callId                     String                        @unique @map("call_id")
+  content                    String                        @db.Text
+  lifecycleStatus            CallTranscriptLifecycleStatus @default(none) @map("lifecycle_status")
+  transcriptMode             String?                       @map("transcript_mode")
+  transcriptError            String?                       @map("transcript_error") @db.Text
+  transcriptLanguageDetected String?                       @map("transcript_language_detected")
+  realtimeTranscriptCount    Int                           @default(0) @map("realtime_transcript_count")
+  createdAt                  DateTime                      @default(now()) @map("created_at")
+  updatedAt                  DateTime                      @updatedAt @map("updated_at")
 
-  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+  call     Call                    @relation(fields: [callId], references: [id], onDelete: Cascade)
+  segments CallTranscriptSegment[]
 
   @@map("call_transcripts")
+}
+
+model CallTranscriptSegment {
+  id               String                  @id @default(uuid())
+  callTranscriptId String                  @map("call_transcript_id")
+  speaker          TranscriptSpeaker
+  source           TranscriptSegmentSource
+  status           TranscriptSegmentStatus
+  language         String?
+  text             String                  @db.Text
+  startedAtMs      Int?                    @map("started_at_ms")
+  endedAtMs        Int?                    @map("ended_at_ms")
+  confidence       Float?
+  createdAt        DateTime                @default(now()) @map("created_at")
+
+  callTranscript CallTranscript @relation(fields: [callTranscriptId], references: [id], onDelete: Cascade)
+
+  @@index([callTranscriptId])
+  @@index([createdAt])
+  @@map("call_transcript_segments")
 }
 
 model CallSummary {

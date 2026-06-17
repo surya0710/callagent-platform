@@ -33,6 +33,9 @@ import {
   DEFAULT_REALTIME_INSTRUCTIONS,
   OPENING_MAX_OUTPUT_TOKENS,
 } from '../voice-opening.util';
+import { VoiceTranscriptConfigService } from '../transcript/voice-transcript-config.service';
+import { buildRealtimeTranscriptionPrompt } from '../transcript/voice-transcript-prompt.util';
+import { VoiceTranscriptService } from '../transcript/voice-transcript.service';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
 const OPENAI_SAMPLE_RATE = OPENAI_REALTIME_SAMPLE_RATE;
@@ -87,6 +90,8 @@ interface OpenAiRealtimeSession {
   openingGreetingRequested: boolean;
   openingGreetingPending: boolean;
   openingGreetingComplete: boolean;
+  assistantTranscriptBuffer: string;
+  assistantTranscriptItemId?: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -120,6 +125,47 @@ function extractAudioDelta(event: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+function extractTranscriptDelta(event: Record<string, unknown>): string | undefined {
+  const direct = event.delta;
+  if (typeof direct === 'string' && direct.length > 0) {
+    return direct;
+  }
+
+  const transcript = asRecord(event.transcript);
+  if (typeof transcript?.delta === 'string' && transcript.delta.length > 0) {
+    return transcript.delta;
+  }
+
+  return undefined;
+}
+
+function extractTranscriptText(event: Record<string, unknown>): string | undefined {
+  const direct = event.transcript;
+  if (typeof direct === 'string' && direct.trim().length > 0) {
+    return direct.trim();
+  }
+
+  const transcript = asRecord(event.transcript);
+  if (typeof transcript?.text === 'string' && transcript.text.trim().length > 0) {
+    return transcript.text.trim();
+  }
+
+  return undefined;
+}
+
+function extractEventItemId(event: Record<string, unknown>): string | undefined {
+  if (typeof event.item_id === 'string') {
+    return event.item_id;
+  }
+
+  const item = asRecord(event.item);
+  if (typeof item?.id === 'string') {
+    return item.id;
+  }
+
+  return undefined;
+}
+
 @Injectable()
 export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   readonly name = 'openai-realtime';
@@ -133,6 +179,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     private readonly audioGateway: AudioGateway,
     private readonly voiceSessionService: VoiceSessionService,
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
+    private readonly voiceTranscriptConfig: VoiceTranscriptConfigService,
+    private readonly voiceTranscriptService: VoiceTranscriptService,
   ) {}
 
   private getTurnDetectionMode(): OpenAiTurnDetectionMode {
@@ -223,6 +271,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       openingGreetingRequested: false,
       openingGreetingPending: false,
       openingGreetingComplete: false,
+      assistantTranscriptBuffer: '',
     };
     this.sessions.set(streamSid, session);
 
@@ -425,6 +474,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         phase === 'conversation' && session.openingContext
           ? CONVERSATION_MAX_OUTPUT_TOKENS
           : undefined,
+      ...(this.voiceTranscriptConfig.isRealtimeEnabled()
+        ? {
+            inputTranscription: {
+              model: this.voiceTranscriptConfig.getRealtimeModel(),
+              language: this.voiceTranscriptConfig.getLanguageHint(),
+              prompt: buildRealtimeTranscriptionPrompt(
+                this.voiceTranscriptConfig.getGlossaryTerms(),
+              ),
+            },
+          }
+        : {}),
     });
 
     this.logger.log({
@@ -1013,6 +1073,94 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
+    if (
+      type === 'conversation.item.input_audio_transcription.delta' ||
+      type.includes('input_audio_transcription.delta')
+    ) {
+      const delta = extractTranscriptDelta(event);
+      if (delta) {
+        this.voiceTranscriptService.handleRealtimeDelta({
+          streamSid,
+          callId: this.resolveCallId(streamSid),
+          speaker: 'customer',
+          delta,
+          itemId: extractEventItemId(event),
+        });
+      }
+      return;
+    }
+
+    if (
+      type === 'conversation.item.input_audio_transcription.completed' ||
+      type.includes('input_audio_transcription.completed')
+    ) {
+      const text = extractTranscriptText(event);
+      if (text) {
+        void this.voiceTranscriptService
+          .handleRealtimeCompleted({
+            streamSid,
+            callId: this.resolveCallId(streamSid),
+            speaker: 'customer',
+            text,
+            itemId: extractEventItemId(event),
+          })
+          .catch((error) => {
+            this.logger.warn({
+              streamSid,
+              message: 'transcript_error',
+              err: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
+      return;
+    }
+
+    if (
+      type === 'response.output_audio_transcript.delta' ||
+      type.includes('output_audio_transcript.delta')
+    ) {
+      const delta = extractTranscriptDelta(event);
+      if (delta) {
+        session.assistantTranscriptBuffer += delta;
+        this.voiceTranscriptService.handleRealtimeDelta({
+          streamSid,
+          callId: this.resolveCallId(streamSid),
+          speaker: 'assistant',
+          delta,
+          itemId: session.assistantTranscriptItemId,
+        });
+      }
+      return;
+    }
+
+    if (
+      type === 'response.output_audio_transcript.done' ||
+      type.includes('output_audio_transcript.done')
+    ) {
+      const text =
+        extractTranscriptText(event) ?? session.assistantTranscriptBuffer.trim();
+      if (text) {
+        void this.voiceTranscriptService
+          .handleRealtimeCompleted({
+            streamSid,
+            callId: this.resolveCallId(streamSid),
+            speaker: 'assistant',
+            text,
+            itemId: session.assistantTranscriptItemId,
+          })
+          .catch((error) => {
+            this.logger.warn({
+              streamSid,
+              message: 'transcript_error',
+              err: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
+      session.assistantTranscriptBuffer = '';
+      session.assistantTranscriptItemId = undefined;
+      return;
+    }
+
     if (type === 'error') {
       const error = asRecord(event.error);
       const message =
@@ -1058,6 +1206,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.responseCount += 1;
       session.outboundPcmDownsampler.reset();
       session.outboundMulawBuffer = Buffer.alloc(0);
+      session.assistantTranscriptBuffer = '';
+      session.assistantTranscriptItemId = extractEventItemId(event);
 
       if (session.openingGreetingPending) {
         const now = new Date();
@@ -1351,6 +1501,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     this.audioGateway.sendMedia(streamSid, base64MulawPayload);
+  }
+
+  private resolveCallId(streamSid: string): string | undefined {
+    return this.voiceSessionService.getByStreamSid(streamSid)?.callId;
   }
 
   private updateRuntimeState(

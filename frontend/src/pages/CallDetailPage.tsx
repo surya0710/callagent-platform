@@ -4,6 +4,32 @@ import api from '../lib/api';
 import { Card } from '../components/ui/Card';
 import { ErrorState, LoadingState } from '../components/ui/Table';
 
+interface TranscriptSegment {
+  speaker: 'customer' | 'assistant' | 'unknown';
+  text: string;
+  startedAtMs?: number;
+  endedAtMs?: number;
+  source: 'realtime' | 'postcall';
+  status: 'draft' | 'final';
+  language?: string;
+}
+
+interface TranscriptResponse {
+  transcriptStatus: 'none' | 'draft' | 'processing' | 'final' | 'failed';
+  transcriptMode?: string;
+  transcriptLanguageDetected?: string;
+  transcriptError?: string;
+  realtimeTranscriptCount?: number;
+  content?: string;
+  transcript?: TranscriptSegment[];
+}
+
+function speakerLabel(speaker: TranscriptSegment['speaker']): string {
+  if (speaker === 'customer') return 'Customer';
+  if (speaker === 'assistant') return 'Assistant';
+  return 'Unknown';
+}
+
 export function CallDetailPage() {
   const { id } = useParams<{ id: string }>();
 
@@ -13,8 +39,23 @@ export function CallDetailPage() {
     enabled: !!id,
   });
 
+  const { data: transcriptData } = useQuery({
+    queryKey: ['call-transcript', id],
+    queryFn: async () => (await api.get(`/calls/${id}/transcript`)).data as TranscriptResponse | null,
+    enabled: !!id,
+    refetchInterval: (query) => {
+      const status = query.state.data?.transcriptStatus;
+      return status === 'processing' || status === 'draft' ? 5000 : false;
+    },
+  });
+
   if (isLoading) return <LoadingState />;
   if (error) return <ErrorState message="Call not found" />;
+
+  const transcript = transcriptData ?? null;
+  const segments = transcript?.transcript ?? [];
+  const hasStructuredTranscript = segments.length > 0;
+  const legacyContent = data.transcript?.content;
 
   return (
     <div className="space-y-6">
@@ -27,9 +68,41 @@ export function CallDetailPage() {
           <div><dt className="text-slate-500">Duration</dt><dd>{data.durationSec ? `${data.durationSec}s` : '—'}</dd></div>
         </dl>
       </Card>
-      {data.transcript && (
+      {(hasStructuredTranscript || legacyContent || transcript) && (
         <Card title="Transcript">
-          <p className="whitespace-pre-wrap text-sm text-slate-300">{data.transcript.content}</p>
+          {transcript && (
+            <div className="mb-3 flex flex-wrap gap-2 text-xs text-slate-500">
+              <span>Status: {transcript.transcriptStatus}</span>
+              {transcript.transcriptMode && <span>Mode: {transcript.transcriptMode}</span>}
+              {transcript.transcriptLanguageDetected && (
+                <span>Language: {transcript.transcriptLanguageDetected}</span>
+              )}
+              {typeof transcript.realtimeTranscriptCount === 'number' && (
+                <span>Draft segments: {transcript.realtimeTranscriptCount}</span>
+              )}
+            </div>
+          )}
+          {transcript?.transcriptError && (
+            <p className="mb-3 text-sm text-amber-400">{transcript.transcriptError}</p>
+          )}
+          {hasStructuredTranscript ? (
+            <div className="space-y-3 text-sm text-slate-300">
+              {segments.map((segment, index) => (
+                <div key={`${segment.source}-${index}`}>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">
+                    {speakerLabel(segment.speaker)}
+                    {segment.status === 'draft' ? ' (draft)' : ''}
+                    {segment.source === 'postcall' ? ' · final' : ''}
+                  </p>
+                  <p className="whitespace-pre-wrap">{segment.text}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="whitespace-pre-wrap text-sm text-slate-300">
+              {transcript?.content ?? legacyContent}
+            </p>
+          )}
         </Card>
       )}
       {data.summary && (

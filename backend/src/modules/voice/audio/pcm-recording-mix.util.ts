@@ -49,6 +49,45 @@ function clampInt16(value: number): number {
   return value;
 }
 
+function resolveTimelineLengthMs(
+  chunks: RecordingTimelineChunk[],
+  sampleRate: number,
+): number {
+  if (chunks.length === 0) {
+    return 0;
+  }
+
+  return chunks.reduce((maxEndMs, chunk) => {
+    const endMs = chunk.offsetMs + (chunk.mulaw.length / sampleRate) * 1000;
+    return Math.max(maxEndMs, endMs);
+  }, 0);
+}
+
+function buildPcmTimelineFromChunks(
+  chunks: RecordingTimelineChunk[],
+  sampleRate: number,
+  direction: 'inbound' | 'outbound',
+): Buffer {
+  if (chunks.length === 0) {
+    return Buffer.alloc(0);
+  }
+
+  const totalMs = resolveTimelineLengthMs(chunks, sampleRate);
+  const totalSamples = Math.max(1, Math.ceil((totalMs / 1000) * sampleRate));
+  const samples = new Int16Array(totalSamples);
+
+  for (const chunk of chunks) {
+    writeMulawChunkToPcmTimeline(samples, chunk, sampleRate, direction);
+  }
+
+  const output = Buffer.allocUnsafe(totalSamples * 2);
+  for (let i = 0; i < totalSamples; i += 1) {
+    output.writeInt16LE(samples[i]!, i * 2);
+  }
+
+  return output;
+}
+
 export function buildMixedPcmTimeline(
   inboundChunks: RecordingTimelineChunk[],
   outboundChunks: RecordingTimelineChunk[],
@@ -59,10 +98,7 @@ export function buildMixedPcmTimeline(
     return Buffer.alloc(0);
   }
 
-  const totalMs = allChunks.reduce((maxEndMs, chunk) => {
-    const endMs = chunk.offsetMs + (chunk.mulaw.length / sampleRate) * 1000;
-    return Math.max(maxEndMs, endMs);
-  }, 0);
+  const totalMs = resolveTimelineLengthMs(allChunks, sampleRate);
   const totalSamples = Math.max(1, Math.ceil((totalMs / 1000) * sampleRate));
   const samples = new Int16Array(totalSamples);
 
@@ -80,6 +116,14 @@ export function buildMixedPcmTimeline(
   }
 
   return output;
+}
+
+export function buildTrackPcmTimeline(
+  chunks: RecordingTimelineChunk[],
+  sampleRate: number,
+  direction: 'inbound' | 'outbound',
+): Buffer {
+  return buildPcmTimelineFromChunks(chunks, sampleRate, direction);
 }
 
 function writeMulawChunkToPcmTimeline(

@@ -211,6 +211,54 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   VOICE_ASK_PERMISSION_BEFORE_PITCH?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_TRANSCRIPT_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_TRANSCRIPT_MODE?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_TRANSCRIPT_LANGUAGE_HINT?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_TRANSCRIPT_PRESERVE_HINGLISH?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_TRANSCRIPT_POSTCALL_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_TRANSCRIPT_REALTIME_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_TRANSCRIPT_POSTPROCESS_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_TRANSCRIPT_GLOSSARY?: string;
+
+  @IsOptional()
+  @IsString()
+  TRAINING_TRANSCRIPTION_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  TRAINING_TRANSCRIPT_POSTPROCESS_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  TRAINING_TRANSCRIPT_PRESERVE_HINGLISH?: string;
+
+  @IsOptional()
+  @IsString()
+  TRAINING_TRANSCRIPT_GLOSSARY?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

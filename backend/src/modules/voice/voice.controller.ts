@@ -22,6 +22,7 @@ import {
   toVoiceSessionResponse,
   VoiceSessionService,
 } from './voice-session.service';
+import { VoiceTranscriptService } from './transcript/voice-transcript.service';
 
 @ApiTags('Voice')
 @Public()
@@ -35,6 +36,7 @@ export class VoiceController {
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
     private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
     private readonly voiceSharedStateService: VoiceSharedStateService,
+    private readonly voiceTranscriptService: VoiceTranscriptService,
   ) {}
 
   @Get('sessions')
@@ -150,6 +152,31 @@ export class VoiceController {
     }
 
     return toVoiceSessionResponse(session);
+  }
+
+  @Get('sessions/:streamSid/transcript')
+  @ApiOperation({ summary: 'Get draft or final transcript for a voice session' })
+  async getSessionTranscript(@Param('streamSid') streamSid: string) {
+    const session = await this.voiceSessionService.resolveByStreamSid(streamSid);
+    if (!session) {
+      throw new NotFoundException(`Voice session not found: ${streamSid}`);
+    }
+
+    const live = this.voiceTranscriptService.getLiveTranscript(streamSid);
+    if (live.transcript.length > 0) {
+      return live;
+    }
+
+    if (session.callId) {
+      const persisted = await this.voiceTranscriptService.getCallTranscript(
+        session.callId,
+      );
+      if (persisted) {
+        return { ...persisted, streamSid };
+      }
+    }
+
+    return live;
   }
 
   @Get('recordings')

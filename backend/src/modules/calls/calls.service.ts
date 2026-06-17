@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { CallEventType, CallStatus, Prisma, SentimentLabel } from '@prisma/client';
+import { CallEventType, CallStatus, Prisma, SentimentLabel, CallTranscriptLifecycleStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { QueueService } from '../../queues/queue.service';
 import { AiService } from '../ai/ai.service';
@@ -62,7 +62,11 @@ export class CallsService {
         customer: true,
         campaign: true,
         events: { orderBy: { createdAt: 'asc' } },
-        transcript: true,
+        transcript: {
+          include: {
+            segments: { orderBy: { createdAt: 'asc' } },
+          },
+        },
         summary: true,
       },
     });
@@ -173,7 +177,30 @@ export class CallsService {
 
   async getTranscript(id: string) {
     const call = await this.findOne(id);
-    return call.transcript ?? null;
+    if (!call.transcript) {
+      return null;
+    }
+
+    return {
+      callId: call.id,
+      transcriptStatus: call.transcript.lifecycleStatus,
+      transcriptMode: call.transcript.transcriptMode ?? undefined,
+      transcriptLanguageDetected:
+        call.transcript.transcriptLanguageDetected ?? undefined,
+      transcriptError: call.transcript.transcriptError ?? undefined,
+      realtimeTranscriptCount: call.transcript.realtimeTranscriptCount,
+      content: call.transcript.content,
+      transcript: call.transcript.segments.map((segment) => ({
+        speaker: segment.speaker,
+        text: segment.text,
+        startedAtMs: segment.startedAtMs ?? undefined,
+        endedAtMs: segment.endedAtMs ?? undefined,
+        source: segment.source,
+        status: segment.status,
+        language: segment.language ?? undefined,
+        confidence: segment.confidence ?? undefined,
+      })),
+    };
   }
 
   async getSummary(id: string) {
@@ -184,8 +211,8 @@ export class CallsService {
   async storeTranscript(callId: string, content: string) {
     return this.prisma.callTranscript.upsert({
       where: { callId },
-      update: { content },
-      create: { callId, content },
+      update: { content, lifecycleStatus: CallTranscriptLifecycleStatus.final },
+      create: { callId, content, lifecycleStatus: CallTranscriptLifecycleStatus.final },
     });
   }
 

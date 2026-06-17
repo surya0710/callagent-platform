@@ -15,6 +15,7 @@ export class QueueService {
     @Optional() @InjectQueue(QUEUE_NAMES.ON_DEMAND_CALLS) private readonly onDemandCallsQueue?: Queue,
     @Optional() @InjectQueue(QUEUE_NAMES.CALL_RETRIES) private readonly callRetriesQueue?: Queue,
     @Optional() @InjectQueue(QUEUE_NAMES.SUMMARIES) private readonly summariesQueue?: Queue,
+    @Optional() @InjectQueue(QUEUE_NAMES.TRANSCRIPTS) private readonly transcriptsQueue?: Queue,
   ) {
     this.enabled = configService.get<string>('REDIS_ENABLED', 'true') === 'true';
   }
@@ -58,6 +59,16 @@ export class QueueService {
     }
 
     const job = await this.summariesQueue.add('summarize', payload);
+    return { queued: true, jobId: job.id };
+  }
+
+  async enqueueTranscript(payload: Record<string, unknown>) {
+    if (!this.enabled || !this.transcriptsQueue) {
+      this.logger.warn('Redis disabled — transcript job logged only');
+      return { queued: false, payload };
+    }
+
+    const job = await this.transcriptsQueue.add('transcribe', payload);
     return { queued: true, jobId: job.id };
   }
 }

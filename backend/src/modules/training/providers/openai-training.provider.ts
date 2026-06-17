@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { readFile } from 'node:fs/promises';
 import * as path from 'node:path';
+import { buildBilingualTranscriptionPrompt } from '../../../common/transcription/bilingual-transcription.util';
 import {
   FineTuneJobOutput,
   StartFineTuneInput,
@@ -11,6 +12,8 @@ import {
   UploadTrainingFileInput,
   UploadTrainingFileOutput,
 } from '../interfaces/training-provider.interface';
+import { TrainingTranscriptionConfigService } from '../utils/training-transcription-config.service';
+import { normalizeTranscriptionLanguage } from '../utils/transcription-language.util';
 
 interface OpenAiTranscriptionResponse {
   text?: string;
@@ -32,23 +35,24 @@ export class OpenAiTrainingProvider implements TrainingProvider {
   readonly name = 'openai';
   private readonly logger = new Logger(OpenAiTrainingProvider.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly transcriptionConfig: TrainingTranscriptionConfigService,
+  ) {}
 
   async transcribeAudio(input: TranscribeAudioInput): Promise<TranscribeAudioOutput> {
     const apiKey = this.configService.get<string>('OPENAI_API_KEY');
-    const configuredModel =
-      this.configService.get<string>('OPENAI_TRANSCRIPTION_MODEL') ?? 'whisper-1';
+    const modelsToTry = this.transcriptionConfig.getFallbackModels();
 
     if (!apiKey) {
       this.logger.warn('OPENAI_API_KEY not set; returning placeholder transcript');
       return {
         text: `[openai-transcription-placeholder] ${input.fileName}`,
         provider: this.name,
-        model: configuredModel,
+        model: modelsToTry[0] ?? 'gpt-4o-transcribe',
       };
     }
 
-    const modelsToTry = [...new Set([configuredModel, 'whisper-1'])];
     let lastError = 'OpenAI transcription failed';
 
     for (const model of modelsToTry) {
@@ -59,7 +63,11 @@ export class OpenAiTrainingProvider implements TrainingProvider {
         if (model === modelsToTry[modelsToTry.length - 1]) {
           throw new Error(lastError);
         }
-        this.logger.warn(`Transcription failed with model ${model}; trying fallback`);
+        this.logger.warn({
+          message: 'training_transcription_model_fallback',
+          model,
+          err: lastError,
+        });
       }
     }
 
@@ -73,6 +81,11 @@ export class OpenAiTrainingProvider implements TrainingProvider {
   ): Promise<TranscribeAudioOutput> {
     const fileBuffer = await readFile(input.filePath);
     const mimeType = this.resolveMimeType(input.fileName, input.mimeType);
+    const language = normalizeTranscriptionLanguage(input.language);
+    const prompt =
+      input.prompt ??
+      buildBilingualTranscriptionPrompt(this.transcriptionConfig.getGlossaryTerms());
+
     const form = new FormData();
     form.append(
       'file',
@@ -81,9 +94,17 @@ export class OpenAiTrainingProvider implements TrainingProvider {
     );
     form.append('model', model);
     form.append('response_format', 'json');
-    if (input.language) {
-      form.append('language', input.language);
+    form.append('prompt', prompt);
+    if (language) {
+      form.append('language', language);
     }
+
+    this.logger.log({
+      message: 'training_transcription_started',
+      model,
+      language: language ?? 'auto-detect',
+      fileName: input.fileName,
+    });
 
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
@@ -103,6 +124,13 @@ export class OpenAiTrainingProvider implements TrainingProvider {
     if (!text) {
       throw new Error('OpenAI returned an empty transcript');
     }
+
+    this.logger.log({
+      message: 'training_transcription_completed',
+      model,
+      language: language ?? 'auto-detect',
+      textLength: text.length,
+    });
 
     return {
       text,

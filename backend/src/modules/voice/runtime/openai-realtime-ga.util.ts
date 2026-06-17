@@ -37,11 +37,36 @@ export function buildGaSessionUpdate(options: {
   turnDetection?: OpenAiTurnDetectionMode;
   serverVad?: OpenAiServerVadConfig;
   maxResponseOutputTokens?: number;
+  inputTranscription?: {
+    model: string;
+    language?: string;
+    prompt?: string;
+  };
 }): Record<string, unknown> {
   const turnDetection = buildTurnDetection(
     options.turnDetection ?? 'server_vad',
     options.serverVad,
   );
+
+  const inputAudio: Record<string, unknown> = {
+    format: {
+      type: 'audio/pcm',
+      rate: OPENAI_REALTIME_SAMPLE_RATE,
+    },
+    turn_detection: turnDetection,
+  };
+
+  if (options.inputTranscription) {
+    inputAudio.transcription = {
+      model: options.inputTranscription.model,
+      ...(options.inputTranscription.language
+        ? { language: options.inputTranscription.language }
+        : {}),
+      ...(options.inputTranscription.prompt
+        ? { prompt: options.inputTranscription.prompt }
+        : {}),
+    };
+  }
 
   return {
     type: 'session.update',
@@ -54,13 +79,7 @@ export function buildGaSessionUpdate(options: {
         ? { max_response_output_tokens: options.maxResponseOutputTokens }
         : {}),
       audio: {
-        input: {
-          format: {
-            type: 'audio/pcm',
-            rate: OPENAI_REALTIME_SAMPLE_RATE,
-          },
-          turn_detection: turnDetection,
-        },
+        input: inputAudio,
         output: {
           format: {
             type: 'audio/pcm',

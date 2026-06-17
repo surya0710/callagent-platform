@@ -7,7 +7,10 @@ export class UploadRecordingDto {
   @IsString()
   callId?: string;
 
-  @ApiPropertyOptional({ example: 'en' })
+  @ApiPropertyOptional({
+    example: 'hi',
+    description: 'Call language: en, hi, hinglish (mixed Hindi+English), or leave empty for auto-detect',
+  })
   @IsOptional()
   @IsString()
   language?: string;

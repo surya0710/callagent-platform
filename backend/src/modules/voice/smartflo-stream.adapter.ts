@@ -11,6 +11,8 @@ import { VoiceSocketRegistry } from './voice-socket.registry';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
 import { VoiceOpeningConfigService } from './voice-opening-config.service';
 import { AudioGateway } from './audio.gateway';
+import { VoiceTranscriptConfigService } from './transcript/voice-transcript-config.service';
+import { VoiceTranscriptService } from './transcript/voice-transcript.service';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
@@ -31,6 +33,8 @@ export class SmartfloStreamAdapter {
     private readonly voiceRecordingService: VoiceRecordingService,
     private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
     private readonly voiceOpeningConfigService: VoiceOpeningConfigService,
+    private readonly voiceTranscriptConfig: VoiceTranscriptConfigService,
+    private readonly voiceTranscriptService: VoiceTranscriptService,
     @Inject(forwardRef(() => AudioGateway))
     private readonly audioGateway: AudioGateway,
   ) {}
@@ -189,6 +193,10 @@ export class SmartfloStreamAdapter {
       authorizationId: authorization.authorizationId,
       callId: authorization.callId,
     });
+
+    if (authorization.callId) {
+      this.voiceTranscriptService.bindCall(streamSid, authorization.callId);
+    }
 
     const openingContext = this.voiceOpeningConfigService.resolve(
       authorization.openingContext,
@@ -497,6 +505,9 @@ export class SmartfloStreamAdapter {
       const metadata = await this.voiceRecordingService.finalize(
         streamSid,
         callSid,
+        {
+          includeSpeakerTracks: this.voiceTranscriptConfig.isPostCallEnabled(),
+        },
       );
       if (!metadata) {
         return;
@@ -528,6 +539,26 @@ export class SmartfloStreamAdapter {
         outboundTimelineEndMs: metadata.outboundTimelineEndMs,
         message: 'Voice recording generated',
       });
+
+      const session = this.voiceSessionService.getByStreamSid(streamSid);
+      const callId = session?.callId;
+      if (callId && this.voiceTranscriptConfig.isPostCallEnabled()) {
+        void this.voiceTranscriptService
+          .enqueuePostCallTranscription({
+            callId,
+            streamSid,
+            mixedStorageKey: metadata.storageKey,
+            inboundStorageKey: metadata.inboundStorageKey,
+            outboundStorageKey: metadata.outboundStorageKey,
+            durationMsEstimate: metadata.durationMsEstimate,
+          })
+          .catch((error) => {
+            this.logger.error(
+              { streamSid, callId, err: error },
+              'Failed to enqueue post-call transcription',
+            );
+          });
+      }
     } catch (error) {
       this.logger.error(
         { streamSid, err: error },

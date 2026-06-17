@@ -3,8 +3,15 @@ import { FormEvent, useState } from 'react';
 import api from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
-import { Input, Modal, Textarea } from '../components/ui/Modal';
+import { Input, Modal, Select, Textarea } from '../components/ui/Modal';
 import { ErrorState, LoadingState, Table } from '../components/ui/Table';
+
+const TRAINING_LANGUAGE_OPTIONS = [
+  { value: '', label: 'Auto-detect' },
+  { value: 'en', label: 'English' },
+  { value: 'hi', label: 'Hindi' },
+  { value: 'hinglish', label: 'Hinglish (Hindi + English mixed)' },
+];
 
 interface TrainingRecording {
   id: string;
@@ -284,11 +291,13 @@ export function TrainingPage() {
         <form onSubmit={handleUpload} className="grid gap-4 md:grid-cols-[1fr_160px_160px_auto]">
           {uploadError && <div className="md:col-span-4"><ErrorState message={uploadError} /></div>}
           <Input label="Recording" name="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.webm,.mp4" required />
-          <Input
-            label="Language"
-            name="language"
-            placeholder="en, hi (leave empty to auto-detect)"
-          />
+          <Select label="Language" name="language" defaultValue="">
+            {TRAINING_LANGUAGE_OPTIONS.map((option) => (
+              <option key={option.value || 'auto'} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
           <Input label="Outcome" name="labelOutcome" placeholder="interested" />
           <div className="flex items-end">
             <Button type="submit" disabled={uploadMutation.isPending}>
@@ -301,7 +310,7 @@ export function TrainingPage() {
       <Card title="Recordings">
         {transcribeError && <div className="mb-4"><ErrorState message={transcribeError} /></div>}
         {deleteError && <div className="mb-4"><ErrorState message={deleteError} /></div>}
-        <Table headers={['File', 'Status', 'Outcome', 'Approved', 'Actions']} empty={!recordings.data?.length}>
+        <Table headers={['File', 'Language', 'Status', 'Outcome', 'Approved', 'Actions']} empty={!recordings.data?.length}>
           {recordings.data?.map((recording) => {
             const transcribed = isTranscribed(recording);
             const isTranscribing = transcribingId === recording.id;
@@ -310,6 +319,7 @@ export function TrainingPage() {
             return (
               <tr key={recording.id} className="text-slate-300">
                 <td className="px-4 py-3">{recording.originalFileName}</td>
+                <td className="px-4 py-3 capitalize">{recording.language ?? 'auto'}</td>
                 <td className="px-4 py-3">
                   <div>{recording.status}</div>
                   {recording.errorMessage && (
@@ -423,12 +433,17 @@ export function TrainingPage() {
       <Modal title="Edit Recording" open={Boolean(editRecording)} onClose={() => setEditRecording(null)}>
         <form onSubmit={handleEdit} className="space-y-4">
           {editError && <ErrorState message={editError} />}
-          <Input
+          <Select
             label="Language"
             name="language"
-            placeholder="en, hi (leave empty to auto-detect)"
             defaultValue={editRecording?.language ?? ''}
-          />
+          >
+            {TRAINING_LANGUAGE_OPTIONS.map((option) => (
+              <option key={option.value || 'auto'} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
           <Input
             label="Outcome"
             name="labelOutcome"

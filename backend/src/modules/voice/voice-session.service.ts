@@ -30,6 +30,7 @@ export interface VoiceSession {
   isAppInitiated?: boolean;
   authorizationSource?: string;
   authorizationId?: string;
+  callId?: string;
   rejectionReason?: string;
   connectedAt: Date;
   startedAt?: Date;
@@ -108,6 +109,11 @@ export interface VoiceSession {
   openingGreetingRequestedAt?: Date;
   openingGreetingResponseCreatedAt?: Date;
   openingGreetingError?: string;
+  transcriptMode?: string;
+  realtimeTranscriptCount?: number;
+  finalTranscriptStatus?: 'none' | 'draft' | 'processing' | 'final' | 'failed';
+  transcriptError?: string;
+  transcriptLanguageDetected?: 'hi' | 'en' | 'mixed' | 'unknown';
 }
 
 export interface VoiceSessionStartData {
@@ -135,6 +141,7 @@ export interface VoiceSessionResponse {
   isAppInitiated?: boolean;
   authorizationSource?: string;
   authorizationId?: string;
+  callId?: string;
   rejectionReason?: string;
   connectedAt: string;
   startedAt?: string | null;
@@ -212,6 +219,11 @@ export interface VoiceSessionResponse {
   openingGreetingRequestedAt?: string | null;
   openingGreetingResponseCreatedAt?: string | null;
   openingGreetingError?: string | null;
+  transcriptMode?: string;
+  realtimeTranscriptCount?: number;
+  finalTranscriptStatus?: 'none' | 'draft' | 'processing' | 'final' | 'failed';
+  transcriptError?: string;
+  transcriptLanguageDetected?: 'hi' | 'en' | 'mixed' | 'unknown';
 }
 
 const MAX_RECENT_ENDED_SESSIONS = 100;
@@ -329,6 +341,12 @@ export function toVoiceSessionResponse(
     openingGreetingResponseCreatedAt:
       session.openingGreetingResponseCreatedAt?.toISOString() ?? null,
     openingGreetingError: session.openingGreetingError ?? null,
+    callId: session.callId,
+    transcriptMode: session.transcriptMode,
+    realtimeTranscriptCount: session.realtimeTranscriptCount,
+    finalTranscriptStatus: session.finalTranscriptStatus,
+    transcriptError: session.transcriptError,
+    transcriptLanguageDetected: session.transcriptLanguageDetected,
   };
 }
 
@@ -526,7 +544,47 @@ export class VoiceSessionService {
     session.isAppInitiated = appInitiated;
     session.authorizationSource = metadata?.authorizationSource;
     session.authorizationId = metadata?.authorizationId;
+    session.callId = metadata?.callId;
     session.rejectionReason = metadata?.rejectionReason;
+  }
+
+  updateTranscriptState(
+    streamSid: string,
+    update: {
+      callId?: string;
+      transcriptMode?: string;
+      realtimeTranscriptCount?: number;
+      incrementRealtimeTranscriptCount?: boolean;
+      finalTranscriptStatus?: 'none' | 'draft' | 'processing' | 'final' | 'failed';
+      transcriptError?: string;
+      transcriptLanguageDetected?: 'hi' | 'en' | 'mixed' | 'unknown';
+    },
+  ): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    if (update.callId !== undefined) {
+      session.callId = update.callId;
+    }
+    if (update.transcriptMode !== undefined) {
+      session.transcriptMode = update.transcriptMode;
+    }
+    if (update.realtimeTranscriptCount !== undefined) {
+      session.realtimeTranscriptCount = update.realtimeTranscriptCount;
+    } else if (update.incrementRealtimeTranscriptCount) {
+      session.realtimeTranscriptCount = (session.realtimeTranscriptCount ?? 0) + 1;
+    }
+    if (update.finalTranscriptStatus !== undefined) {
+      session.finalTranscriptStatus = update.finalTranscriptStatus;
+    }
+    if (update.transcriptError !== undefined) {
+      session.transcriptError = update.transcriptError;
+    }
+    if (update.transcriptLanguageDetected !== undefined) {
+      session.transcriptLanguageDetected = update.transcriptLanguageDetected;
+    }
   }
 
   setOpeningContext(streamSid: string, openingContext: VoiceOpeningContext): void {

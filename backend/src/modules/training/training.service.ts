@@ -21,7 +21,7 @@ import { StartFineTuneDto } from './dto/start-fine-tune.dto';
 import { UpdateRecordingDto } from './dto/update-recording.dto';
 import { UploadRecordingDto } from './dto/upload-recording.dto';
 import { TrainingProviderFactory } from './training-provider.factory';
-import { normalizeTranscriptionLanguage } from './utils/transcription-language.util';
+import { TrainingTranscriptPostProcessService } from './services/training-transcript-postprocess.service';
 
 export interface UploadedAudioFile {
   originalname: string;
@@ -43,6 +43,7 @@ export class TrainingService {
     private readonly auditLogsService: AuditLogsService,
     private readonly trainingProviderFactory: TrainingProviderFactory,
     private readonly configService: ConfigService,
+    private readonly trainingTranscriptPostProcess: TrainingTranscriptPostProcessService,
   ) {}
 
   listRecordings() {
@@ -83,7 +84,7 @@ export class TrainingService {
         mimeType: file.mimetype,
         storagePath: relativePath,
         sizeBytes: file.size,
-        language: normalizeTranscriptionLanguage(dto.language),
+        language: this.normalizeStoredLanguage(dto.language),
         labelOutcome: dto.labelOutcome,
         uploadedById: userId,
       },
@@ -134,14 +135,17 @@ export class TrainingService {
         filePath: this.toAbsolutePath(recording.storagePath),
         fileName: recording.originalFileName,
         mimeType: recording.mimeType,
-        language: normalizeTranscriptionLanguage(recording.language),
+        language: recording.language ?? undefined,
       });
 
-      const redactedTranscript = this.redactSensitiveData(output.text);
+      const cleanedText = await this.trainingTranscriptPostProcess.cleanTranscript(
+        output.text,
+      );
+      const redactedTranscript = this.redactSensitiveData(cleanedText);
       const updated = await this.prisma.trainingRecording.update({
         where: { id },
         data: {
-          transcript: output.text,
+          transcript: cleanedText,
           redactedTranscript,
           status: TrainingRecordingStatus.transcribed,
         },
@@ -214,7 +218,7 @@ export class TrainingService {
     } = {};
 
     if (dto.language !== undefined) {
-      data.language = normalizeTranscriptionLanguage(dto.language) ?? null;
+      data.language = this.normalizeStoredLanguage(dto.language);
     }
 
     if (dto.labelOutcome !== undefined) {
@@ -583,6 +587,26 @@ export class TrainingService {
 
   private toAbsolutePath(relativePath: string) {
     return path.resolve(process.cwd(), relativePath);
+  }
+
+  private normalizeStoredLanguage(language?: string | null): string | null {
+    if (!language?.trim()) {
+      return null;
+    }
+
+    const normalized = language.trim().toLowerCase();
+    if (normalized === 'english') {
+      return 'en';
+    }
+    if (normalized === 'hindi') {
+      return 'hi';
+    }
+    if (['hinglish', 'hi-en', 'mixed', 'hi,en', 'en,hi'].includes(normalized)) {
+      return 'hinglish';
+    }
+
+    const isoMatch = normalized.match(/^([a-z]{2})(?:-[a-z]{2})?$/);
+    return isoMatch?.[1] ?? normalized;
   }
 
   private redactSensitiveData(text: string) {
