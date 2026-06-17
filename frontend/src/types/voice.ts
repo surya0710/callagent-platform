@@ -47,6 +47,42 @@ export interface VoiceSession {
   runtimeConnectedAt?: string;
   runtimeLastEventAt?: string;
   runtimeError?: string;
+  callId?: string;
+  transcriptMode?: string;
+  realtimeTranscriptCount?: number;
+  finalTranscriptStatus?: 'none' | 'draft' | 'processing' | 'final' | 'failed';
+  transcriptError?: string;
+  transcriptLanguageDetected?: 'hi' | 'en' | 'mixed' | 'unknown';
+}
+
+export type VoiceTranscriptLifecycleStatus =
+  | 'none'
+  | 'draft'
+  | 'processing'
+  | 'final'
+  | 'failed';
+
+export interface VoiceTranscriptSegment {
+  speaker: 'customer' | 'assistant' | 'unknown';
+  text: string;
+  startedAtMs?: number;
+  endedAtMs?: number;
+  source: 'realtime' | 'postcall';
+  status: 'draft' | 'final';
+  language?: string;
+  confidence?: number;
+}
+
+export interface VoiceTranscriptResponse {
+  streamSid?: string;
+  callId?: string;
+  transcriptStatus: VoiceTranscriptLifecycleStatus;
+  transcriptMode?: string;
+  transcriptLanguageDetected?: string;
+  transcriptError?: string;
+  realtimeTranscriptCount?: number;
+  content?: string;
+  transcript: VoiceTranscriptSegment[];
 }
 
 export interface VoiceSessionsResponse {

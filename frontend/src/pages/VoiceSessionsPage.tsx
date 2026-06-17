@@ -2,8 +2,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { SessionDetailPanel } from '../components/voice/SessionDetailPanel';
+import { SessionTranscriptSection } from '../components/voice/SessionTranscriptSection';
 import { Button } from '../components/ui/Button';
 import { Card, StatCard } from '../components/ui/Card';
+import { Modal } from '../components/ui/Modal';
 import { ErrorState, LoadingState, Table } from '../components/ui/Table';
 import { voiceApi } from '../lib/voiceApi';
 import {
@@ -34,11 +36,13 @@ function StatusBadge({ status }: { status: VoiceSessionStatus }) {
 function SessionActions({
   session,
   onViewDetails,
+  onViewTranscript,
   copiedKey,
   onCopy,
 }: {
   session: VoiceSession;
   onViewDetails: (session: VoiceSession) => void;
+  onViewTranscript: (session: VoiceSession) => void;
   copiedKey: string | null;
   onCopy: (value: string, key: string) => void;
 }) {
@@ -50,6 +54,15 @@ function SessionActions({
       <Button variant="secondary" className="px-2 py-1 text-xs" onClick={() => onViewDetails(session)}>
         View Details
       </Button>
+      {streamSid && (
+        <Button
+          variant="secondary"
+          className="px-2 py-1 text-xs"
+          onClick={() => onViewTranscript(session)}
+        >
+          View Transcript
+        </Button>
+      )}
       {streamSid && (
         <Button
           variant="secondary"
@@ -76,6 +89,7 @@ export function VoiceSessionsPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const [selectedSession, setSelectedSession] = useState<VoiceSession | null>(null);
+  const [transcriptSession, setTranscriptSession] = useState<VoiceSession | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
 
@@ -217,8 +231,8 @@ export function VoiceSessionsPage() {
       {hasActiveSessions && (
         <div className="rounded-lg border border-amber-800/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">
           Live call in progress. After you hang up, wait for the session to show{' '}
-          <span className="font-medium text-amber-50">ENDED</span>, then download the WAV and
-          check session details for customer vs AI timeline alignment.
+          <span className="font-medium text-amber-50">ENDED</span>, then use{' '}
+          <span className="font-medium text-amber-50">View Transcript</span> or download the WAV.
         </div>
       )}
 
@@ -322,6 +336,7 @@ export function VoiceSessionsPage() {
                   <SessionActions
                     session={session}
                     onViewDetails={setSelectedSession}
+                    onViewTranscript={setTranscriptSession}
                     copiedKey={copiedKey}
                     onCopy={handleCopy}
                   />
@@ -371,6 +386,7 @@ export function VoiceSessionsPage() {
                   <SessionActions
                     session={session}
                     onViewDetails={setSelectedSession}
+                    onViewTranscript={setTranscriptSession}
                     copiedKey={copiedKey}
                     onCopy={handleCopy}
                   />
@@ -388,6 +404,20 @@ export function VoiceSessionsPage() {
           onClose={() => setSelectedSession(null)}
         />
       )}
+
+      <Modal
+        title="Call Transcript"
+        open={Boolean(transcriptSession?.streamSid)}
+        onClose={() => setTranscriptSession(null)}
+        wide
+      >
+        {transcriptSession?.streamSid && (
+          <SessionTranscriptSection
+            streamSid={transcriptSession.streamSid}
+            callId={transcriptSession.callId}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

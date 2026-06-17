@@ -4,6 +4,7 @@ import {
   VoiceSessionsResponse,
   VoiceTestCallRequest,
   VoiceTestCallResponse,
+  VoiceTranscriptResponse,
 } from '../types/voice';
 
 export const voiceApi = {
@@ -12,6 +13,13 @@ export const voiceApi = {
 
   getSessions: () =>
     api.get<VoiceSessionsResponse>('/voice/sessions').then((res) => res.data),
+
+  getSessionTranscript: (streamSid: string) =>
+    api
+      .get<VoiceTranscriptResponse>(
+        `/voice/sessions/${encodeURIComponent(streamSid)}/transcript`,
+      )
+      .then((res) => res.data),
 
   initiateTestCall: (body: VoiceTestCallRequest) =>
     api

@@ -1,5 +1,7 @@
 import { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { VoiceSession, voiceRecordingDownloadUrl } from '../../types/voice';
+import { SessionTranscriptSection } from './SessionTranscriptSection';
 import {
   formatDateTime,
   safeValue,
@@ -118,6 +120,7 @@ export function SessionDetailPanel({
             <DetailRow label="Socket Session ID" value={safeValue(session.socketSessionId)} />
             <DetailRow label="Stream SID" value={safeValue(session.streamSid)} />
             <DetailRow label="Call SID" value={safeValue(session.callSid)} />
+            <DetailRow label="Call ID" value={safeValue(session.callId)} />
             <DetailRow label="Account SID" value={safeValue(session.accountSid)} />
           </Section>
 
@@ -259,6 +262,29 @@ export function SessionDetailPanel({
               </div>
             )}
           </Section>
+
+          {session.streamSid && (
+            <section>
+              <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Transcript
+              </h4>
+              <SessionTranscriptSection
+                streamSid={session.streamSid}
+                callId={session.callId}
+              />
+            </section>
+          )}
+
+          {session.callId && (
+            <div>
+              <Link
+                to={`/calls/${session.callId}`}
+                className="text-sm text-indigo-400 hover:text-indigo-300"
+              >
+                Open call detail page →
+              </Link>
+            </div>
+          )}
 
           {customParams && (
             <section>
