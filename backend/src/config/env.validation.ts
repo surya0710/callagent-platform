@@ -214,6 +214,10 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  VOICE_OPENING_GREETING_AUTO_TIME?: string;
+
+  @IsOptional()
+  @IsString()
   VOICE_ASK_PERMISSION_BEFORE_PITCH?: string;
 
   @IsOptional()

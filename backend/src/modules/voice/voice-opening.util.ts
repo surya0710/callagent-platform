@@ -25,6 +25,7 @@ export const CONVERSATION_MAX_OUTPUT_TOKENS = 180;
 export const OPENING_MAX_OUTPUT_TOKENS = 120;
 
 const OPENING_MAX_WORDS = 40;
+const INDIA_TIME_ZONE = 'Asia/Kolkata';
 
 const BASE_VOICE_INSTRUCTIONS = [
   'You are a helpful voice assistant on a phone call for customers in India.',
@@ -83,6 +84,46 @@ export function mergeOpeningContext(
       partial?.askPermissionBeforePitch ??
       VOICE_OPENING_DEFAULTS.askPermissionBeforePitch,
   };
+}
+
+export function getIndiaHour(date = new Date()): number {
+  const hour = new Intl.DateTimeFormat('en-IN', {
+    timeZone: INDIA_TIME_ZONE,
+    hour: '2-digit',
+    hour12: false,
+  }).format(date);
+  return Number.parseInt(hour, 10);
+}
+
+export function getTimeAwareGreeting(date = new Date()): string {
+  const hour = getIndiaHour(date);
+  if (hour >= 5 && hour < 12) {
+    return 'Good morning';
+  }
+  if (hour >= 12 && hour < 17) {
+    return 'Good afternoon';
+  }
+  return 'Good evening';
+}
+
+export function resolveTimeAwareOpeningGreeting(
+  configuredGreeting?: string,
+  date = new Date(),
+): string {
+  const currentGreeting = getTimeAwareGreeting(date);
+  const trimmed = configuredGreeting?.trim();
+  if (!trimmed) {
+    return currentGreeting;
+  }
+
+  if (/good\s+(morning|afternoon|evening)/i.test(trimmed)) {
+    return trimmed.replace(
+      /good\s+(morning|afternoon|evening)/i,
+      currentGreeting,
+    );
+  }
+
+  return trimmed;
 }
 
 /** Format call purpose into a short spoken line for the opening script. */

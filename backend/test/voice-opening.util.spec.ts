@@ -4,8 +4,10 @@ import {
   buildOpeningSessionInstructions,
   buildPostOpeningSessionInstructions,
   formatCallPurposeLine,
+  getTimeAwareGreeting,
   mergeOpeningContext,
   parseAskPermissionBeforePitch,
+  resolveTimeAwareOpeningGreeting,
   sanitizeBaseInstructionsForOpening,
   VOICE_OPENING_DEFAULTS,
 } from '../src/modules/voice/voice-opening.util';
@@ -70,6 +72,25 @@ describe('voice-opening.util', () => {
       );
       expect(formatCallPurposeLine('to follow up on your booking')).toBe(
         "I'm calling to follow up on your booking",
+      );
+    });
+  });
+
+  describe('time-aware greeting', () => {
+    it('uses evening greeting for India evening time', () => {
+      const indiaEvening = new Date('2026-06-17T12:20:00.000Z');
+
+      expect(getTimeAwareGreeting(indiaEvening)).toBe('Good evening');
+      expect(
+        resolveTimeAwareOpeningGreeting('Hi, good morning', indiaEvening),
+      ).toBe('Hi, Good evening');
+    });
+
+    it('preserves non-time-based greeting', () => {
+      const indiaEvening = new Date('2026-06-17T12:20:00.000Z');
+
+      expect(resolveTimeAwareOpeningGreeting('Namaste', indiaEvening)).toBe(
+        'Namaste',
       );
     });
   });

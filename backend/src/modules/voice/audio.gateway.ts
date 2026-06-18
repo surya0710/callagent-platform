@@ -307,4 +307,23 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }),
     );
   }
+
+  closeStream(streamSid: string, reason = 'ai_conversation_complete'): void {
+    const client = this.voiceSocketRegistry.getByStreamSid(streamSid);
+    if (!client || client.readyState !== WebSocket.OPEN) {
+      this.logger.warn({
+        streamSid,
+        reason,
+        message: 'Cannot close stream: no active WebSocket for streamSid',
+      });
+      return;
+    }
+
+    this.logger.log({
+      streamSid,
+      reason,
+      message: 'Closing Smartflo stream from AI runtime',
+    });
+    client.close(1000, reason);
+  }
 }

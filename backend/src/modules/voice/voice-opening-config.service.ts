@@ -4,6 +4,7 @@ import { VoiceOpeningContext } from './voice-opening.types';
 import {
   mergeOpeningContext,
   parseAskPermissionBeforePitch,
+  resolveTimeAwareOpeningGreeting,
 } from './voice-opening.util';
 
 @Injectable()
@@ -17,6 +18,10 @@ export class VoiceOpeningConfigService {
   }
 
   resolve(override?: Partial<VoiceOpeningContext>): VoiceOpeningContext {
+    const autoTimeGreeting = this.readBoolean(
+      'VOICE_OPENING_GREETING_AUTO_TIME',
+      true,
+    );
     const fromEnv: Partial<VoiceOpeningContext> = {
       agentName: this.configService.get<string>('VOICE_AGENT_NAME')?.trim(),
       companyName: this.configService.get<string>('VOICE_COMPANY_NAME')?.trim(),
@@ -34,6 +39,12 @@ export class VoiceOpeningConfigService {
       ...override,
     });
 
+    if (autoTimeGreeting) {
+      resolved.openingGreeting = resolveTimeAwareOpeningGreeting(
+        resolved.openingGreeting,
+      );
+    }
+
     this.logger.log({
       agentName: resolved.agentName,
       companyName: resolved.companyName,
@@ -44,5 +55,13 @@ export class VoiceOpeningConfigService {
     });
 
     return resolved;
+  }
+
+  private readBoolean(name: string, fallback: boolean): boolean {
+    const raw = this.configService.get<string>(name);
+    if (raw === undefined) {
+      return fallback;
+    }
+    return ['true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
   }
 }

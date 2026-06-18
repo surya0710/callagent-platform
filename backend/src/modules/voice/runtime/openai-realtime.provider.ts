@@ -56,6 +56,7 @@ const SESSION_READY_TIMEOUT_MS = 5000;
 const WS_OPEN_TIMEOUT_MS = 8000;
 const PLAYBOOK_LOOKUP_TIMEOUT_MS = 750;
 const POST_OPENING_INPUT_IGNORE_MS = 1200;
+const AI_COMPLETION_HANGUP_DELAY_MS = 2500;
 
 const LIVE_OUTBOUND_PCM_OPTIONS = {
   autoNormalize: false,
@@ -76,6 +77,7 @@ interface OpenAiRealtimeSession {
   closing: boolean;
   commitTimer?: NodeJS.Timeout;
   manualFallbackSilenceTimer?: NodeJS.Timeout;
+  hangupTimer?: NodeJS.Timeout;
   manualFallbackSpeechDetected: boolean;
   manualFallbackCommitCount: number;
   responseRequested: boolean;
@@ -104,7 +106,37 @@ interface OpenAiRealtimeSession {
   openingGreetingPending: boolean;
   openingGreetingComplete: boolean;
   assistantTranscriptBuffer: string;
+  lastAssistantTranscript?: string;
   assistantTranscriptItemId?: string;
+}
+
+function normalizeTranscriptForIntent(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function shouldEndCallAfterAssistantText(text: string): boolean {
+  const normalized = normalizeTranscriptForIntent(text);
+  if (!normalized) {
+    return false;
+  }
+
+  const thanked =
+    /\b(thank you|thanks|thankyou|appreciate)\b/.test(normalized) ||
+    /(धन्यवाद|शुक्रिया|थैंक\s*यू)/.test(normalized);
+  const feedback =
+    /\b(feedback|review|response|input|sharing|experience)\b/.test(
+      normalized,
+    ) || /(फीडबैक|प्रतिक्रिया|अनुभव)/.test(normalized);
+  const farewell =
+    /\b(have a nice day|have a good day|goodbye|bye|take care)\b/.test(
+      normalized,
+    ) || /(अच्छा\s*दिन|नमस्ते|अलविदा)/.test(normalized);
+
+  return thanked && (feedback || farewell);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -289,6 +321,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       openingGreetingPending: false,
       openingGreetingComplete: false,
       assistantTranscriptBuffer: '',
+      lastAssistantTranscript: undefined,
     };
     this.sessions.set(streamSid, session);
 
@@ -346,6 +379,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.lastCloseCode = code;
       session.lastCloseReason = reason.toString();
       this.clearCommitTimer(session);
+      this.clearHangupTimer(session);
       this.clearManualFallbackSilenceTimer(session);
       this.resetResponseGuards(session, 'openai_ws_close');
       this.resolveResponseWaiters(session);
@@ -410,6 +444,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     session.closing = true;
+    this.clearHangupTimer(session);
     this.clearCommitTimer(session);
     this.clearManualFallbackSilenceTimer(session);
 
@@ -961,6 +996,41 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
+  private clearHangupTimer(session: OpenAiRealtimeSession): void {
+    if (session.hangupTimer) {
+      clearTimeout(session.hangupTimer);
+      session.hangupTimer = undefined;
+    }
+  }
+
+  private scheduleHangupAfterCompletion(session: OpenAiRealtimeSession): void {
+    if (session.closing || session.hangupTimer) {
+      return;
+    }
+
+    this.logger.log({
+      streamSid: session.streamSid,
+      delayMs: AI_COMPLETION_HANGUP_DELAY_MS,
+      message: 'voice_ai_completion_hangup_scheduled',
+    });
+
+    session.hangupTimer = setTimeout(() => {
+      session.hangupTimer = undefined;
+      if (session.closing) {
+        return;
+      }
+
+      this.logger.log({
+        streamSid: session.streamSid,
+        message: 'voice_ai_completion_hangup',
+      });
+      this.audioGateway.closeStream(
+        session.streamSid,
+        'ai_feedback_completion',
+      );
+    }, AI_COMPLETION_HANGUP_DELAY_MS);
+  }
+
   private resetResponseGuards(
     session: OpenAiRealtimeSession,
     reason: string,
@@ -1310,6 +1380,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       const text =
         extractTranscriptText(event) ?? session.assistantTranscriptBuffer.trim();
       if (text) {
+        session.lastAssistantTranscript = text;
         void this.voiceTranscriptService
           .handleRealtimeCompleted({
             streamSid,
@@ -1325,6 +1396,16 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
               err: error instanceof Error ? error.message : String(error),
             });
           });
+        if (shouldEndCallAfterAssistantText(text)) {
+          this.logger.log({
+            streamSid,
+            text,
+            message: 'voice_ai_completion_detected',
+          });
+          if (!session.responseInProgress && session.responseComplete) {
+            this.scheduleHangupAfterCompletion(session);
+          }
+        }
       }
       session.assistantTranscriptBuffer = '';
       session.assistantTranscriptItemId = undefined;
@@ -1459,6 +1540,12 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         responseDoneCount: session.responseDoneCount,
         lastResponseDoneAt: now,
       });
+      if (
+        session.lastAssistantTranscript &&
+        shouldEndCallAfterAssistantText(session.lastAssistantTranscript)
+      ) {
+        this.scheduleHangupAfterCompletion(session);
+      }
     }
   }
 
