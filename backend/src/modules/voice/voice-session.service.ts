@@ -470,6 +470,7 @@ export function fromVoiceSessionResponse(
     recordingOutboundTimelineEndMs: nullToUndefined(
       response.recordingOutboundTimelineEndMs,
     ),
+    outboundBufferedBytes: nullToUndefined(response.outboundBufferedBytes),
     outboundChunkMinBytes: nullToUndefined(response.outboundChunkMinBytes),
     outboundChunkMaxBytes: nullToUndefined(response.outboundChunkMaxBytes),
     smartfloWsReadyState: nullToUndefined(response.smartfloWsReadyState),
