@@ -65,6 +65,13 @@ export interface VoiceSession {
   activePlaybookVersion?: number;
   playbookInjected?: boolean;
   playbookLoadError?: string;
+  activeInstructionsMode?: 'opening' | 'normal';
+  openingCompletedAt?: Date;
+  inboundSuppressedCount?: number;
+  inboundSuppressedReason?: string;
+  postOpeningIgnoreUntil?: Date;
+  speechLikePacketCount?: number;
+  ignoredSpeechPacketCount?: number;
   isOpenAiConnected?: boolean;
   hasReceivedCallerAudio?: boolean;
   lastCallerAudioAt?: Date;
@@ -76,6 +83,7 @@ export interface VoiceSession {
   lastCommitAt?: Date;
   lastResponseCreateAt?: Date;
   lastResponseDoneAt?: Date;
+  lastOpenAiAudioDoneAt?: Date;
   lastOpenAiEvent?: string;
   lastError?: string;
   responsePending?: boolean;
@@ -100,6 +108,8 @@ export interface VoiceSession {
   outboundRms?: number;
   audioGainApplied?: number;
   outboundBytesSent?: number;
+  outboundBufferedBytes?: number;
+  outboundFinalFlushAt?: Date;
   outboundFirstSentAt?: Date;
   outboundLastSentAt?: Date;
   outboundChunkMinBytes?: number;
@@ -113,6 +123,11 @@ export interface VoiceSession {
   openingGreetingRequestedAt?: Date;
   openingGreetingResponseCreatedAt?: Date;
   openingGreetingError?: string;
+  callEndDetected?: boolean;
+  callEndReason?: string;
+  callEndScheduledAt?: Date;
+  callEndCloseAt?: Date;
+  callEndCloseError?: string;
   transcriptMode?: string;
   realtimeTranscriptCount?: number;
   finalTranscriptStatus?: 'none' | 'draft' | 'processing' | 'final' | 'failed';
@@ -180,6 +195,13 @@ export interface VoiceSessionResponse {
   activePlaybookVersion?: number;
   playbookInjected?: boolean;
   playbookLoadError?: string;
+  activeInstructionsMode?: 'opening' | 'normal';
+  openingCompletedAt?: string;
+  inboundSuppressedCount?: number;
+  inboundSuppressedReason?: string;
+  postOpeningIgnoreUntil?: string;
+  speechLikePacketCount?: number;
+  ignoredSpeechPacketCount?: number;
   isOpenAiConnected?: boolean;
   hasReceivedCallerAudio?: boolean;
   lastCallerAudioAt?: string;
@@ -191,6 +213,7 @@ export interface VoiceSessionResponse {
   lastCommitAt?: string;
   lastResponseCreateAt?: string;
   lastResponseDoneAt?: string;
+  lastOpenAiAudioDoneAt?: string;
   lastOpenAiEvent?: string;
   lastError?: string;
   responsePending?: boolean;
@@ -215,6 +238,8 @@ export interface VoiceSessionResponse {
   outboundRms?: number;
   audioGainApplied?: number;
   outboundBytesSent?: number;
+  outboundBufferedBytes?: number | null;
+  outboundFinalFlushAt?: string | null;
   outboundFirstSentAt?: string | null;
   outboundLastSentAt?: string | null;
   outboundChunkMinBytes?: number | null;
@@ -227,6 +252,11 @@ export interface VoiceSessionResponse {
   openingGreetingRequestedAt?: string | null;
   openingGreetingResponseCreatedAt?: string | null;
   openingGreetingError?: string | null;
+  callEndDetected?: boolean;
+  callEndReason?: string;
+  callEndScheduledAt?: string | null;
+  callEndCloseAt?: string | null;
+  callEndCloseError?: string;
   transcriptMode?: string;
   realtimeTranscriptCount?: number;
   finalTranscriptStatus?: 'none' | 'draft' | 'processing' | 'final' | 'failed';
@@ -294,6 +324,13 @@ export function toVoiceSessionResponse(
     activePlaybookVersion: session.activePlaybookVersion,
     playbookInjected: session.playbookInjected,
     playbookLoadError: session.playbookLoadError,
+    activeInstructionsMode: session.activeInstructionsMode,
+    openingCompletedAt: session.openingCompletedAt?.toISOString(),
+    inboundSuppressedCount: session.inboundSuppressedCount,
+    inboundSuppressedReason: session.inboundSuppressedReason,
+    postOpeningIgnoreUntil: session.postOpeningIgnoreUntil?.toISOString(),
+    speechLikePacketCount: session.speechLikePacketCount,
+    ignoredSpeechPacketCount: session.ignoredSpeechPacketCount,
     isOpenAiConnected: session.isOpenAiConnected,
     hasReceivedCallerAudio: session.hasReceivedCallerAudio,
     lastCallerAudioAt: session.lastCallerAudioAt?.toISOString(),
@@ -305,6 +342,7 @@ export function toVoiceSessionResponse(
     lastCommitAt: session.lastCommitAt?.toISOString(),
     lastResponseCreateAt: session.lastResponseCreateAt?.toISOString(),
     lastResponseDoneAt: session.lastResponseDoneAt?.toISOString(),
+    lastOpenAiAudioDoneAt: session.lastOpenAiAudioDoneAt?.toISOString(),
     lastOpenAiEvent: session.lastOpenAiEvent,
     lastError: session.lastError,
     responsePending: session.responsePending,
@@ -331,6 +369,8 @@ export function toVoiceSessionResponse(
     outboundRms: session.outboundRms,
     audioGainApplied: session.audioGainApplied,
     outboundBytesSent: session.outboundBytesSent,
+    outboundBufferedBytes: session.outboundBufferedBytes ?? null,
+    outboundFinalFlushAt: session.outboundFinalFlushAt?.toISOString() ?? null,
     outboundFirstSentAt: session.outboundFirstSentAt?.toISOString() ?? null,
     outboundLastSentAt: session.outboundLastSentAt?.toISOString() ?? null,
     outboundChunkMinBytes: session.outboundChunkMinBytes ?? null,
@@ -353,6 +393,11 @@ export function toVoiceSessionResponse(
     openingGreetingResponseCreatedAt:
       session.openingGreetingResponseCreatedAt?.toISOString() ?? null,
     openingGreetingError: session.openingGreetingError ?? null,
+    callEndDetected: session.callEndDetected,
+    callEndReason: session.callEndReason,
+    callEndScheduledAt: session.callEndScheduledAt?.toISOString() ?? null,
+    callEndCloseAt: session.callEndCloseAt?.toISOString() ?? null,
+    callEndCloseError: session.callEndCloseError,
     callId: session.callId,
     transcriptMode: session.transcriptMode,
     realtimeTranscriptCount: session.realtimeTranscriptCount,
@@ -385,6 +430,8 @@ export function fromVoiceSessionResponse(
     lastEventAt: parseOptionalDate(response.lastEventAt),
     runtimeConnectedAt: parseOptionalDate(response.runtimeConnectedAt),
     runtimeLastEventAt: parseOptionalDate(response.runtimeLastEventAt),
+    openingCompletedAt: parseOptionalDate(response.openingCompletedAt),
+    postOpeningIgnoreUntil: parseOptionalDate(response.postOpeningIgnoreUntil),
     lastCallerAudioAt: parseOptionalDate(response.lastCallerAudioAt),
     lastMediaAt: parseOptionalDate(response.lastMediaAt),
     lastSpeechLikeAudioAt: parseOptionalDate(response.lastSpeechLikeAudioAt),
@@ -394,9 +441,11 @@ export function fromVoiceSessionResponse(
     lastCommitAt: parseOptionalDate(response.lastCommitAt),
     lastResponseCreateAt: parseOptionalDate(response.lastResponseCreateAt),
     lastResponseDoneAt: parseOptionalDate(response.lastResponseDoneAt),
+    lastOpenAiAudioDoneAt: parseOptionalDate(response.lastOpenAiAudioDoneAt),
     lastOpenAiAudioAt: parseOptionalDate(response.lastOpenAiAudioAt),
     outboundFirstSentAt: parseOptionalDate(response.outboundFirstSentAt),
     outboundLastSentAt: parseOptionalDate(response.outboundLastSentAt),
+    outboundFinalFlushAt: parseOptionalDate(response.outboundFinalFlushAt),
     lastSmartfloSendAt: parseOptionalDate(response.lastSmartfloSendAt),
     openingGreetingRequestedAt: parseOptionalDate(
       response.openingGreetingRequestedAt ?? undefined,
@@ -406,6 +455,8 @@ export function fromVoiceSessionResponse(
     ),
     openingContext: response.openingContext,
     openingGreetingError: nullToUndefined(response.openingGreetingError),
+    callEndScheduledAt: parseOptionalDate(response.callEndScheduledAt),
+    callEndCloseAt: parseOptionalDate(response.callEndCloseAt),
     stopReason: nullToUndefined(response.stopReason),
     recordingInboundTimelineStartMs: nullToUndefined(
       response.recordingInboundTimelineStartMs,
@@ -815,6 +866,13 @@ export class VoiceSessionService {
       activePlaybookVersion?: number;
       playbookInjected?: boolean;
       playbookLoadError?: string;
+      activeInstructionsMode?: 'opening' | 'normal';
+      openingCompletedAt?: Date;
+      inboundSuppressedCount?: number;
+      inboundSuppressedReason?: string;
+      postOpeningIgnoreUntil?: Date;
+      speechLikePacketCount?: number;
+      ignoredSpeechPacketCount?: number;
       isOpenAiConnected?: boolean;
       hasReceivedCallerAudio?: boolean;
       lastCallerAudioAt?: Date;
@@ -826,6 +884,7 @@ export class VoiceSessionService {
       lastCommitAt?: Date;
       lastResponseCreateAt?: Date;
       lastResponseDoneAt?: Date;
+      lastOpenAiAudioDoneAt?: Date;
       lastOpenAiEvent?: string;
       lastError?: string;
       responsePending?: boolean;
@@ -838,7 +897,14 @@ export class VoiceSessionService {
       appendCount?: number;
       commitCount?: number;
       outboundMediaCount?: number;
+      outboundBufferedBytes?: number;
+      outboundFinalFlushAt?: Date;
       manualFallbackCommitCount?: number;
+      callEndDetected?: boolean;
+      callEndReason?: string;
+      callEndScheduledAt?: Date;
+      callEndCloseAt?: Date;
+      callEndCloseError?: string;
       incrementSpeechLikeFrame?: boolean;
       incrementSilenceFrame?: boolean;
       openAiEventCounts?: Record<string, number>;
@@ -885,6 +951,27 @@ export class VoiceSessionService {
     if (update.playbookLoadError !== undefined) {
       session.playbookLoadError = update.playbookLoadError;
     }
+    if (update.activeInstructionsMode !== undefined) {
+      session.activeInstructionsMode = update.activeInstructionsMode;
+    }
+    if (update.openingCompletedAt !== undefined) {
+      session.openingCompletedAt = update.openingCompletedAt;
+    }
+    if (update.inboundSuppressedCount !== undefined) {
+      session.inboundSuppressedCount = update.inboundSuppressedCount;
+    }
+    if (update.inboundSuppressedReason !== undefined) {
+      session.inboundSuppressedReason = update.inboundSuppressedReason;
+    }
+    if (update.postOpeningIgnoreUntil !== undefined) {
+      session.postOpeningIgnoreUntil = update.postOpeningIgnoreUntil;
+    }
+    if (update.speechLikePacketCount !== undefined) {
+      session.speechLikePacketCount = update.speechLikePacketCount;
+    }
+    if (update.ignoredSpeechPacketCount !== undefined) {
+      session.ignoredSpeechPacketCount = update.ignoredSpeechPacketCount;
+    }
     if (update.isOpenAiConnected !== undefined) {
       session.isOpenAiConnected = update.isOpenAiConnected;
     }
@@ -917,6 +1004,9 @@ export class VoiceSessionService {
     }
     if (update.lastResponseDoneAt !== undefined) {
       session.lastResponseDoneAt = update.lastResponseDoneAt;
+    }
+    if (update.lastOpenAiAudioDoneAt !== undefined) {
+      session.lastOpenAiAudioDoneAt = update.lastOpenAiAudioDoneAt;
     }
     if (update.lastOpenAiEvent !== undefined) {
       session.lastOpenAiEvent = update.lastOpenAiEvent;
@@ -954,8 +1044,29 @@ export class VoiceSessionService {
     if (update.outboundMediaCount !== undefined) {
       session.outboundMediaCount = update.outboundMediaCount;
     }
+    if (update.outboundBufferedBytes !== undefined) {
+      session.outboundBufferedBytes = update.outboundBufferedBytes;
+    }
+    if (update.outboundFinalFlushAt !== undefined) {
+      session.outboundFinalFlushAt = update.outboundFinalFlushAt;
+    }
     if (update.manualFallbackCommitCount !== undefined) {
       session.manualFallbackCommitCount = update.manualFallbackCommitCount;
+    }
+    if (update.callEndDetected !== undefined) {
+      session.callEndDetected = update.callEndDetected;
+    }
+    if (update.callEndReason !== undefined) {
+      session.callEndReason = update.callEndReason;
+    }
+    if (update.callEndScheduledAt !== undefined) {
+      session.callEndScheduledAt = update.callEndScheduledAt;
+    }
+    if (update.callEndCloseAt !== undefined) {
+      session.callEndCloseAt = update.callEndCloseAt;
+    }
+    if (update.callEndCloseError !== undefined) {
+      session.callEndCloseError = update.callEndCloseError;
     }
     if (update.incrementSpeechLikeFrame) {
       session.speechLikeFrameCount = (session.speechLikeFrameCount ?? 0) + 1;

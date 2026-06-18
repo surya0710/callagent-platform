@@ -9,7 +9,6 @@ import { encodePcm16ToMulaw } from '../audio/mulaw-codec';
 import { prepareOutboundPcm16 } from '../audio/audio-gain.util';
 import { Pcm16StreamDownsampler, resamplePcm16 } from '../audio/pcm-resampler';
 import { analyzePcm16, formatPcm16Stats } from '../audio/pcm-stats.util';
-import { isSpeechLikePcm16 } from '../audio/speech-detection.util';
 import { voiceDebugLog } from '../audio/voice-debug.util';
 import { VoiceAudioConfigService } from '../audio/voice-audio-config.service';
 import { AudioGateway } from '../audio.gateway';
@@ -55,8 +54,11 @@ const RESPONSE_WAIT_MS = 15000;
 const SESSION_READY_TIMEOUT_MS = 5000;
 const WS_OPEN_TIMEOUT_MS = 8000;
 const PLAYBOOK_LOOKUP_TIMEOUT_MS = 750;
-const POST_OPENING_INPUT_IGNORE_MS = 1200;
-const AI_COMPLETION_HANGUP_DELAY_MS = 2500;
+const DEFAULT_POST_OPENING_INPUT_IGNORE_MS = 300;
+const DEFAULT_POST_OPENING_SPEECH_GATE_MAX_MS = 1200;
+const DEFAULT_SPEECH_RMS_THRESHOLD = 0.015;
+const DEFAULT_AI_COMPLETION_HANGUP_DELAY_MS = 1500;
+const DEFAULT_AI_COMPLETION_HANGUP_MAX_WAIT_MS = 6000;
 
 const LIVE_OUTBOUND_PCM_OPTIONS = {
   autoNormalize: false,
@@ -78,6 +80,7 @@ interface OpenAiRealtimeSession {
   commitTimer?: NodeJS.Timeout;
   manualFallbackSilenceTimer?: NodeJS.Timeout;
   hangupTimer?: NodeJS.Timeout;
+  callEndMaxWaitTimer?: NodeJS.Timeout;
   manualFallbackSpeechDetected: boolean;
   manualFallbackCommitCount: number;
   responseRequested: boolean;
@@ -101,10 +104,22 @@ interface OpenAiRealtimeSession {
   playbookLookupComplete: boolean;
   playbookLoadError?: string;
   ignoreInboundAudioUntilMs?: number;
+  requireSpeechLikeUntilMs?: number;
   acceptedCallerAudioAfterOpening: boolean;
+  inboundSuppressedCount: number;
+  inboundSuppressedReason?: string;
+  speechLikePacketCount: number;
+  ignoredSpeechPacketCount: number;
+  activeInstructionsMode?: 'opening' | 'normal';
+  callEndDetected: boolean;
+  callEndReason?: string;
+  callEndScheduledAt?: Date;
+  callEndCloseAt?: Date;
+  callEndCloseError?: string;
   openingGreetingRequested: boolean;
   openingGreetingPending: boolean;
   openingGreetingComplete: boolean;
+  openingCompletedAt?: Date;
   assistantTranscriptBuffer: string;
   lastAssistantTranscript?: string;
   assistantTranscriptItemId?: string;
@@ -237,6 +252,69 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     return raw === 'manual' ? 'manual' : 'server_vad';
   }
 
+  private readBoolean(name: string, fallback: boolean): boolean {
+    const raw = this.configService.get<string>(name);
+    if (raw === undefined) {
+      return fallback;
+    }
+    return ['true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
+  }
+
+  private readInt(name: string, fallback: number, min = 0): number {
+    const raw = this.configService.get<string>(name);
+    const parsed = Number.parseInt(raw ?? '', 10);
+    return Number.isFinite(parsed) ? Math.max(parsed, min) : fallback;
+  }
+
+  private readFloat(name: string, fallback: number, min = 0): number {
+    const raw = this.configService.get<string>(name);
+    const parsed = Number.parseFloat(raw ?? '');
+    return Number.isFinite(parsed) ? Math.max(parsed, min) : fallback;
+  }
+
+  private getPostOpeningIgnoreMs(): number {
+    return this.readInt(
+      'VOICE_OPENING_IGNORE_MS',
+      DEFAULT_POST_OPENING_INPUT_IGNORE_MS,
+    );
+  }
+
+  private getPostOpeningSpeechGateMaxMs(): number {
+    return this.readInt(
+      'VOICE_OPENING_SPEECH_GATE_MAX_MS',
+      DEFAULT_POST_OPENING_SPEECH_GATE_MAX_MS,
+    );
+  }
+
+  private isSpeechDetectionEnabled(): boolean {
+    return this.readBoolean('VOICE_SPEECH_DETECTION_ENABLED', true);
+  }
+
+  private getSpeechRmsThreshold(): number {
+    return this.readFloat(
+      'VOICE_SPEECH_RMS_THRESHOLD',
+      DEFAULT_SPEECH_RMS_THRESHOLD,
+    );
+  }
+
+  private isAutoEndCallEnabled(): boolean {
+    return this.readBoolean('VOICE_AUTO_END_CALL_ENABLED', true);
+  }
+
+  private getAutoEndCallDelayMs(): number {
+    return this.readInt(
+      'VOICE_AUTO_END_CALL_DELAY_MS',
+      DEFAULT_AI_COMPLETION_HANGUP_DELAY_MS,
+    );
+  }
+
+  private getAutoEndCallMaxWaitMs(): number {
+    return this.readInt(
+      'VOICE_AUTO_END_CALL_MAX_WAIT_MS',
+      DEFAULT_AI_COMPLETION_HANGUP_MAX_WAIT_MS,
+    );
+  }
+
   async createSession(context: VoiceRuntimeSessionContext): Promise<void> {
     const { streamSid } = context;
     if (!streamSid) {
@@ -317,6 +395,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       activePlaybook: null,
       playbookLookupComplete: false,
       acceptedCallerAudioAfterOpening: false,
+      inboundSuppressedCount: 0,
+      speechLikePacketCount: 0,
+      ignoredSpeechPacketCount: 0,
+      activeInstructionsMode: context.openingContext ? 'opening' : 'normal',
+      callEndDetected: false,
       openingGreetingRequested: false,
       openingGreetingPending: false,
       openingGreetingComplete: false,
@@ -380,6 +463,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.lastCloseReason = reason.toString();
       this.clearCommitTimer(session);
       this.clearHangupTimer(session);
+      this.clearCallEndMaxWaitTimer(session);
       this.clearManualFallbackSilenceTimer(session);
       this.resetResponseGuards(session, 'openai_ws_close');
       this.resolveResponseWaiters(session);
@@ -445,6 +529,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     session.closing = true;
     this.clearHangupTimer(session);
+    this.clearCallEndMaxWaitTimer(session);
     this.clearCommitTimer(session);
     this.clearManualFallbackSilenceTimer(session);
 
@@ -527,6 +612,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       phase === 'conversation' || !session.openingContext
         ? await this.resolveActivePlaybookForSession(session)
         : null;
+    session.activeInstructionsMode = phase === 'opening' ? 'opening' : 'normal';
     const instructions = buildVoiceRuntimeInstructions({
       baseInstructions,
       activePlaybook,
@@ -565,7 +651,14 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       activePlaybookId: activePlaybook?.id,
       activePlaybookVersion: activePlaybook?.version,
       playbookInjected: Boolean(activePlaybook),
-      message: 'Sending OpenAI GA session.update',
+      activeInstructionsMode: session.activeInstructionsMode,
+      message: 'voice_runtime_instructions_normalized',
+    });
+    this.updateRuntimeState(session.streamSid, {
+      activeInstructionsMode: session.activeInstructionsMode,
+      playbookInjected: Boolean(activePlaybook),
+      activePlaybookId: activePlaybook?.id,
+      activePlaybookVersion: activePlaybook?.version,
     });
     session.ws.send(JSON.stringify(payload));
   }
@@ -658,14 +751,27 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.openingGreetingComplete = true;
     session.openingGreetingPending = false;
     session.pendingPcm8 = [];
-    session.ignoreInboundAudioUntilMs = Date.now() + POST_OPENING_INPUT_IGNORE_MS;
+    const nowMs = Date.now();
+    const ignoreMs = this.getPostOpeningIgnoreMs();
+    const speechGateMaxMs = this.getPostOpeningSpeechGateMaxMs();
+    const completedAt = new Date();
+    session.openingCompletedAt = completedAt;
+    session.ignoreInboundAudioUntilMs = nowMs + ignoreMs;
+    session.requireSpeechLikeUntilMs = nowMs + ignoreMs + speechGateMaxMs;
     session.acceptedCallerAudioAfterOpening = false;
+    session.activeInstructionsMode = 'normal';
 
     this.logger.log({
       streamSid: session.streamSid,
       agentName: session.openingContext.agentName,
-      ignoreInboundAudioMs: POST_OPENING_INPUT_IGNORE_MS,
-      message: 'voice_opening_greeting_complete',
+      ignoreInboundAudioMs: ignoreMs,
+      speechGateMaxMs,
+      message: 'voice_opening_done',
+    });
+    this.updateRuntimeState(session.streamSid, {
+      activeInstructionsMode: 'normal',
+      openingCompletedAt: completedAt,
+      postOpeningIgnoreUntil: new Date(session.ignoreInboundAudioUntilMs),
     });
 
     if (session.ws.readyState === WebSocket.OPEN) {
@@ -697,6 +803,55 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.ignoreInboundAudioUntilMs &&
         Date.now() < session.ignoreInboundAudioUntilMs,
     );
+  }
+
+  private isWithinPostOpeningSpeechGate(session: OpenAiRealtimeSession): boolean {
+    return Boolean(
+      session.requireSpeechLikeUntilMs &&
+        Date.now() < session.requireSpeechLikeUntilMs,
+    );
+  }
+
+  private isSpeechLikeForRuntime(pcm16: Buffer): {
+    speechLike: boolean;
+    rms: number;
+    threshold: number;
+  } {
+    if (!this.isSpeechDetectionEnabled()) {
+      return { speechLike: true, rms: 0, threshold: 0 };
+    }
+
+    const stats = analyzePcm16(pcm16);
+    const rms = stats.rms / 32768;
+    const threshold = this.getSpeechRmsThreshold();
+    return { speechLike: rms >= threshold, rms, threshold };
+  }
+
+  private suppressInboundAudio(
+    session: OpenAiRealtimeSession,
+    reason: string,
+    pcmBytes: number,
+    details?: Record<string, unknown>,
+  ): void {
+    session.inboundSuppressedCount += 1;
+    session.inboundSuppressedReason = reason;
+    this.logger.log({
+      streamSid: session.streamSid,
+      reason,
+      pcmBytes,
+      suppressedCount: session.inboundSuppressedCount,
+      message: 'voice_inbound_suppressed',
+      ...details,
+    });
+    voiceDebugLog(this.logger, session.streamSid, 'voice_inbound_suppressed', {
+      reason,
+      pcmBytes,
+      ...details,
+    });
+    this.updateRuntimeState(session.streamSid, {
+      inboundSuppressedCount: session.inboundSuppressedCount,
+      inboundSuppressedReason: reason,
+    });
   }
 
   private tryStartOpeningGreeting(session: OpenAiRealtimeSession): void {
@@ -822,24 +977,45 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     if (this.shouldIgnoreInboundAfterOpening(session)) {
-      voiceDebugLog(this.logger, session.streamSid, 'post_opening_input_ignored', {
-        bytes: pcm8.length,
-      });
+      this.suppressInboundAudio(session, 'post_opening_ignore_window', pcm8.length);
       return;
     }
 
-    const speechLike = isSpeechLikePcm16(pcm8);
+    const speech = this.isSpeechLikeForRuntime(pcm8);
+    const { speechLike } = speech;
+    if (speechLike) {
+      session.speechLikePacketCount += 1;
+      this.updateRuntimeState(session.streamSid, {
+        speechLikePacketCount: session.speechLikePacketCount,
+      });
+      this.logger.log({
+        streamSid: session.streamSid,
+        rms: Number(speech.rms.toFixed(5)),
+        threshold: speech.threshold,
+        message: 'voice_speech_detected',
+      });
+    }
+
     if (
       session.openingContext &&
       session.openingGreetingComplete &&
       !session.acceptedCallerAudioAfterOpening &&
-      !speechLike
+      !speechLike &&
+      this.isWithinPostOpeningSpeechGate(session)
     ) {
-      voiceDebugLog(
-        this.logger,
-        session.streamSid,
-        'post_opening_non_speech_ignored',
-        { bytes: pcm8.length },
+      session.ignoredSpeechPacketCount += 1;
+      this.updateRuntimeState(session.streamSid, {
+        ignoredSpeechPacketCount: session.ignoredSpeechPacketCount,
+      });
+      this.suppressInboundAudio(
+        session,
+        'post_opening_waiting_for_speech',
+        pcm8.length,
+        {
+          rms: Number(speech.rms.toFixed(5)),
+          threshold: speech.threshold,
+          gateUntilMs: session.requireSpeechLikeUntilMs,
+        },
       );
       return;
     }
@@ -847,19 +1023,21 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     if (
       session.openingContext &&
       session.openingGreetingComplete &&
-      speechLike &&
       !session.acceptedCallerAudioAfterOpening
     ) {
       const now = new Date();
       session.acceptedCallerAudioAfterOpening = true;
       this.logger.log({
         streamSid: session.streamSid,
-        message: 'post_opening_customer_speech_detected',
+        speechLike,
+        rms: Number(speech.rms.toFixed(5)),
+        threshold: speech.threshold,
+        message: 'voice_inbound_accepted',
       });
       this.updateRuntimeState(session.streamSid, {
         hasReceivedCallerAudio: true,
         lastCallerAudioAt: now,
-        lastSpeechLikeAudioAt: now,
+        ...(speechLike ? { lastSpeechLikeAudioAt: now } : {}),
       });
     }
 
@@ -889,6 +1067,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     voiceDebugLog(this.logger, session.streamSid, 'openai_handle_audio', {
       bytes: pcm8.length,
       appendCount: session.inputAppendCount,
+      rms: Number(speech.rms.toFixed(5)),
     });
 
     this.logger.log({
@@ -1000,19 +1179,100 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     if (session.hangupTimer) {
       clearTimeout(session.hangupTimer);
       session.hangupTimer = undefined;
+      this.logger.log({
+        streamSid: session.streamSid,
+        message: 'voice_call_end_close_cancelled',
+      });
     }
   }
 
+  private clearCallEndMaxWaitTimer(session: OpenAiRealtimeSession): void {
+    if (session.callEndMaxWaitTimer) {
+      clearTimeout(session.callEndMaxWaitTimer);
+      session.callEndMaxWaitTimer = undefined;
+    }
+  }
+
+  private executeCallEndClose(
+    session: OpenAiRealtimeSession,
+    reason = 'ai_feedback_completion',
+  ): void {
+    try {
+      const closeAt = new Date();
+      session.callEndCloseAt = closeAt;
+      this.logger.log({
+        streamSid: session.streamSid,
+        outboundBufferedBytes: session.outboundMulawBuffer.length,
+        message: 'voice_call_end_close_executed',
+      });
+      this.updateRuntimeState(session.streamSid, {
+        callEndCloseAt: closeAt,
+        outboundBufferedBytes: session.outboundMulawBuffer.length,
+      });
+      this.audioGateway.closeStream(session.streamSid, reason);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to close Smartflo stream';
+      session.callEndCloseError = message;
+      this.logger.error({
+        streamSid: session.streamSid,
+        err: error,
+        message: 'voice_call_end_close_error',
+      });
+      this.updateRuntimeState(session.streamSid, {
+        callEndCloseError: message,
+      });
+    }
+  }
+
+  private scheduleCallEndMaxWait(session: OpenAiRealtimeSession): void {
+    if (!this.isAutoEndCallEnabled() || session.callEndMaxWaitTimer) {
+      return;
+    }
+
+    const maxWaitMs = this.getAutoEndCallMaxWaitMs();
+    const scheduledAt = new Date();
+    this.logger.log({
+      streamSid: session.streamSid,
+      maxWaitMs,
+      message: 'voice_call_end_close_scheduled',
+    });
+    this.updateRuntimeState(session.streamSid, {
+      callEndScheduledAt: scheduledAt,
+    });
+    session.callEndMaxWaitTimer = setTimeout(() => {
+      session.callEndMaxWaitTimer = undefined;
+      if (session.closing || session.hangupTimer) {
+        return;
+      }
+      this.flushOutboundPcmRemainder(session);
+      this.flushRemainingOutbound(session);
+      this.executeCallEndClose(session, 'ai_feedback_completion_max_wait');
+    }, maxWaitMs);
+  }
+
   private scheduleHangupAfterCompletion(session: OpenAiRealtimeSession): void {
+    if (!this.isAutoEndCallEnabled()) {
+      return;
+    }
     if (session.closing || session.hangupTimer) {
       return;
     }
 
+    const delayMs = this.getAutoEndCallDelayMs();
+    const scheduledAt = new Date();
+    session.callEndScheduledAt = scheduledAt;
     this.logger.log({
       streamSid: session.streamSid,
-      delayMs: AI_COMPLETION_HANGUP_DELAY_MS,
-      message: 'voice_ai_completion_hangup_scheduled',
+      delayMs,
+      outboundBufferedBytes: session.outboundMulawBuffer.length,
+      message: 'voice_call_end_close_scheduled',
     });
+    this.updateRuntimeState(session.streamSid, {
+      callEndScheduledAt: scheduledAt,
+      outboundBufferedBytes: session.outboundMulawBuffer.length,
+    });
+    this.clearCallEndMaxWaitTimer(session);
 
     session.hangupTimer = setTimeout(() => {
       session.hangupTimer = undefined;
@@ -1020,15 +1280,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         return;
       }
 
-      this.logger.log({
-        streamSid: session.streamSid,
-        message: 'voice_ai_completion_hangup',
-      });
-      this.audioGateway.closeStream(
-        session.streamSid,
-        'ai_feedback_completion',
-      );
-    }, AI_COMPLETION_HANGUP_DELAY_MS);
+      this.executeCallEndClose(session);
+    }, delayMs);
   }
 
   private resetResponseGuards(
@@ -1047,9 +1300,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.responseInProgress = false;
     session.outboundMulawBuffer = Buffer.alloc(0);
     session.outboundPcmDownsampler.reset();
+    this.logger.log({
+      streamSid: session.streamSid,
+      reason,
+      message: 'voice_response_pending_reset',
+    });
     this.updateRuntimeState(session.streamSid, {
       responsePending: false,
       isAwaitingOpenAiResponse: false,
+      isAiSpeaking: false,
     });
   }
 
@@ -1397,11 +1656,18 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
             });
           });
         if (shouldEndCallAfterAssistantText(text)) {
+          session.callEndDetected = true;
+          session.callEndReason = 'assistant_feedback_completion';
           this.logger.log({
             streamSid,
             text,
-            message: 'voice_ai_completion_detected',
+            message: 'voice_call_end_detected',
           });
+          this.updateRuntimeState(streamSid, {
+            callEndDetected: true,
+            callEndReason: session.callEndReason,
+          });
+          this.scheduleCallEndMaxWait(session);
           if (!session.responseInProgress && session.responseComplete) {
             this.scheduleHangupAfterCompletion(session);
           }
@@ -1479,6 +1745,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         });
       }
 
+      this.logger.log({
+        streamSid,
+        message: 'voice_ai_speaking_started',
+      });
       this.updateRuntimeState(streamSid, {
         responseCount: session.responseCount,
         responsePending: true,
@@ -1499,15 +1769,21 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     if (type === 'response.output_audio.done' || type === 'response.audio.done') {
+      const now = new Date();
       this.flushOutboundPcmRemainder(session);
       this.flushRemainingOutbound(session);
       this.logger.log({
         streamSid,
         totalOutputMulawSent: session.totalOutputMulawSent,
         outboundMediaCount: session.outboundMediaCount,
-        message: 'response.output_audio.done received',
+        message: 'voice_ai_speaking_stopped',
       });
-      this.updateRuntimeState(streamSid, { isAiSpeaking: false });
+      this.updateRuntimeState(streamSid, {
+        isAiSpeaking: false,
+        lastOpenAiAudioDoneAt: now,
+        outboundBufferedBytes: session.outboundMulawBuffer.length,
+        outboundFinalFlushAt: now,
+      });
       return;
     }
 
@@ -1539,6 +1815,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         responsePending: false,
         responseDoneCount: session.responseDoneCount,
         lastResponseDoneAt: now,
+        outboundBufferedBytes: session.outboundMulawBuffer.length,
       });
       if (
         session.lastAssistantTranscript &&
@@ -1776,6 +2053,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       activePlaybookVersion?: number;
       playbookInjected?: boolean;
       playbookLoadError?: string;
+      activeInstructionsMode?: 'opening' | 'normal';
+      openingCompletedAt?: Date;
+      inboundSuppressedCount?: number;
+      inboundSuppressedReason?: string;
+      postOpeningIgnoreUntil?: Date;
+      speechLikePacketCount?: number;
+      ignoredSpeechPacketCount?: number;
       isOpenAiConnected?: boolean;
       hasReceivedCallerAudio?: boolean;
       lastCallerAudioAt?: Date;
@@ -1787,6 +2071,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       lastCommitAt?: Date;
       lastResponseCreateAt?: Date;
       lastResponseDoneAt?: Date;
+      lastOpenAiAudioDoneAt?: Date;
       lastOpenAiEvent?: string;
       lastError?: string;
       responsePending?: boolean;
@@ -1799,7 +2084,14 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       appendCount?: number;
       commitCount?: number;
       outboundMediaCount?: number;
+      outboundBufferedBytes?: number;
+      outboundFinalFlushAt?: Date;
       manualFallbackCommitCount?: number;
+      callEndDetected?: boolean;
+      callEndReason?: string;
+      callEndScheduledAt?: Date;
+      callEndCloseAt?: Date;
+      callEndCloseError?: string;
       incrementOpenAiEvent?: string;
     },
   ): void {

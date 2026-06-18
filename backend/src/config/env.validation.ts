@@ -222,6 +222,34 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  VOICE_OPENING_IGNORE_MS?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_OPENING_SPEECH_GATE_MAX_MS?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_SPEECH_DETECTION_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_SPEECH_RMS_THRESHOLD?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_AUTO_END_CALL_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_AUTO_END_CALL_DELAY_MS?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_AUTO_END_CALL_MAX_WAIT_MS?: string;
+
+  @IsOptional()
+  @IsString()
   VOICE_AGENT_PLAYBOOK_ENABLED?: string;
 
   @IsOptional()
