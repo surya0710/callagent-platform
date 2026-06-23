@@ -10,6 +10,39 @@ import { CreateCallDto } from './dto/create-call.dto';
 import { ProviderWebhookDto } from './dto/provider-webhook.dto';
 import { TestCallDto } from './dto/test-call.dto';
 
+interface LiveCallAnalysis {
+  callId: string;
+  status: CallStatus;
+  phone: string;
+  customer: {
+    id: string;
+    firstName: string;
+    lastName: string;
+  };
+  campaign?: {
+    id: string;
+    name: string;
+  } | null;
+  source: string;
+  externalRef?: string | null;
+  callPurpose?: string | null;
+  createdAt: Date;
+  startedAt?: Date | null;
+  endedAt?: Date | null;
+  durationSec?: number | null;
+  transcriptStatus?: string;
+  transcriptLanguageDetected?: string | null;
+  summary?: string | null;
+  sentiment?: string | null;
+  outcome: string;
+  leadQuality: string;
+  nextAction: string;
+  callbackRequested: boolean;
+  customerRequirements: string[];
+  objections: string[];
+  responseBlockedReason?: string | null;
+}
+
 @Injectable()
 export class CallsService {
   constructor(
@@ -53,6 +86,25 @@ export class CallsService {
       data,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 1 },
     };
+  }
+
+  async listLiveCallAnalyses(): Promise<LiveCallAnalysis[]> {
+    const calls = await this.prisma.call.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        customer: { select: { id: true, firstName: true, lastName: true } },
+        campaign: { select: { id: true, name: true } },
+        transcript: {
+          include: {
+            segments: { orderBy: { createdAt: 'asc' } },
+          },
+        },
+        summary: true,
+      },
+    });
+
+    return calls.map((call) => this.buildLiveCallAnalysis(call));
   }
 
   async findOne(id: string) {
@@ -206,6 +258,108 @@ export class CallsService {
   async getSummary(id: string) {
     const call = await this.findOne(id);
     return call.summary ?? null;
+  }
+
+  private buildLiveCallAnalysis(
+    call: Prisma.CallGetPayload<{
+      include: {
+        customer: { select: { id: true; firstName: true; lastName: true } };
+        campaign: { select: { id: true; name: true } };
+        transcript: { include: { segments: true } };
+        summary: true;
+      };
+    }>,
+  ): LiveCallAnalysis {
+    const transcriptText =
+      call.transcript?.segments
+        .map((segment) => `${segment.speaker}: ${segment.text}`)
+        .join('\n') ??
+      call.transcript?.content ??
+      '';
+    const combinedText = `${transcriptText}\n${call.summary?.summary ?? ''}`.toLowerCase();
+
+    const callbackRequested =
+      /\b(call\s+me\s+later|call\s+later|talk\s+later|not\s+now|busy|callback|call\s+back)\b/.test(
+        combinedText,
+      ) ||
+      /(बाद\s*में|अभी\s*नहीं|व्यस्त|बिजी)/.test(combinedText);
+    const notInterested =
+      /\b(not\s+interested|no\s+interest|don't\s+need|do\s+not\s+need|stop\s+calling)\b/.test(
+        combinedText,
+      ) || /(रुचि\s*नहीं|नहीं\s*चाहिए|मत\s*कॉल)/.test(combinedText);
+    const interested =
+      /\b(interested|yes|sure|okay|ok|go\s+ahead|tell\s+me|send\s+details|share\s+details)\b/.test(
+        combinedText,
+      ) || /(हाँ|हा|जी|ठीक|बताइए|भेज)/.test(combinedText);
+    const priceQuestion =
+      /\b(price|pricing|cost|charges|rate|fees|kitna|paise)\b/.test(combinedText) ||
+      /(कीमत|कितना|पैसे|चार्ज)/.test(combinedText);
+    const timingQuestion =
+      /\b(when|timeline|how\s+long|kab|time)\b/.test(combinedText) ||
+      /(कब|समय|टाइम)/.test(combinedText);
+
+    const customerRequirements = [
+      priceQuestion ? 'Pricing / cost details' : null,
+      timingQuestion ? 'Timeline / availability details' : null,
+    ].filter((item): item is string => Boolean(item));
+    const objections = [
+      callbackRequested ? 'Customer asked to call later or indicated they are busy' : null,
+      notInterested ? 'Customer said they are not interested' : null,
+      priceQuestion ? 'Customer asked about pricing' : null,
+    ].filter((item): item is string => Boolean(item));
+
+    const outcome = callbackRequested
+      ? 'callback_requested'
+      : notInterested
+        ? 'not_interested'
+        : interested
+          ? 'interested'
+          : call.status === CallStatus.completed
+            ? 'unclear'
+            : call.status;
+    const leadQuality =
+      outcome === 'interested'
+        ? 'hot'
+        : outcome === 'callback_requested'
+          ? 'warm'
+          : outcome === 'not_interested'
+            ? 'cold'
+            : 'unknown';
+    const nextAction =
+      outcome === 'interested'
+        ? 'assign_to_sales'
+        : outcome === 'callback_requested'
+          ? 'schedule_callback'
+          : outcome === 'not_interested'
+            ? 'mark_not_interested'
+            : call.transcript
+              ? 'review_call'
+              : 'await_transcript';
+
+    return {
+      callId: call.id,
+      status: call.status,
+      phone: call.phone,
+      customer: call.customer,
+      campaign: call.campaign,
+      source: call.source,
+      externalRef: call.externalRef,
+      callPurpose: call.callPurpose,
+      createdAt: call.createdAt,
+      startedAt: call.startedAt,
+      endedAt: call.endedAt,
+      durationSec: call.durationSec,
+      transcriptStatus: call.transcript?.lifecycleStatus,
+      transcriptLanguageDetected: call.transcript?.transcriptLanguageDetected,
+      summary: call.summary?.summary,
+      sentiment: call.summary?.sentiment,
+      outcome,
+      leadQuality,
+      nextAction,
+      callbackRequested,
+      customerRequirements,
+      objections,
+    };
   }
 
   async storeTranscript(callId: string, content: string) {

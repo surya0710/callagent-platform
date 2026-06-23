@@ -30,6 +30,14 @@ export class CallsController {
     return this.callsService.findAll(query);
   }
 
+  @Get('analysis/live')
+  @ApiBearerAuth()
+  @RequirePermissions(PERMISSIONS.CALLS_READ)
+  @ApiOperation({ summary: 'List live call analyses derived from call transcripts and summaries' })
+  getLiveCallAnalyses() {
+    return this.callsService.listLiveCallAnalyses();
+  }
+
   @Post('test')
   @ApiBearerAuth()
   @RequirePermissions(PERMISSIONS.CALLS_WRITE)

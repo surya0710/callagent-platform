@@ -13,6 +13,7 @@ import { CustomerDetailPage } from './pages/CustomerDetailPage';
 import { CustomersPage } from './pages/CustomersPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
+import { LiveCallAnalysisPage } from './pages/LiveCallAnalysisPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrainingPage } from './pages/TrainingPage';
 import { TrainingInsightsPage } from './pages/TrainingInsightsPage';
@@ -39,6 +40,7 @@ export function App() {
             <Route path="campaigns" element={<CampaignsPage />} />
             <Route path="campaigns/:id" element={<CampaignDetailPage />} />
             <Route path="calls" element={<CallsPage />} />
+            <Route path="calls/analysis" element={<LiveCallAnalysisPage />} />
             <Route path="calls/initiate" element={<VoiceTestCallPage />} />
             <Route path="calls/:id" element={<CallDetailPage />} />
             <Route path="voice/sessions" element={<VoiceSessionsPage />} />
