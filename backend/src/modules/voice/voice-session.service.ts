@@ -568,6 +568,8 @@ export function fromVoiceSessionResponse(
     outboundChunkMinBytes: nullToUndefined(response.outboundChunkMinBytes),
     outboundChunkMaxBytes: nullToUndefined(response.outboundChunkMaxBytes),
     smartfloWsReadyState: nullToUndefined(response.smartfloWsReadyState),
+    callContextBookingNumber: nullToUndefined(response.callContextBookingNumber),
+    callContextCustomerName: nullToUndefined(response.callContextCustomerName),
   };
 }
 
