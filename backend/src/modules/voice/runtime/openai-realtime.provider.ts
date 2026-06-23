@@ -48,6 +48,8 @@ import { VoiceTranscriptConfigService } from '../transcript/voice-transcript-con
 import { buildRealtimeTranscriptionPrompt } from '../transcript/voice-transcript-prompt.util';
 import { VoiceTranscriptService } from '../transcript/voice-transcript.service';
 import { buildVoiceRuntimeInstructions } from '../voice-runtime-instructions.util';
+import { CallContext } from '../voice-call-context.types';
+import { buildCallContextInstructions } from '../voice-call-context.util';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
 const OPENAI_SAMPLE_RATE = OPENAI_REALTIME_SAMPLE_RATE;
@@ -112,6 +114,7 @@ interface OpenAiRealtimeSession {
   openAiSessionCreated: boolean;
   openAiSessionUpdated: boolean;
   openingContext?: VoiceOpeningContext;
+  callContext?: CallContext;
   activePlaybook?: RuntimeAgentPlaybook | null;
   playbookLookupComplete: boolean;
   playbookLoadError?: string;
@@ -600,6 +603,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     const aiSpeakFirstEnabled = context.aiSpeakFirstEnabled === true;
     const openingContext = aiSpeakFirstEnabled ? context.openingContext : undefined;
+    const callContext = context.callContext;
 
     const session: OpenAiRealtimeSession = {
       streamSid,
@@ -638,6 +642,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       openAiSessionCreated: false,
       openAiSessionUpdated: false,
       openingContext,
+      callContext,
       activePlaybook: null,
       playbookLookupComplete: false,
       acceptedCallerAudioAfterOpening: false,
@@ -903,6 +908,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
             session.openingContext,
             envInstructions,
             accent,
+            session.callContext,
           )
         : buildPostOpeningSessionInstructions(
             session.openingContext,
@@ -916,9 +922,14 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         : null;
     session.activeInstructionsMode =
       phase === 'opening' && session.aiSpeakFirstEnabled ? 'opening' : 'normal';
+    const callContextInstructions =
+      session.activeInstructionsMode === 'normal' && session.callContext
+        ? buildCallContextInstructions(session.callContext)
+        : undefined;
     const instructions = buildVoiceRuntimeInstructions({
       baseInstructions,
       activePlaybook,
+      callContextInstructions,
     });
 
     const payload = buildGaSessionUpdate({
@@ -950,13 +961,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       phase,
       turnDetection: session.useServerVad ? 'server_vad' : 'manual',
       hasOpeningContext: Boolean(session.openingContext),
+      hasCallContext: Boolean(session.callContext),
+      callContextInjected: Boolean(callContextInstructions),
       aiSpeakFirstEnabled: session.aiSpeakFirstEnabled,
       agentName: session.openingContext?.agentName,
       activePlaybookId: activePlaybook?.id,
       activePlaybookVersion: activePlaybook?.version,
       playbookInjected: Boolean(activePlaybook),
       activeInstructionsMode: session.activeInstructionsMode,
-      message: 'voice_runtime_instructions_normalized',
+      message: callContextInstructions
+        ? 'voice_call_context_injected'
+        : 'voice_runtime_instructions_normalized',
     });
     this.updateRuntimeState(session.streamSid, {
       activeInstructionsMode: session.activeInstructionsMode,
@@ -1568,6 +1583,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
             modalities: ['audio'],
             instructions: buildOpeningResponseInstructions(
               session.openingContext,
+              session.callContext,
             ),
             max_output_tokens: OPENING_MAX_OUTPUT_TOKENS,
           },

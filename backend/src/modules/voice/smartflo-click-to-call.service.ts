@@ -15,6 +15,11 @@ import {
   extractSmartfloProviderCallSid,
   VoiceCallAuthorizationService,
 } from './voice-call-authorization.service';
+import {
+  isEmptyCallContext,
+  sanitizeCallContext,
+} from './voice-call-context.util';
+import { CallContext } from './voice-call-context.types';
 
 export interface VoiceTestCallResult {
   success: boolean;
@@ -43,15 +48,21 @@ export class SmartfloClickToCallService {
     requestMeta?: {
       requestedByIp?: string;
       requestedByForwardedFor?: string;
+      callContext?: unknown;
     },
   ): Promise<VoiceTestCallResult> {
     const requestedCustomerNumber = customerNumber.trim();
     const callOrigin = this.buildCallOrigin(requestMeta);
+    const callContext = this.resolveCallContext(requestMeta?.callContext);
 
     this.logger.log({
       requestedCustomerNumber,
       callOrigin,
-      message: 'Smartflo click-to-call requested',
+      hasCallContext: Boolean(callContext),
+      callContextKeys: callContext ? Object.keys(callContext) : [],
+      message: callContext
+        ? 'voice_call_context_received'
+        : 'Smartflo click-to-call requested',
     });
 
     const normalizedCustomerNumber =
@@ -134,12 +145,14 @@ export class SmartfloClickToCallService {
       providerCallSid,
       providerResponse,
       callOrigin,
+      callContext,
     });
     const authorizationId = this.voiceCallAuthorizationService.register({
       source: 'test-call',
       customerNumber: normalizedCustomerNumber,
       callSid: providerCallSid,
       callId: call.id,
+      callContext,
     });
 
     return {
@@ -155,12 +168,23 @@ export class SmartfloClickToCallService {
     };
   }
 
+  private resolveCallContext(input: unknown): CallContext | undefined {
+    const sanitized = sanitizeCallContext(input);
+    if (input && !sanitized && !isEmptyCallContext(input as CallContext)) {
+      this.logger.warn({
+        message: 'voice_call_context_validation_failed',
+      });
+    }
+    return sanitized;
+  }
+
   private async createLiveAnalysisCallRecord(input: {
     normalizedCustomerNumber: string;
     requestedCustomerNumber: string;
     providerCallSid?: string;
     providerResponse: unknown;
     callOrigin: CallRequestOriginInfo;
+    callContext?: CallContext;
   }) {
     const customer =
       (await this.prisma.customer.findFirst({
@@ -188,6 +212,7 @@ export class SmartfloClickToCallService {
         metadata: this.toJsonValue({
           origin: input.callOrigin,
           providerResponse: input.providerResponse,
+          ...(input.callContext ? { callContext: input.callContext } : {}),
         }),
       },
     });

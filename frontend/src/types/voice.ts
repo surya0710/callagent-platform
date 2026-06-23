@@ -135,8 +135,28 @@ export interface VoiceHealthResponse {
   serverOrigin?: VoiceServerOrigin;
 }
 
+export interface VoiceCallContext {
+  bookingNumber?: string;
+  customerName?: string;
+  customerNumber?: string;
+  driverName?: string;
+  driverMobileNumber?: string;
+  productType?: string;
+  city?: string;
+  zone?: string;
+  package?: string;
+  endTime?: string;
+  totalCharges?: number;
+  balanceAmount?: number;
+  paymentMode?: string;
+  runningKms?: number;
+  overtimeMinutes?: number;
+  overtimeCharges?: number;
+}
+
 export interface VoiceTestCallRequest {
   customerNumber: string;
+  callContext?: VoiceCallContext;
 }
 
 export interface VoiceTestCallResponse {

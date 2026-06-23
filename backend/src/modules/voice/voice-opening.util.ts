@@ -3,6 +3,8 @@ import {
   buildAccentInstructions,
   VoiceAccentProfile,
 } from './voice-accent.util';
+import { CallContext } from './voice-call-context.types';
+import { formatCustomerNameForGreeting } from './voice-call-context.util';
 
 export const VOICE_OPENING_DEFAULTS: Required<
   Pick<
@@ -156,13 +158,30 @@ export function countWords(text: string): number {
 
 export function buildExampleOpeningMessage(
   context: VoiceOpeningContext,
+  callContext?: CallContext,
 ): string {
   const greeting =
     context.openingGreeting ?? VOICE_OPENING_DEFAULTS.openingGreeting;
   const permission =
     context.askPermissionBeforePitch !== false
-      ? ' Is this a good time to speak for a minute?'
+      ? ' Is this a good time to speak?'
       : '';
+
+  if (callContext?.customerName && callContext.bookingNumber) {
+    const name = formatCustomerNameForGreeting(callContext.customerName);
+    return `${greeting} ${name}, this is ${context.agentName} calling from ${context.companyName} regarding your booking ${callContext.bookingNumber}.${permission}`;
+  }
+
+  if (callContext?.customerName) {
+    const name = formatCustomerNameForGreeting(callContext.customerName);
+    const purposeLine = formatCallPurposeLine(context.callPurpose);
+    return `${greeting} ${name}, this is ${context.agentName} from ${context.companyName}. ${purposeLine}.${permission}`;
+  }
+
+  if (callContext?.bookingNumber) {
+    return `${greeting}. This is ${context.agentName} from ${context.companyName} regarding your booking ${callContext.bookingNumber}.${permission}`;
+  }
+
   const purposeLine = formatCallPurposeLine(context.callPurpose);
   return `${greeting}. This is ${context.agentName} from ${context.companyName}. ${purposeLine}.${permission}`;
 }
@@ -190,16 +209,25 @@ export function sanitizeBaseInstructionsForOpening(
 /** Strict one-turn script for the initial response.create opening. */
 export function buildOpeningResponseInstructions(
   context: VoiceOpeningContext,
+  callContext?: CallContext,
 ): string {
-  const line = buildExampleOpeningMessage(context);
+  const line = buildExampleOpeningMessage(context, callContext);
   const permissionHint =
     context.askPermissionBeforePitch !== false
       ? 'Ask if this is a good time to speak.'
       : 'State the call purpose, then stop and wait for the customer.';
 
+  const minimalContextRules = callContext
+    ? [
+        'Use only customer name and booking number if available in the opening.',
+        'Do not mention charges, driver, payment, kms, overtime, or other booking details in the opening unless specifically configured.',
+      ]
+    : [];
+
   return [
     'Say exactly one short opening message for an outbound phone call.',
     `Greet the customer, introduce yourself as ${context.agentName}, mention ${context.companyName}, state the call purpose, and ${permissionHint}`,
+    ...minimalContextRules,
     'Do not continue with discovery questions.',
     'Do not pitch.',
     'Do not ask multiple questions.',
@@ -218,8 +246,9 @@ export function buildOpeningSessionInstructions(
   context: VoiceOpeningContext,
   baseInstructions?: string,
   accent: VoiceAccentProfile = 'indian',
+  callContext?: CallContext,
 ): string {
-  const example = buildExampleOpeningMessage(context);
+  const example = buildExampleOpeningMessage(context, callContext);
   const permissionRule =
     context.askPermissionBeforePitch !== false
       ? 'End with one short permission question only.'

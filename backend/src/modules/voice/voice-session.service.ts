@@ -6,6 +6,8 @@ import {
 } from './audio/pcm-stats.util';
 import { VoiceSharedStateService } from './voice-shared-state.service';
 import { VoiceOpeningContext, OpeningState } from './voice-opening.types';
+import { CallContext } from './voice-call-context.types';
+import { extractCallContextDebugInfo } from './voice-call-context.util';
 
 export type VoiceSessionStatus = 'PENDING' | 'ACTIVE' | 'ENDED';
 
@@ -144,6 +146,11 @@ export interface VoiceSession {
   openingGreetingRequestedAt?: Date;
   openingGreetingResponseCreatedAt?: Date;
   openingGreetingError?: string;
+  callContext?: CallContext;
+  hasCallContext?: boolean;
+  callContextKeys?: string[];
+  callContextBookingNumber?: string;
+  callContextCustomerName?: string;
   callEndDetected?: boolean;
   callEndReason?: string;
   callEndScheduledAt?: Date;
@@ -294,6 +301,10 @@ export interface VoiceSessionResponse {
   openingGreetingRequestedAt?: string | null;
   openingGreetingResponseCreatedAt?: string | null;
   openingGreetingError?: string | null;
+  hasCallContext?: boolean;
+  callContextKeys?: string[];
+  callContextBookingNumber?: string | null;
+  callContextCustomerName?: string | null;
   callEndDetected?: boolean;
   callEndReason?: string;
   callEndScheduledAt?: string | null;
@@ -457,6 +468,10 @@ export function toVoiceSessionResponse(
     openingGreetingResponseCreatedAt:
       session.openingGreetingResponseCreatedAt?.toISOString() ?? null,
     openingGreetingError: session.openingGreetingError ?? null,
+    hasCallContext: session.hasCallContext ?? false,
+    callContextKeys: session.callContextKeys ?? [],
+    callContextBookingNumber: session.callContextBookingNumber ?? null,
+    callContextCustomerName: session.callContextCustomerName ?? null,
     callEndDetected: session.callEndDetected,
     callEndReason: session.callEndReason,
     callEndScheduledAt: session.callEndScheduledAt?.toISOString() ?? null,
@@ -737,6 +752,20 @@ export class VoiceSessionService {
     }
 
     session.openingContext = openingContext;
+  }
+
+  setCallContext(streamSid: string, callContext?: CallContext): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    session.callContext = callContext;
+    const debug = extractCallContextDebugInfo(callContext);
+    session.hasCallContext = debug.hasCallContext;
+    session.callContextKeys = debug.callContextKeys;
+    session.callContextBookingNumber = debug.bookingNumber;
+    session.callContextCustomerName = debug.customerName;
   }
 
   initializeSpeakFirstState(

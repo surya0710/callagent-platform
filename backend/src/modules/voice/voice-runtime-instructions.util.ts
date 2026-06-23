@@ -4,6 +4,7 @@ export interface VoiceRuntimeInstructionOptions {
   baseInstructions: string;
   activePlaybook?: RuntimeAgentPlaybook | null;
   campaignContext?: string;
+  callContextInstructions?: string;
 }
 
 export const VOICE_AGENT_PLAYBOOK_SAFETY_BLOCK = [
@@ -23,9 +24,16 @@ export function buildVoiceRuntimeInstructions({
   baseInstructions,
   activePlaybook,
   campaignContext,
+  callContextInstructions,
 }: VoiceRuntimeInstructionOptions): string {
+  const contextBlock = callContextInstructions?.trim() || campaignContext?.trim();
+
   if (!activePlaybook) {
-    return [baseInstructions, campaignContext?.trim(), VOICE_LANGUAGE_MATCH_HARD_RULE]
+    return [
+      baseInstructions,
+      VOICE_LANGUAGE_MATCH_HARD_RULE,
+      contextBlock,
+    ]
       .filter(Boolean)
       .join('\n\n');
   }
@@ -43,9 +51,9 @@ export function buildVoiceRuntimeInstructions({
 
   return [
     baseInstructions,
-    playbookBlock,
     VOICE_LANGUAGE_MATCH_HARD_RULE,
-    campaignContext?.trim(),
+    playbookBlock,
+    contextBlock,
     VOICE_AGENT_PLAYBOOK_SAFETY_BLOCK,
   ]
     .filter(Boolean)

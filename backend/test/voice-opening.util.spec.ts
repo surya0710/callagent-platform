@@ -64,6 +64,25 @@ describe('voice-opening.util', () => {
       expect(message).toContain('calling about Recently you had a booking');
       expect(message).not.toContain("I'm reaching out Recently");
     });
+
+    it('uses customer name and booking number in opening when callContext is provided', () => {
+      const message = buildExampleOpeningMessage(
+        {
+          agentName: 'Aisha',
+          companyName: 'TATD',
+          callPurpose: 'regarding your booking',
+          openingGreeting: 'Namaste',
+        },
+        {
+          customerName: 'Rahul Sharma',
+          bookingNumber: 'BK1234',
+        },
+      );
+
+      expect(message).toBe(
+        'Namaste Rahul ji, this is Aisha calling from TATD regarding your booking BK1234. Is this a good time to speak?',
+      );
+    });
   });
 
   describe('formatCallPurposeLine', () => {

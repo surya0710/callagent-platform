@@ -31,9 +31,32 @@ function extractErrorMessage(error: unknown): string {
 export function VoiceTestCallPage() {
   const navigate = useNavigate();
   const [customerNumber, setCustomerNumber] = useState('');
+  const [callContextJson, setCallContextJson] = useState('');
+  const [callContextError, setCallContextError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<VoiceTestCallResponse | null>(null);
+
+  const parseCallContext = (): Record<string, unknown> | undefined => {
+    const trimmed = callContextJson.trim();
+    if (!trimmed) {
+      setCallContextError('');
+      return undefined;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setCallContextError('Call context must be a JSON object.');
+        return undefined;
+      }
+      setCallContextError('');
+      return parsed as Record<string, unknown>;
+    } catch {
+      setCallContextError('Invalid JSON in call context.');
+      return undefined;
+    }
+  };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -41,9 +64,16 @@ export function VoiceTestCallPage() {
     setError('');
     setResult(null);
 
+    const callContext = parseCallContext();
+    if (callContextJson.trim() && !callContext) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const response = await voiceApi.initiateTestCall({
         customerNumber: customerNumber.trim(),
+        ...(callContext ? { callContext } : {}),
       });
       setResult(response);
 
@@ -108,6 +138,26 @@ export function VoiceTestCallPage() {
           <p className="text-xs text-slate-500">
             Enter a 10 digit Indian mobile number or 91XXXXXXXXXX
           </p>
+
+          <label className="block text-sm font-medium text-slate-300">
+            Call Context JSON (optional)
+          </label>
+          <textarea
+            className="min-h-40 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+            placeholder={`{\n  "bookingNumber": "BK1234",\n  "customerName": "Rahul Sharma",\n  "balanceAmount": 850\n}`}
+            value={callContextJson}
+            onChange={(event) => {
+              setCallContextJson(event.target.value);
+              if (callContextError) {
+                setCallContextError('');
+              }
+            }}
+            disabled={loading}
+          />
+          <p className="text-xs text-slate-500">
+            Optional booking/customer details injected into the AI for this call only.
+          </p>
+          {callContextError && <ErrorState message={callContextError} />}
 
           {error && <ErrorState message={error} />}
 

@@ -6,6 +6,7 @@ import {
 import {
   buildVoiceRuntimeInstructions,
   VOICE_AGENT_PLAYBOOK_SAFETY_BLOCK,
+  VOICE_LANGUAGE_MATCH_HARD_RULE,
 } from '../src/modules/voice/voice-runtime-instructions.util';
 
 describe('voice-runtime-instructions.util', () => {
@@ -64,8 +65,24 @@ describe('voice-runtime-instructions.util', () => {
       activePlaybook: null,
     });
 
-    expect(instructions).toBe('Existing runtime behavior.');
+    expect(instructions).toContain('Existing runtime behavior.');
+    expect(instructions).toContain(VOICE_LANGUAGE_MATCH_HARD_RULE);
     expect(instructions).not.toContain('Active approved AI playbook guidance');
     expect(instructions).not.toContain('Hard rules:');
+  });
+
+  it('injects call context in normal mode after playbook', () => {
+    const instructions = buildVoiceRuntimeInstructions({
+      baseInstructions: 'Base voice behavior.',
+      activePlaybook: playbook,
+      callContextInstructions: 'Call-specific context:\n- Balance Amount: ₹850',
+    });
+
+    expect(instructions.indexOf('Approved Training Playbook')).toBeLessThan(
+      instructions.indexOf('Balance Amount: ₹850'),
+    );
+    expect(instructions.indexOf('Balance Amount: ₹850')).toBeLessThan(
+      instructions.indexOf(VOICE_AGENT_PLAYBOOK_SAFETY_BLOCK),
+    );
   });
 });

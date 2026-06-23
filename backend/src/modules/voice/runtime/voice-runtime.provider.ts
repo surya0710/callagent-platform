@@ -1,4 +1,5 @@
 import { VoiceOpeningContext } from '../voice-opening.types';
+import { CallContext } from '../voice-call-context.types';
 
 export type VoiceRuntimeStatus =
   | 'idle'
@@ -15,6 +16,7 @@ export interface VoiceRuntimeSessionContext {
   to?: string;
   direction?: string;
   openingContext?: VoiceOpeningContext;
+  callContext?: CallContext;
   aiSpeakFirstEnabled?: boolean;
   smartfloStartReceived?: boolean;
   authorized?: boolean;

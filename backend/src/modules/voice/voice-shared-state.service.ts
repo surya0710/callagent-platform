@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import type { VoiceSessionResponse } from './voice-session.service';
+import type { CallContext } from './voice-call-context.types';
 
 const AUTH_TTL_SECONDS = 30 * 60;
 const RECENT_SESSIONS_MAX = 100;
@@ -25,6 +26,7 @@ export interface SharedPendingAuthorization {
   callSid?: string;
   callId?: string;
   openingContext?: Record<string, unknown>;
+  callContext?: CallContext;
   registeredAt: Date;
   expiresAt: Date;
   consumed: boolean;

@@ -12,6 +12,8 @@ import { VoiceSocketRegistry } from './voice-socket.registry';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
 import { VoiceOpeningConfigService } from './voice-opening-config.service';
 import { AudioGateway } from './audio.gateway';
+import { CallContext } from './voice-call-context.types';
+import { extractCallContextDebugInfo } from './voice-call-context.util';
 import { VoiceTranscriptConfigService } from './transcript/voice-transcript-config.service';
 import { VoiceTranscriptService } from './transcript/voice-transcript.service';
 import { PrismaService } from '../../database/prisma.service';
@@ -220,6 +222,23 @@ export class SmartfloStreamAdapter {
       this.voiceSessionService.setOpeningContext(streamSid, openingContext);
     }
 
+    const callContext = authorization.callContext;
+    if (callContext) {
+      this.voiceSessionService.setCallContext(streamSid, callContext);
+      this.logger.log({
+        streamSid,
+        authorizationId: authorization.authorizationId,
+        ...extractCallContextDebugInfo(callContext),
+        message: 'voice_call_context_loaded',
+      });
+    } else {
+      this.logger.log({
+        streamSid,
+        authorizationId: authorization.authorizationId,
+        message: 'voice_call_context_missing',
+      });
+    }
+
     this.voiceSessionService.initializeSpeakFirstState(streamSid, {
       aiSpeakFirstEnabled,
       openingState: aiSpeakFirstEnabled
@@ -238,6 +257,7 @@ export class SmartfloStreamAdapter {
       aiSpeakFirstEnabled,
       agentName: openingContext?.agentName,
       companyName: openingContext?.companyName,
+      hasCallContext: Boolean(callContext),
       message: aiSpeakFirstEnabled
         ? 'voice_ai_speak_first_enabled'
         : 'Smartflo start authorized — starting OpenAI runtime and recording',
@@ -251,6 +271,7 @@ export class SmartfloStreamAdapter {
       to: startData.to,
       direction: startData.direction,
       openingContext,
+      callContext,
       aiSpeakFirstEnabled,
       smartfloStartReceived: true,
       authorized: true,

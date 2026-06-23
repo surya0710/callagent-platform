@@ -6,6 +6,7 @@ import {
   SharedPendingAuthorization,
   VoiceSharedStateService,
 } from './voice-shared-state.service';
+import { CallContext } from './voice-call-context.types';
 import { VoiceOpeningContext } from './voice-opening.types';
 
 export type VoiceCallSource =
@@ -20,6 +21,7 @@ export interface RegisterAuthorizedVoiceCallInput {
   callSid?: string;
   callId?: string;
   openingContext?: Partial<VoiceOpeningContext>;
+  callContext?: CallContext;
 }
 
 export interface VoiceCallAuthorizationMatch {
@@ -28,6 +30,7 @@ export interface VoiceCallAuthorizationMatch {
   source: VoiceCallSource;
   callId?: string;
   openingContext?: Partial<VoiceOpeningContext>;
+  callContext?: CallContext;
 }
 
 export interface VoiceCallAuthorizationReject {
@@ -46,6 +49,7 @@ interface PendingAuthorization {
   callSid?: string;
   callId?: string;
   openingContext?: Partial<VoiceOpeningContext>;
+  callContext?: CallContext;
   registeredAt: Date;
   expiresAt: Date;
   consumed: boolean;
@@ -105,6 +109,7 @@ export class VoiceCallAuthorizationService {
       callSid,
       callId: input.callId,
       openingContext: input.openingContext,
+      callContext: input.callContext,
       registeredAt,
       expiresAt: new Date(Date.now() + DEFAULT_AUTHORIZATION_TTL_MS),
       consumed: false,
@@ -132,7 +137,13 @@ export class VoiceCallAuthorizationService {
       customerNumber,
       callSid,
       callId: input.callId,
-      message: 'Registered app-initiated voice call authorization',
+      hasCallContext: Boolean(input.callContext),
+      callContextKeys: input.callContext
+        ? Object.keys(input.callContext)
+        : [],
+      message: input.callContext
+        ? 'voice_call_context_stored'
+        : 'Registered app-initiated voice call authorization',
     });
 
     return authorizationId;
@@ -261,6 +272,7 @@ export class VoiceCallAuthorizationService {
       source: entry.source,
       callId: entry.callId,
       openingContext: entry.openingContext,
+      callContext: entry.callContext,
     };
   }
 

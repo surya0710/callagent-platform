@@ -28,7 +28,7 @@ export class VoiceTestCallController {
   @ApiOperation({
     summary: 'Initiate Smartflo click-to-call test (internal)',
     description:
-      'Internal-only endpoint for triggering Smartflo click-to-call during voice integration testing.',
+      'Internal-only endpoint for triggering Smartflo click-to-call during voice integration testing. Optionally pass callContext with booking/customer details for AI runtime injection.',
   })
   initiateTestCall(@Body() dto: VoiceTestCallDto, @Req() request: Request) {
     const forwardedFor = request.headers['x-forwarded-for'];
@@ -36,6 +36,7 @@ export class VoiceTestCallController {
       requestedByIp: resolveRequestIp(request),
       requestedByForwardedFor:
         typeof forwardedFor === 'string' ? forwardedFor : undefined,
+      callContext: dto.callContext,
     });
   }
 }

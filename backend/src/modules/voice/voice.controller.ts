@@ -175,6 +175,10 @@ export class VoiceController {
       openingGreetingResponseCreatedAt:
         response.openingGreetingResponseCreatedAt ?? null,
       openingGreetingError: response.openingGreetingError ?? null,
+      hasCallContext: response.hasCallContext ?? false,
+      callContextKeys: response.callContextKeys ?? [],
+      bookingNumber: response.callContextBookingNumber ?? null,
+      customerName: response.callContextCustomerName ?? null,
       callEndDetected: response.callEndDetected ?? false,
       callEndReason: response.callEndReason ?? null,
       callEndScheduledAt: response.callEndScheduledAt ?? null,
