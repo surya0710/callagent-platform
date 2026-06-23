@@ -62,3 +62,11 @@ export interface PostCallTranscriptJobPayload {
   outboundStorageKey?: string;
   durationMsEstimate?: number;
 }
+
+export interface SendTranscriptEmailJobPayload {
+  callId?: string;
+  streamSid?: string;
+  logId?: string;
+  resend?: boolean;
+  trigger?: 'auto' | 'manual';
+}

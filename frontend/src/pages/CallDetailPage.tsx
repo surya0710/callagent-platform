@@ -1,8 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import api from '../lib/api';
 import { Card } from '../components/ui/Card';
 import { ErrorState, LoadingState } from '../components/ui/Table';
+import { Button } from '../components/ui/Button';
+import { TranscriptEmailStatus, TranscriptEmailStatusResponse } from '../types/voice';
 
 interface TranscriptSegment {
   speaker: 'customer' | 'assistant' | 'unknown';
@@ -30,8 +32,24 @@ function speakerLabel(speaker: TranscriptSegment['speaker']): string {
   return 'Unknown';
 }
 
+function emailStatusLabel(status: TranscriptEmailStatus | undefined): string {
+  switch (status) {
+    case 'queued':
+      return 'Queued';
+    case 'sent':
+      return 'Sent';
+    case 'failed':
+      return 'Failed';
+    case 'skipped':
+      return 'Skipped';
+    default:
+      return 'Not sent';
+  }
+}
+
 export function CallDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['call', id],
@@ -49,6 +67,30 @@ export function CallDetailPage() {
     },
   });
 
+  const emailStatusQuery = useQuery({
+    queryKey: ['call-transcript-email-status', id],
+    queryFn: async () =>
+      (await api.get(`/calls/${id}/transcript-email-status`))
+        .data as TranscriptEmailStatusResponse,
+    enabled: !!id,
+    retry: false,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'queued' ? 3000 : false;
+    },
+  });
+
+  const sendEmailMutation = useMutation({
+    mutationFn: async (resend = false) =>
+      (await api.post(`/calls/${id}/send-transcript-email`, { resend }))
+        .data as TranscriptEmailStatusResponse,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['call-transcript-email-status', id],
+      });
+    },
+  });
+
   if (isLoading) return <LoadingState />;
   if (error) return <ErrorState message="Call not found" />;
 
@@ -56,6 +98,8 @@ export function CallDetailPage() {
   const segments = transcript?.transcript ?? [];
   const hasStructuredTranscript = segments.length > 0;
   const legacyContent = data.transcript?.content;
+  const canSendEmail =
+    transcript?.transcriptStatus === 'final' && !sendEmailMutation.isPending;
 
   return (
     <div className="space-y-6">
@@ -85,6 +129,60 @@ export function CallDetailPage() {
           {transcript?.transcriptError && (
             <p className="mb-3 text-sm text-amber-400">{transcript.transcriptError}</p>
           )}
+          <div className="mb-4 rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-slate-200">
+                  Transcript Email: {emailStatusLabel(emailStatusQuery.data?.status)}
+                </p>
+                {emailStatusQuery.data?.sentAt && (
+                  <p className="text-xs text-slate-500">
+                    Sent at {new Date(emailStatusQuery.data.sentAt).toLocaleString()}
+                  </p>
+                )}
+                {emailStatusQuery.data?.recipients?.to?.length ? (
+                  <p className="text-xs text-slate-500">
+                    To: {emailStatusQuery.data.recipients.to.join(', ')}
+                  </p>
+                ) : null}
+                {emailStatusQuery.isError && (
+                  <p className="text-xs text-slate-500">
+                    Email status unavailable. Transcript loading is unaffected.
+                  </p>
+                )}
+                {(emailStatusQuery.data?.error || emailStatusQuery.data?.reason) && (
+                  <p className="text-xs text-amber-300">
+                    {emailStatusQuery.data.error ?? emailStatusQuery.data.reason}
+                  </p>
+                )}
+                {sendEmailMutation.isError && (
+                  <p className="text-xs text-red-300">
+                    Failed to queue transcript email.
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="secondary"
+                  className="px-3 py-1.5 text-xs"
+                  disabled={!canSendEmail}
+                  onClick={() => sendEmailMutation.mutate(false)}
+                >
+                  {sendEmailMutation.isPending ? 'Queuing...' : 'Send Transcript Email'}
+                </Button>
+                {emailStatusQuery.data?.status === 'sent' && (
+                  <Button
+                    variant="secondary"
+                    className="px-3 py-1.5 text-xs"
+                    disabled={!canSendEmail}
+                    onClick={() => sendEmailMutation.mutate(true)}
+                  >
+                    Resend
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
           {hasStructuredTranscript ? (
             <div className="space-y-3 text-sm text-slate-300">
               {segments.map((segment, index) => (

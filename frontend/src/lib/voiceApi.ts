@@ -5,6 +5,7 @@ import {
   VoiceTestCallRequest,
   VoiceTestCallResponse,
   VoiceTranscriptResponse,
+  TranscriptEmailStatusResponse,
 } from '../types/voice';
 
 export const voiceApi = {
@@ -18,6 +19,21 @@ export const voiceApi = {
     api
       .get<VoiceTranscriptResponse>(
         `/voice/sessions/${encodeURIComponent(streamSid)}/transcript`,
+      )
+      .then((res) => res.data),
+
+  getTranscriptEmailStatus: (streamSid: string) =>
+    api
+      .get<TranscriptEmailStatusResponse>(
+        `/voice/sessions/${encodeURIComponent(streamSid)}/transcript-email-status`,
+      )
+      .then((res) => res.data),
+
+  sendTranscriptEmail: (streamSid: string, resend = false) =>
+    api
+      .post<TranscriptEmailStatusResponse>(
+        `/voice/sessions/${encodeURIComponent(streamSid)}/send-transcript-email`,
+        { resend },
       )
       .then((res) => res.data),
 

@@ -9,6 +9,7 @@ import { OnDemandCallProcessor } from './queues/processors/on-demand-call.proces
 import { CampaignCallProcessor } from './queues/processors/campaign-call.processor';
 import { CallRetryProcessor } from './queues/processors/call-retry.processor';
 import { SummaryProcessor } from './queues/processors/summary.processor';
+import { TranscriptEmailProcessor } from './queues/processors/transcript-email.processor';
 import { TranscriptProcessor } from './queues/processors/transcript.processor';
 import { TrainingCallAnalysisProcessor } from './modules/training/training-call-analysis.processor';
 import { QUEUE_NAMES } from './queues/queues.module';
@@ -32,6 +33,7 @@ async function bootstrap() {
   const callRetryProcessor = app.get(CallRetryProcessor);
   const summaryProcessor = app.get(SummaryProcessor);
   const transcriptProcessor = app.get(TranscriptProcessor);
+  const transcriptEmailProcessor = app.get(TranscriptEmailProcessor);
   const trainingCallAnalysisProcessor = app.get(TrainingCallAnalysisProcessor);
 
   const connection = {
@@ -63,6 +65,11 @@ async function bootstrap() {
     new Worker(
       QUEUE_NAMES.TRANSCRIPTS,
       async (job) => transcriptProcessor.process(job.data),
+      { connection },
+    ),
+    new Worker(
+      QUEUE_NAMES.TRANSCRIPT_EMAILS,
+      async (job) => transcriptEmailProcessor.process(job.data),
       { connection },
     ),
     new Worker(

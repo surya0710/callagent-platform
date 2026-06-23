@@ -17,11 +17,15 @@ import type { LiveCallAnalysis } from './calls.service';
 import { CallQueryDto } from './dto/call-query.dto';
 import { ProviderWebhookDto } from './dto/provider-webhook.dto';
 import { TestCallDto } from './dto/test-call.dto';
+import { TranscriptEmailService } from '../voice/transcript-email.service';
 
 @ApiTags('Calls')
 @Controller('calls')
 export class CallsController {
-  constructor(private readonly callsService: CallsService) {}
+  constructor(
+    private readonly callsService: CallsService,
+    private readonly transcriptEmailService: TranscriptEmailService,
+  ) {}
 
   @Get()
   @ApiBearerAuth()
@@ -71,6 +75,28 @@ export class CallsController {
   @ApiOperation({ summary: 'Get call transcript' })
   getTranscript(@Param('id') id: string) {
     return this.callsService.getTranscript(id);
+  }
+
+  @Post(':id/send-transcript-email')
+  @ApiBearerAuth()
+  @RequirePermissions(PERMISSIONS.CALLS_WRITE)
+  @ApiOperation({ summary: 'Queue a final transcript email for a call' })
+  sendTranscriptEmail(
+    @Param('id') id: string,
+    @Body() body: { resend?: boolean } = {},
+  ) {
+    return this.transcriptEmailService.requestManualSend({
+      callId: id,
+      resend: body.resend === true,
+    });
+  }
+
+  @Get(':id/transcript-email-status')
+  @ApiBearerAuth()
+  @RequirePermissions(PERMISSIONS.CALLS_READ)
+  @ApiOperation({ summary: 'Get transcript email status for a call' })
+  getTranscriptEmailStatus(@Param('id') id: string) {
+    return this.transcriptEmailService.getStatus({ callId: id });
   }
 
   @Get(':id/summary')

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { TrainingModule } from '../training/training.module';
 import { AudioGateway } from './audio.gateway';
 import { LocalVoiceRecordingStorage } from './audio/storage/local-voice-recording-storage.provider';
@@ -23,10 +24,12 @@ import { VoiceTranscriptPostCallService } from './transcript/voice-transcript-po
 import { VoiceTranscriptPostProcessService } from './transcript/voice-transcript-postprocess.service';
 import { VoiceTranscriptService } from './transcript/voice-transcript.service';
 import { VoiceRecordingPathService } from './transcript/voice-recording-path.service';
+import { TranscriptEmailService } from './transcript-email.service';
+import { VoiceTranscriptEmailController } from './voice-transcript-email.controller';
 
 @Module({
-  imports: [TrainingModule],
-  controllers: [VoiceController, VoiceTestCallController],
+  imports: [NotificationsModule, TrainingModule],
+  controllers: [VoiceController, VoiceTestCallController, VoiceTranscriptEmailController],
   providers: [
     VoiceSharedStateService,
     VoiceSessionService,
@@ -49,7 +52,13 @@ import { VoiceRecordingPathService } from './transcript/voice-recording-path.ser
     VoiceTranscriptPostProcessService,
     VoiceTranscriptService,
     VoiceRecordingPathService,
+    TranscriptEmailService,
   ],
-  exports: [AudioGateway, VoiceCallAuthorizationService, VoiceTranscriptService],
+  exports: [
+    AudioGateway,
+    VoiceCallAuthorizationService,
+    VoiceTranscriptService,
+    TranscriptEmailService,
+  ],
 })
 export class VoiceModule {}

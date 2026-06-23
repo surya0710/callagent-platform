@@ -85,6 +85,26 @@ export interface VoiceTranscriptResponse {
   transcript: VoiceTranscriptSegment[];
 }
 
+export type TranscriptEmailStatus =
+  | 'not_sent'
+  | 'queued'
+  | 'sent'
+  | 'failed'
+  | 'skipped';
+
+export interface TranscriptEmailStatusResponse {
+  status: TranscriptEmailStatus;
+  callId?: string | null;
+  streamSid?: string | null;
+  sentAt?: string | null;
+  reason?: string | null;
+  error?: string | null;
+  recipients?: {
+    to: string[];
+    cc: string[];
+  };
+}
+
 export interface VoiceSessionsResponse {
   active: VoiceSession[];
   recentEnded: VoiceSession[];

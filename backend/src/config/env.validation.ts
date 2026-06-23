@@ -339,6 +339,78 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   TRAINING_INSIGHTS_MODEL?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_TO?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_CC?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_BCC?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_FROM?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_SUBJECT_PREFIX?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_INCLUDE_SUMMARY?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_INCLUDE_RECORDING_LINK?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_INCLUDE_DASHBOARD_LINK?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_SEND_FOR_AUTHORIZED_ONLY?: string;
+
+  @IsOptional()
+  @IsString()
+  TRANSCRIPT_EMAIL_ATTACH_TXT?: string;
+
+  @IsOptional()
+  @IsString()
+  FRONTEND_APP_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  SMTP_HOST?: string;
+
+  @IsOptional()
+  @IsString()
+  SMTP_PORT?: string;
+
+  @IsOptional()
+  @IsString()
+  SMTP_SECURE?: string;
+
+  @IsOptional()
+  @IsString()
+  SMTP_USER?: string;
+
+  @IsOptional()
+  @IsString()
+  SMTP_PASS?: string;
+
+  @IsOptional()
+  @IsString()
+  SMTP_FROM?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

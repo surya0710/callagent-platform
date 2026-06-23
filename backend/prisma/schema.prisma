@@ -322,6 +322,7 @@ model Call {
   summary    CallSummary?
   trainingRecordings TrainingRecording[]
   tickets    Ticket[]
+  transcriptEmailLogs TranscriptEmailLog[]
 
   @@unique([apiKeyId, externalRef])
   @@index([status])
@@ -396,6 +397,27 @@ model CallSummary {
   call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
 
   @@map("call_summaries")
+}
+
+model TranscriptEmailLog {
+  id         String    @id @default(cuid())
+  callId     String?   @map("call_id")
+  streamSid  String?   @map("stream_sid")
+  recipients Json
+  status     String    @default("pending")
+  reason     String?   @db.Text
+  error      String?   @db.Text
+  sentAt     DateTime? @map("sent_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  call Call? @relation(fields: [callId], references: [id], onDelete: SetNull)
+
+  @@index([callId])
+  @@index([streamSid])
+  @@index([status])
+  @@index([createdAt])
+  @@map("transcript_email_logs")
 }
 
 model AgentPrompt {

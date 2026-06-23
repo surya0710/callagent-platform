@@ -1,9 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { voiceApi } from '../../lib/voiceApi';
 import { safeValue } from '../../lib/voice-utils';
-import { VoiceTranscriptResponse } from '../../types/voice';
+import { TranscriptEmailStatus, VoiceTranscriptResponse } from '../../types/voice';
 import { LoadingState } from '../ui/Table';
+import { Button } from '../ui/Button';
 
 function speakerLabel(speaker: string): string {
   if (speaker === 'customer') return 'Customer';
@@ -26,6 +27,21 @@ function statusClass(status: VoiceTranscriptResponse['transcriptStatus']): strin
   }
 }
 
+function emailStatusLabel(status: TranscriptEmailStatus | undefined): string {
+  switch (status) {
+    case 'queued':
+      return 'Queued';
+    case 'sent':
+      return 'Sent';
+    case 'failed':
+      return 'Failed';
+    case 'skipped':
+      return 'Skipped';
+    default:
+      return 'Not sent';
+  }
+}
+
 export function SessionTranscriptSection({
   streamSid,
   callId,
@@ -33,6 +49,7 @@ export function SessionTranscriptSection({
   streamSid: string;
   callId?: string;
 }) {
+  const queryClient = useQueryClient();
   const { data, isLoading, error, isFetching } = useQuery({
     queryKey: ['voice-session-transcript', streamSid],
     queryFn: () => voiceApi.getSessionTranscript(streamSid),
@@ -40,6 +57,26 @@ export function SessionTranscriptSection({
     refetchInterval: (query) => {
       const status = query.state.data?.transcriptStatus;
       return status === 'processing' || status === 'draft' ? 3000 : false;
+    },
+  });
+
+  const emailStatusQuery = useQuery({
+    queryKey: ['voice-session-transcript-email-status', streamSid],
+    queryFn: () => voiceApi.getTranscriptEmailStatus(streamSid),
+    enabled: Boolean(streamSid),
+    retry: false,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'queued' ? 3000 : false;
+    },
+  });
+
+  const sendEmailMutation = useMutation({
+    mutationFn: () => voiceApi.sendTranscriptEmail(streamSid),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['voice-session-transcript-email-status', streamSid],
+      });
     },
   });
 
@@ -58,6 +95,9 @@ export function SessionTranscriptSection({
   const segments = data?.transcript ?? [];
   const hasContent = segments.length > 0 || Boolean(data?.content);
   const resolvedCallId = data?.callId ?? callId;
+  const emailStatus = emailStatusQuery.data?.status;
+  const canSendEmail =
+    data?.transcriptStatus === 'final' && !sendEmailMutation.isPending;
 
   return (
     <div className="space-y-4">
@@ -88,6 +128,49 @@ export function SessionTranscriptSection({
           {data.transcriptError}
         </p>
       )}
+
+      <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-slate-200">
+              Transcript Email: {emailStatusLabel(emailStatus)}
+            </p>
+            {emailStatusQuery.data?.sentAt && (
+              <p className="text-xs text-slate-500">
+                Sent at {new Date(emailStatusQuery.data.sentAt).toLocaleString()}
+              </p>
+            )}
+            {emailStatusQuery.data?.recipients?.to?.length ? (
+              <p className="text-xs text-slate-500">
+                To: {emailStatusQuery.data.recipients.to.join(', ')}
+              </p>
+            ) : null}
+            {emailStatusQuery.isError && (
+              <p className="text-xs text-slate-500">
+                Email status unavailable. Transcript loading is unaffected.
+              </p>
+            )}
+            {(emailStatusQuery.data?.error || emailStatusQuery.data?.reason) && (
+              <p className="text-xs text-amber-300">
+                {emailStatusQuery.data.error ?? emailStatusQuery.data.reason}
+              </p>
+            )}
+            {sendEmailMutation.isError && (
+              <p className="text-xs text-red-300">
+                Failed to queue transcript email.
+              </p>
+            )}
+          </div>
+          <Button
+            variant="secondary"
+            className="px-3 py-1.5 text-xs"
+            disabled={!canSendEmail}
+            onClick={() => sendEmailMutation.mutate()}
+          >
+            {sendEmailMutation.isPending ? 'Queuing...' : 'Send Transcript Email'}
+          </Button>
+        </div>
+      </div>
 
       {!hasContent && (
         <p className="text-sm text-slate-400">

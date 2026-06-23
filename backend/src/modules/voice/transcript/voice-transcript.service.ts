@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../../database/prisma.service';
 import { QueueService } from '../../../queues/queue.service';
 import { VoiceSessionService } from '../voice-session.service';
+import { TranscriptEmailService } from '../transcript-email.service';
 import { VoiceTranscriptConfigService } from './voice-transcript-config.service';
 import { VoiceTranscriptPostCallService } from './voice-transcript-postcall.service';
 import { VoiceTranscriptPostProcessService } from './voice-transcript-postprocess.service';
@@ -59,6 +60,7 @@ export class VoiceTranscriptService {
     private readonly postProcessService: VoiceTranscriptPostProcessService,
     private readonly recordingPathService: VoiceRecordingPathService,
     private readonly voiceSessionService: VoiceSessionService,
+    private readonly transcriptEmailService: TranscriptEmailService,
   ) {}
 
   bindCall(streamSid: string, callId: string): void {
@@ -238,6 +240,20 @@ export class VoiceTranscriptService {
         finalTranscriptStatus: 'final',
         transcriptLanguageDetected: this.detectOverallLanguage(cleanedSegments),
       });
+
+      void this.transcriptEmailService
+        .enqueueAfterFinalTranscript({
+          callId: payload.callId,
+          streamSid: payload.streamSid,
+        })
+        .catch((error) => {
+          this.logger.error({
+            callId: payload.callId,
+            streamSid: payload.streamSid,
+            message: 'transcript_email_enqueue_failed',
+            err: error instanceof Error ? error.message : String(error),
+          });
+        });
     } catch (error) {
       this.recordTranscriptError(payload.streamSid, payload.callId, error);
       throw error;
