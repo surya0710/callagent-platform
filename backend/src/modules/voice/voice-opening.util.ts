@@ -46,6 +46,13 @@ const BREVITY_RULES = [
   'Do not summarize, recap, or restate the conversation.',
 ].join(' ');
 
+const CALL_END_INTENT_RULES = [
+  'If the caller intent is to end or pause the call, do not continue the conversation.',
+  'End-or-pause intent includes: not a good time, busy, in a meeting, driving, call later, talk later, not interested, no requirement, wrong number, do not call, stop calling, or goodbye.',
+  'For end-or-pause intent, give one short acknowledgement in the caller language/style, then stop.',
+  'Do not ask another question after end-or-pause intent.',
+].join(' ');
+
 const PASSIVE_CALLER_FIRST_SUFFIX =
   'Wait until the caller has finished speaking before responding. Do not greet or speak first.';
 
@@ -62,6 +69,7 @@ export function buildDefaultRealtimeInstructions(
   return [
     buildBaseVoiceInstructions(accent),
     BREVITY_RULES,
+    CALL_END_INTENT_RULES,
     PASSIVE_CALLER_FIRST_SUFFIX,
   ].join(' ');
 }
@@ -237,6 +245,7 @@ export function buildPostOpeningSessionInstructions(
   return [
     base,
     BREVITY_RULES,
+    CALL_END_INTENT_RULES,
     `You are ${context.agentName} from ${context.companyName}.`,
     `Call purpose (do not repeat unless asked): ${context.callPurpose}.`,
     'The opening greeting is already done.',

@@ -150,6 +150,10 @@ type CustomerLanguage = 'english' | 'hindi' | 'hinglish' | 'unknown';
 export type CustomerCallEndIntent =
   | 'explicit_hangup'
   | 'negative_availability'
+  | 'not_interested'
+  | 'wrong_number'
+  | 'do_not_call'
+  | 'conversation_complete'
   | null;
 
 function normalizeTranscriptForIntent(text: string): string {
@@ -169,27 +173,58 @@ export function detectCustomerCallEndIntent(
     return null;
   }
 
+  const doNotCall =
+    /\b(stop\s+calling|don'?t\s+call|do\s+not\s+call|remove\s+(my\s+)?(number|contact)|delete\s+(my\s+)?number|take\s+me\s+off\s+(the\s+)?list)\b/.test(
+      normalized,
+    ) ||
+    /(कॉल\s*मत|फोन\s*मत|फ़ोन\s*मत|नंबर\s*(हटा|डिलीट)|दोबारा\s*(कॉल|फोन|फ़ोन)\s*मत)/.test(
+      normalized,
+    );
+  if (doNotCall) {
+    return 'do_not_call';
+  }
+
   const explicitHangup =
-    /\b(cut|disconnect|end|drop|close|stop)\s+(the\s+)?(call|phone|line)\b/.test(
+    /\b(cut|disconnect|end|drop|close)\s+(the\s+)?(call|phone|line)\b/.test(
       normalized,
     ) ||
-    /\b(hang\s*up|stop\s+calling|don'?t\s+call|do\s+not\s+call)\b/.test(
-      normalized,
-    ) ||
+    /\b(hang\s*up)\b/.test(normalized) ||
     /(कॉल|फोन|फ़ोन)\s*(काट|बंद|डिस्कनेक्ट)/.test(normalized) ||
     /(काट\s*दो|बंद\s*करो|डिस्कनेक्ट\s*करो)/.test(normalized);
   if (explicitHangup) {
     return 'explicit_hangup';
   }
 
+  const wrongNumber =
+    /\b(wrong\s+number|wrong\s+person|not\s+my\s+number|you\s+have\s+the\s+wrong\s+number|this\s+isn'?t\s+(me|my\s+number))\b/.test(
+      normalized,
+    ) ||
+    /(गलत\s*(नंबर|व्यक्ति)|मेरा\s*नंबर\s*नहीं|मेरे\s*लिए\s*नहीं)/.test(
+      normalized,
+    );
+  if (wrongNumber) {
+    return 'wrong_number';
+  }
+
+  const notInterested =
+    /\b(not\s+interested|no\s+interest|not\s+required|no\s+requirement|don'?t\s+need|do\s+not\s+need|i\s+am\s+not\s+looking|not\s+looking|no\s+thanks|no\s+thank\s+you)\b/.test(
+      normalized,
+    ) ||
+    /(रुचि\s*नहीं|इंटरेस्ट\s*नहीं|नहीं\s*चाहिए|ज़रूरत\s*नहीं|जरूरत\s*नहीं)/.test(
+      normalized,
+    );
+  if (notInterested) {
+    return 'not_interested';
+  }
+
   const negativeBusy =
     /\bbusy\b/.test(normalized) && !/\bnot\s+busy\b/.test(normalized);
   const negativeAvailabilityPhrase =
     negativeBusy ||
-    /\b(not\s+(a\s+)?good\s+time|bad\s+time|not\s+now|call\s+(me\s+)?later|talk\s+later|can'?t\s+(talk|speak)|cannot\s+(talk|speak))\b/.test(
+    /\b(not\s+(a\s+)?good\s+time|bad\s+time|not\s+now|call\s+(me\s+)?later|talk\s+later|later|in\s+a\s+meeting|driving|can'?t\s+(talk|speak)|cannot\s+(talk|speak)|unable\s+to\s+(talk|speak))\b/.test(
       normalized,
     ) ||
-    /(अभी\s*नहीं|बाद\s*में|व्यस्त|बिजी|फुर्सत\s*नहीं|बात\s*नहीं\s*कर)/.test(
+    /(अभी\s*नहीं|बाद\s*में|व्यस्त|बिजी|मीटिंग|ड्राइव|फुर्सत\s*नहीं|बात\s*नहीं\s*कर)/.test(
       normalized,
     );
   const affirmativeAvailability =
@@ -211,7 +246,68 @@ export function detectCustomerCallEndIntent(
     return 'negative_availability';
   }
 
+  const conversationComplete =
+    /\b(ok\s+bye|okay\s+bye|bye|goodbye|thank\s+you\s+bye|thanks\s+bye|that'?s\s+all|nothing\s+else)\b/.test(
+      normalized,
+    ) || /(ठीक\s*है\s*बाय|बाय|अलविदा|बस\s*इतना|धन्यवाद)/.test(normalized);
+  if (conversationComplete) {
+    return 'conversation_complete';
+  }
+
   return null;
+}
+
+function callEndReasonForIntent(
+  intent: Exclude<CustomerCallEndIntent, null>,
+): string {
+  switch (intent) {
+    case 'explicit_hangup':
+      return 'customer_requested_hangup';
+    case 'negative_availability':
+      return 'customer_unavailable_or_requested_callback';
+    case 'not_interested':
+      return 'customer_not_interested';
+    case 'wrong_number':
+      return 'customer_wrong_number';
+    case 'do_not_call':
+      return 'customer_do_not_call';
+    case 'conversation_complete':
+      return 'customer_conversation_complete';
+  }
+}
+
+function buildCallEndAcknowledgementInstructions(
+  intent: Exclude<CustomerCallEndIntent, null>,
+  responseLanguage: CustomerLanguage,
+): string {
+  const languageRule =
+    responseLanguage === 'hindi'
+      ? 'Reply in Hindi.'
+      : responseLanguage === 'hinglish'
+        ? 'Reply in Hinglish.'
+        : 'Reply in English.';
+  const intentInstruction =
+    intent === 'negative_availability'
+      ? 'Acknowledge that this is not a good time and say you will call back later.'
+      : intent === 'not_interested'
+        ? 'Acknowledge politely and say you will not continue.'
+        : intent === 'wrong_number'
+          ? 'Apologize briefly for the wrong number.'
+          : intent === 'do_not_call'
+            ? 'Acknowledge the do-not-call request politely.'
+            : intent === 'conversation_complete'
+              ? 'Close the conversation politely.'
+              : 'Acknowledge and end the call politely.';
+
+  return [
+    'The customer has expressed intent to end this call.',
+    languageRule,
+    intentInstruction,
+    'Use one short sentence only.',
+    'Do not ask another question.',
+    'Do not pitch, continue discovery, or keep the conversation going.',
+    'After this sentence, stop speaking.',
+  ].join(' ');
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1507,10 +1603,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     session.callEndDetected = true;
-    session.callEndReason =
-      intent === 'explicit_hangup'
-        ? 'customer_requested_hangup'
-        : 'customer_negative_availability';
+    session.callEndReason = callEndReasonForIntent(intent);
     this.logger.log({
       streamSid: session.streamSid,
       intent,
@@ -1531,8 +1624,61 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       this.logger.log({
         streamSid: session.streamSid,
         intent,
-        message: 'voice_call_end_late_transcript_close_scheduled',
+        message: 'voice_call_end_late_transcript_ack_requested',
       });
+      this.requestCallEndAcknowledgementResponse(session, intent);
+    }
+  }
+
+  private requestCallEndAcknowledgementResponse(
+    session: OpenAiRealtimeSession,
+    intent: Exclude<CustomerCallEndIntent, null>,
+  ): void {
+    if (session.ws.readyState !== WebSocket.OPEN) {
+      this.scheduleHangupAfterCompletion(session);
+      return;
+    }
+
+    const responseLanguage = responseLanguageForCustomer(session.lastCustomerLanguage);
+    try {
+      session.responseRequested = true;
+      session.responseCreateCount += 1;
+      const now = new Date();
+      session.ws.send(
+        JSON.stringify({
+          type: 'response.create',
+          response: {
+            modalities: ['audio'],
+            instructions: buildCallEndAcknowledgementInstructions(
+              intent,
+              responseLanguage,
+            ),
+            max_output_tokens: 40,
+          },
+        }),
+      );
+      this.logger.log({
+        streamSid: session.streamSid,
+        intent,
+        responseLanguage,
+        message: 'voice_call_end_ack_response_requested',
+      });
+      this.updateRuntimeState(session.streamSid, {
+        runtimeLastEventAt: now,
+        responseCreateCount: session.responseCreateCount,
+        lastResponseCreateAt: now,
+        responsePending: true,
+        isAwaitingOpenAiResponse: true,
+        incrementOpenAiEvent: 'response.create',
+      });
+    } catch (error) {
+      this.logger.error({
+        streamSid: session.streamSid,
+        intent,
+        err: error,
+        message: 'voice_call_end_ack_response_error',
+      });
+      session.responseRequested = false;
       this.scheduleHangupAfterCompletion(session);
     }
   }

@@ -10,7 +10,7 @@ import { CreateCallDto } from './dto/create-call.dto';
 import { ProviderWebhookDto } from './dto/provider-webhook.dto';
 import { TestCallDto } from './dto/test-call.dto';
 
-interface LiveCallAnalysis {
+export interface LiveCallAnalysis {
   callId: string;
   status: CallStatus;
   phone: string;

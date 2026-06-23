@@ -13,6 +13,7 @@ import { RequirePermissions } from '../../common/decorators/permissions.decorato
 import { PERMISSIONS } from '../../common/constants/permissions';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CallsService } from './calls.service';
+import type { LiveCallAnalysis } from './calls.service';
 import { CallQueryDto } from './dto/call-query.dto';
 import { ProviderWebhookDto } from './dto/provider-webhook.dto';
 import { TestCallDto } from './dto/test-call.dto';
@@ -34,7 +35,7 @@ export class CallsController {
   @ApiBearerAuth()
   @RequirePermissions(PERMISSIONS.CALLS_READ)
   @ApiOperation({ summary: 'List live call analyses derived from call transcripts and summaries' })
-  getLiveCallAnalyses() {
+  getLiveCallAnalyses(): Promise<LiveCallAnalysis[]> {
     return this.callsService.listLiveCallAnalyses();
   }
 
