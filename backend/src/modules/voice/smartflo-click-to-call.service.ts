@@ -5,10 +5,12 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { CallEventType, CallSource, CallStatus, Prisma } from '@prisma/client';
 import {
   buildCallRequestOriginInfo,
   CallRequestOriginInfo,
 } from '../../common/server-origin.util';
+import { PrismaService } from '../../database/prisma.service';
 import {
   extractSmartfloProviderCallSid,
   VoiceCallAuthorizationService,
@@ -22,6 +24,7 @@ export interface VoiceTestCallResult {
   normalizedCustomerNumber: string;
   callOrigin: CallRequestOriginInfo;
   authorizationId?: string;
+  callId?: string;
   providerCallSid?: string | null;
 }
 
@@ -32,6 +35,7 @@ export class SmartfloClickToCallService {
   constructor(
     private readonly configService: ConfigService,
     private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async initiateTestCall(
@@ -124,10 +128,18 @@ export class SmartfloClickToCallService {
     });
 
     const providerCallSid = extractSmartfloProviderCallSid(providerResponse);
+    const call = await this.createLiveAnalysisCallRecord({
+      normalizedCustomerNumber,
+      requestedCustomerNumber,
+      providerCallSid,
+      providerResponse,
+      callOrigin,
+    });
     const authorizationId = this.voiceCallAuthorizationService.register({
       source: 'test-call',
       customerNumber: normalizedCustomerNumber,
       callSid: providerCallSid,
+      callId: call.id,
     });
 
     return {
@@ -138,8 +150,64 @@ export class SmartfloClickToCallService {
       normalizedCustomerNumber,
       callOrigin,
       authorizationId,
+      callId: call.id,
       providerCallSid: providerCallSid ?? null,
     };
+  }
+
+  private async createLiveAnalysisCallRecord(input: {
+    normalizedCustomerNumber: string;
+    requestedCustomerNumber: string;
+    providerCallSid?: string;
+    providerResponse: unknown;
+    callOrigin: CallRequestOriginInfo;
+  }) {
+    const customer =
+      (await this.prisma.customer.findFirst({
+        where: { phone: input.normalizedCustomerNumber },
+      })) ??
+      (await this.prisma.customer.create({
+        data: {
+          firstName: 'Voice',
+          lastName: 'Caller',
+          phone: input.normalizedCustomerNumber,
+          metadata: {
+            createdBy: 'voice_test_call',
+            requestedCustomerNumber: input.requestedCustomerNumber,
+          },
+        },
+      }));
+
+    const call = await this.prisma.call.create({
+      data: {
+        customerId: customer.id,
+        source: CallSource.test,
+        status: CallStatus.initiated,
+        phone: input.normalizedCustomerNumber,
+        providerRef: input.providerCallSid,
+        metadata: this.toJsonValue({
+          origin: input.callOrigin,
+          providerResponse: input.providerResponse,
+        }),
+      },
+    });
+
+    await this.prisma.callEvent.create({
+      data: {
+        callId: call.id,
+        type: CallEventType.system,
+        payload: {
+          action: 'voice_test_call_initiated',
+          providerCallSid: input.providerCallSid ?? null,
+        },
+      },
+    });
+
+    return call;
+  }
+
+  private toJsonValue(value: unknown): Prisma.InputJsonValue {
+    return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
   }
 
   private buildCallOrigin(requestMeta?: {

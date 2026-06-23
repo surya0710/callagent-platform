@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import { CallEventType, CallStatus } from '@prisma/client';
 import { decodeMulawBuffer } from './audio/mulaw-codec';
 import { analyzePcm16, formatPcm16Stats } from './audio/pcm-stats.util';
 import { isSpeechLikePcm16 } from './audio/speech-detection.util';
@@ -13,6 +14,7 @@ import { VoiceOpeningConfigService } from './voice-opening-config.service';
 import { AudioGateway } from './audio.gateway';
 import { VoiceTranscriptConfigService } from './transcript/voice-transcript-config.service';
 import { VoiceTranscriptService } from './transcript/voice-transcript.service';
+import { PrismaService } from '../../database/prisma.service';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
@@ -35,6 +37,7 @@ export class SmartfloStreamAdapter {
     private readonly voiceOpeningConfigService: VoiceOpeningConfigService,
     private readonly voiceTranscriptConfig: VoiceTranscriptConfigService,
     private readonly voiceTranscriptService: VoiceTranscriptService,
+    private readonly prisma: PrismaService,
     @Inject(forwardRef(() => AudioGateway))
     private readonly audioGateway: AudioGateway,
   ) {}
@@ -196,6 +199,16 @@ export class SmartfloStreamAdapter {
 
     if (authorization.callId) {
       this.voiceTranscriptService.bindCall(streamSid, authorization.callId);
+      void this.markCallInProgress(authorization.callId, startData.callSid).catch(
+        (error) => {
+          this.logger.warn({
+            streamSid,
+            callId: authorization.callId,
+            err: error instanceof Error ? error.message : String(error),
+            message: 'Failed to mark voice call in progress',
+          });
+        },
+      );
     }
 
     const openingContext = this.voiceOpeningConfigService.resolve(
@@ -542,6 +555,19 @@ export class SmartfloStreamAdapter {
 
       const session = this.voiceSessionService.getByStreamSid(streamSid);
       const callId = session?.callId;
+      if (callId) {
+        void this.markCallCompleted(
+          callId,
+          metadata.durationMsEstimate,
+        ).catch((error) => {
+          this.logger.warn({
+            streamSid,
+            callId,
+            err: error instanceof Error ? error.message : String(error),
+            message: 'Failed to mark voice call completed',
+          });
+        });
+      }
       if (callId && this.voiceTranscriptConfig.isPostCallEnabled()) {
         void this.voiceTranscriptService
           .enqueuePostCallTranscription({
@@ -565,5 +591,59 @@ export class SmartfloStreamAdapter {
         'Failed to finalize voice recording',
       );
     }
+  }
+
+  private async markCallInProgress(
+    callId: string,
+    providerRef?: string,
+  ): Promise<void> {
+    await this.prisma.call.update({
+      where: { id: callId },
+      data: {
+        status: CallStatus.in_progress,
+        startedAt: new Date(),
+        providerRef,
+      },
+    });
+
+    await this.prisma.callEvent.create({
+      data: {
+        callId,
+        type: CallEventType.status_change,
+        payload: {
+          status: CallStatus.in_progress,
+          providerRef: providerRef ?? null,
+        },
+      },
+    });
+  }
+
+  private async markCallCompleted(
+    callId: string,
+    durationMsEstimate?: number,
+  ): Promise<void> {
+    const endedAt = new Date();
+    await this.prisma.call.update({
+      where: { id: callId },
+      data: {
+        status: CallStatus.completed,
+        endedAt,
+        durationSec:
+          typeof durationMsEstimate === 'number'
+            ? Math.max(0, Math.round(durationMsEstimate / 1000))
+            : undefined,
+      },
+    });
+
+    await this.prisma.callEvent.create({
+      data: {
+        callId,
+        type: CallEventType.status_change,
+        payload: {
+          status: CallStatus.completed,
+          durationMsEstimate: durationMsEstimate ?? null,
+        },
+      },
+    });
   }
 }
