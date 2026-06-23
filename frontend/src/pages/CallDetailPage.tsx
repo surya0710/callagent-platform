@@ -80,8 +80,12 @@ export function CallDetailPage() {
     },
   });
 
-  const sendEmailMutation = useMutation({
-    mutationFn: async (resend = false) =>
+  const sendEmailMutation = useMutation<
+    TranscriptEmailStatusResponse,
+    Error,
+    boolean
+  >({
+    mutationFn: async (resend) =>
       (await api.post(`/calls/${id}/send-transcript-email`, { resend }))
         .data as TranscriptEmailStatusResponse,
     onSuccess: () => {
