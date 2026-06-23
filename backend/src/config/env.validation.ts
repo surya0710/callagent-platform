@@ -230,6 +230,18 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  VOICE_AI_SPEAK_FIRST_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_AI_SPEAK_FIRST_OPENING_TIMEOUT_MS?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_AI_SPEAK_FIRST_FALLBACK_TO_WAIT_FOR_CUSTOMER?: string;
+
+  @IsOptional()
+  @IsString()
   VOICE_OPENING_SPEECH_GATE_MAX_MS?: string;
 
   @IsOptional()

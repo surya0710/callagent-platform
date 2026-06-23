@@ -160,6 +160,17 @@ export class VoiceController {
       smartfloSendErrors: response.smartfloSendErrors ?? 0,
       lastSmartfloSendAt: response.lastSmartfloSendAt ?? null,
       openingContext: response.openingContext ?? null,
+      aiSpeakFirstEnabled: response.aiSpeakFirstEnabled ?? false,
+      openingState: response.openingState ?? null,
+      openingRequestedAt: response.openingRequestedAt ?? null,
+      openingResponseCreatedAt: response.openingResponseCreatedAt ?? null,
+      openingAudioStartedAt: response.openingAudioStartedAt ?? null,
+      openingAudioDoneAt: response.openingAudioDoneAt ?? null,
+      openingDoneAt: response.openingDoneAt ?? null,
+      openingError: response.openingError ?? null,
+      normalModeActivatedAt: response.normalModeActivatedAt ?? null,
+      openingSuppressedInboundPackets:
+        response.openingSuppressedInboundPackets ?? 0,
       openingGreetingRequestedAt: response.openingGreetingRequestedAt ?? null,
       openingGreetingResponseCreatedAt:
         response.openingGreetingResponseCreatedAt ?? null,

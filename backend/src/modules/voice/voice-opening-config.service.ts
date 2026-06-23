@@ -13,6 +13,33 @@ export class VoiceOpeningConfigService {
 
   constructor(private readonly configService: ConfigService) {}
 
+  isSpeakFirstEnabled(): boolean {
+    return this.readBoolean('VOICE_AI_SPEAK_FIRST_ENABLED', false);
+  }
+
+  getOpeningTimeoutMs(): number {
+    return this.readInt('VOICE_AI_SPEAK_FIRST_OPENING_TIMEOUT_MS', 8000, 1000);
+  }
+
+  shouldFallbackToWaitForCustomer(): boolean {
+    return this.readBoolean(
+      'VOICE_AI_SPEAK_FIRST_FALLBACK_TO_WAIT_FOR_CUSTOMER',
+      true,
+    );
+  }
+
+  getOpeningIgnoreMs(): number {
+    return this.readInt('VOICE_OPENING_IGNORE_MS', 200);
+  }
+
+  getPostOpeningIgnoreMs(): number {
+    const postOpening = this.configService.get<string>('VOICE_POST_OPENING_IGNORE_MS');
+    if (postOpening !== undefined) {
+      return this.readInt('VOICE_POST_OPENING_IGNORE_MS', 300);
+    }
+    return this.readInt('VOICE_OPENING_IGNORE_MS', 300);
+  }
+
   resolveFromEnv(): VoiceOpeningContext {
     return this.resolve();
   }
@@ -63,5 +90,11 @@ export class VoiceOpeningConfigService {
       return fallback;
     }
     return ['true', '1', 'yes', 'on'].includes(raw.trim().toLowerCase());
+  }
+
+  private readInt(name: string, fallback: number, min = 0): number {
+    const raw = this.configService.get<string>(name);
+    const parsed = Number.parseInt(raw ?? '', 10);
+    return Number.isFinite(parsed) ? Math.max(parsed, min) : fallback;
   }
 }

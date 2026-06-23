@@ -9,6 +9,7 @@ import {
   parseAskPermissionBeforePitch,
   resolveTimeAwareOpeningGreeting,
   sanitizeBaseInstructionsForOpening,
+  canTriggerOpening,
   VOICE_OPENING_DEFAULTS,
 } from '../src/modules/voice/voice-opening.util';
 
@@ -150,10 +151,11 @@ describe('voice-opening.util', () => {
       });
 
       expect(instructions).toContain('Aisha');
-      expect(instructions).toContain('Then STOP immediately');
+      expect(instructions).toContain('TATD');
       expect(instructions).toContain('good morning');
-      expect(instructions).toContain('Do not ask discovery questions');
-      expect(instructions).toContain('stay silent until the customer responds');
+      expect(instructions).toContain('Do not continue with discovery questions');
+      expect(instructions).toContain('stop and wait for the customer');
+      expect(instructions).toContain('Then STOP immediately');
     });
   });
 
@@ -186,6 +188,48 @@ describe('voice-opening.util', () => {
       expect(parseAskPermissionBeforePitch('true')).toBe(true);
       expect(parseAskPermissionBeforePitch('false')).toBe(false);
       expect(parseAskPermissionBeforePitch(undefined)).toBeUndefined();
+    });
+  });
+
+  describe('canTriggerOpening', () => {
+    const baseReady = {
+      aiSpeakFirstEnabled: true,
+      openingState: 'ready_to_speak' as const,
+      authorized: true,
+      smartfloStartReceived: true,
+      streamSidKnown: true,
+      smartfloWebSocketOpen: true,
+      openAiWebSocketOpen: true,
+      openAiSessionCreated: true,
+      openAiSessionUpdated: true,
+      responsePending: false,
+      openingAlreadyRequested: false,
+    };
+
+    it('returns true when all readiness conditions are met', () => {
+      expect(canTriggerOpening(baseReady)).toBe(true);
+    });
+
+    it('returns false when speak-first is disabled', () => {
+      expect(
+        canTriggerOpening({ ...baseReady, aiSpeakFirstEnabled: false }),
+      ).toBe(false);
+    });
+
+    it('returns false when opening was already requested', () => {
+      expect(
+        canTriggerOpening({ ...baseReady, openingAlreadyRequested: true }),
+      ).toBe(false);
+    });
+
+    it('returns false before OpenAI session.updated', () => {
+      expect(
+        canTriggerOpening({
+          ...baseReady,
+          openAiSessionUpdated: false,
+          openingState: 'waiting_for_openai_ready',
+        }),
+      ).toBe(false);
     });
   });
 });

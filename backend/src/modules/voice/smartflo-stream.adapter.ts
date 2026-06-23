@@ -211,10 +211,22 @@ export class SmartfloStreamAdapter {
       );
     }
 
-    const openingContext = this.voiceOpeningConfigService.resolve(
-      authorization.openingContext,
-    );
-    this.voiceSessionService.setOpeningContext(streamSid, openingContext);
+    const aiSpeakFirstEnabled = this.voiceOpeningConfigService.isSpeakFirstEnabled();
+    const openingContext = aiSpeakFirstEnabled
+      ? this.voiceOpeningConfigService.resolve(authorization.openingContext)
+      : undefined;
+
+    if (openingContext) {
+      this.voiceSessionService.setOpeningContext(streamSid, openingContext);
+    }
+
+    this.voiceSessionService.initializeSpeakFirstState(streamSid, {
+      aiSpeakFirstEnabled,
+      openingState: aiSpeakFirstEnabled
+        ? 'waiting_for_openai_ready'
+        : 'disabled',
+      openingContext,
+    });
 
     this.logger.log({
       socketSessionId,
@@ -223,10 +235,12 @@ export class SmartfloStreamAdapter {
       authorizationSource: authorization.source,
       authorizationId: authorization.authorizationId,
       runtimeProvider: this.voiceRuntime.name,
-      agentName: openingContext.agentName,
-      companyName: openingContext.companyName,
-      message:
-        'Smartflo start authorized — starting OpenAI runtime and recording',
+      aiSpeakFirstEnabled,
+      agentName: openingContext?.agentName,
+      companyName: openingContext?.companyName,
+      message: aiSpeakFirstEnabled
+        ? 'voice_ai_speak_first_enabled'
+        : 'Smartflo start authorized — starting OpenAI runtime and recording',
     });
 
     void this.voiceRuntime.createSession({
@@ -237,6 +251,9 @@ export class SmartfloStreamAdapter {
       to: startData.to,
       direction: startData.direction,
       openingContext,
+      aiSpeakFirstEnabled,
+      smartfloStartReceived: true,
+      authorized: true,
     });
 
     setImmediate(() => {

@@ -5,7 +5,7 @@ import {
   Pcm16Stats,
 } from './audio/pcm-stats.util';
 import { VoiceSharedStateService } from './voice-shared-state.service';
-import { VoiceOpeningContext } from './voice-opening.types';
+import { VoiceOpeningContext, OpeningState } from './voice-opening.types';
 
 export type VoiceSessionStatus = 'PENDING' | 'ACTIVE' | 'ENDED';
 
@@ -131,6 +131,16 @@ export interface VoiceSession {
   smartfloSendErrors?: number;
   lastSmartfloSendAt?: Date;
   openingContext?: VoiceOpeningContext;
+  aiSpeakFirstEnabled?: boolean;
+  openingState?: OpeningState;
+  openingRequestedAt?: Date;
+  openingResponseCreatedAt?: Date;
+  openingAudioStartedAt?: Date;
+  openingAudioDoneAt?: Date;
+  openingDoneAt?: Date;
+  openingError?: string;
+  normalModeActivatedAt?: Date;
+  openingSuppressedInboundPackets?: number;
   openingGreetingRequestedAt?: Date;
   openingGreetingResponseCreatedAt?: Date;
   openingGreetingError?: string;
@@ -271,6 +281,16 @@ export interface VoiceSessionResponse {
   smartfloSendErrors?: number;
   lastSmartfloSendAt?: string | null;
   openingContext?: VoiceOpeningContext;
+  aiSpeakFirstEnabled?: boolean;
+  openingState?: OpeningState;
+  openingRequestedAt?: string | null;
+  openingResponseCreatedAt?: string | null;
+  openingAudioStartedAt?: string | null;
+  openingAudioDoneAt?: string | null;
+  openingDoneAt?: string | null;
+  openingError?: string | null;
+  normalModeActivatedAt?: string | null;
+  openingSuppressedInboundPackets?: number;
   openingGreetingRequestedAt?: string | null;
   openingGreetingResponseCreatedAt?: string | null;
   openingGreetingError?: string | null;
@@ -421,6 +441,17 @@ export function toVoiceSessionResponse(
     smartfloSendErrors: session.smartfloSendErrors,
     lastSmartfloSendAt: session.lastSmartfloSendAt?.toISOString() ?? null,
     openingContext: session.openingContext,
+    aiSpeakFirstEnabled: session.aiSpeakFirstEnabled,
+    openingState: session.openingState,
+    openingRequestedAt: session.openingRequestedAt?.toISOString() ?? null,
+    openingResponseCreatedAt:
+      session.openingResponseCreatedAt?.toISOString() ?? null,
+    openingAudioStartedAt: session.openingAudioStartedAt?.toISOString() ?? null,
+    openingAudioDoneAt: session.openingAudioDoneAt?.toISOString() ?? null,
+    openingDoneAt: session.openingDoneAt?.toISOString() ?? null,
+    openingError: session.openingError ?? null,
+    normalModeActivatedAt: session.normalModeActivatedAt?.toISOString() ?? null,
+    openingSuppressedInboundPackets: session.openingSuppressedInboundPackets,
     openingGreetingRequestedAt:
       session.openingGreetingRequestedAt?.toISOString() ?? null,
     openingGreetingResponseCreatedAt:
@@ -695,10 +726,41 @@ export class VoiceSessionService {
     session.openingContext = openingContext;
   }
 
+  initializeSpeakFirstState(
+    streamSid: string,
+    update: {
+      aiSpeakFirstEnabled: boolean;
+      openingState: OpeningState;
+      openingContext?: VoiceOpeningContext;
+    },
+  ): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    session.aiSpeakFirstEnabled = update.aiSpeakFirstEnabled;
+    session.openingState = update.openingState;
+    if (update.openingContext !== undefined) {
+      session.openingContext = update.openingContext;
+    }
+  }
+
   updateOpeningState(
     streamSid: string,
     update: {
+      aiSpeakFirstEnabled?: boolean;
+      openingState?: OpeningState;
       openingContext?: VoiceOpeningContext;
+      openingRequestedAt?: Date;
+      openingResponseCreatedAt?: Date;
+      openingAudioStartedAt?: Date;
+      openingAudioDoneAt?: Date;
+      openingDoneAt?: Date;
+      openingError?: string;
+      normalModeActivatedAt?: Date;
+      openingSuppressedInboundPackets?: number;
+      postOpeningIgnoreUntil?: Date;
       openingGreetingRequestedAt?: Date;
       openingGreetingResponseCreatedAt?: Date;
       openingGreetingError?: string;
@@ -709,18 +771,58 @@ export class VoiceSessionService {
       return;
     }
 
+    if (update.aiSpeakFirstEnabled !== undefined) {
+      session.aiSpeakFirstEnabled = update.aiSpeakFirstEnabled;
+    }
+    if (update.openingState !== undefined) {
+      session.openingState = update.openingState;
+    }
     if (update.openingContext !== undefined) {
       session.openingContext = update.openingContext;
     }
+    if (update.openingRequestedAt !== undefined) {
+      session.openingRequestedAt = update.openingRequestedAt;
+      session.openingGreetingRequestedAt = update.openingRequestedAt;
+    }
+    if (update.openingResponseCreatedAt !== undefined) {
+      session.openingResponseCreatedAt = update.openingResponseCreatedAt;
+      session.openingGreetingResponseCreatedAt = update.openingResponseCreatedAt;
+    }
+    if (update.openingAudioStartedAt !== undefined) {
+      session.openingAudioStartedAt = update.openingAudioStartedAt;
+    }
+    if (update.openingAudioDoneAt !== undefined) {
+      session.openingAudioDoneAt = update.openingAudioDoneAt;
+    }
+    if (update.openingDoneAt !== undefined) {
+      session.openingDoneAt = update.openingDoneAt;
+    }
+    if (update.openingError !== undefined) {
+      session.openingError = update.openingError;
+      session.openingGreetingError = update.openingError;
+    }
+    if (update.normalModeActivatedAt !== undefined) {
+      session.normalModeActivatedAt = update.normalModeActivatedAt;
+    }
+    if (update.openingSuppressedInboundPackets !== undefined) {
+      session.openingSuppressedInboundPackets =
+        update.openingSuppressedInboundPackets;
+    }
+    if (update.postOpeningIgnoreUntil !== undefined) {
+      session.postOpeningIgnoreUntil = update.postOpeningIgnoreUntil;
+    }
     if (update.openingGreetingRequestedAt !== undefined) {
       session.openingGreetingRequestedAt = update.openingGreetingRequestedAt;
+      session.openingRequestedAt = update.openingGreetingRequestedAt;
     }
     if (update.openingGreetingResponseCreatedAt !== undefined) {
       session.openingGreetingResponseCreatedAt =
         update.openingGreetingResponseCreatedAt;
+      session.openingResponseCreatedAt = update.openingGreetingResponseCreatedAt;
     }
     if (update.openingGreetingError !== undefined) {
       session.openingGreetingError = update.openingGreetingError;
+      session.openingError = update.openingGreetingError;
     }
   }
 

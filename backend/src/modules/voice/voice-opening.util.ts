@@ -1,4 +1,4 @@
-import { VoiceOpeningContext } from './voice-opening.types';
+import { VoiceOpeningContext, OpeningState } from './voice-opening.types';
 import {
   buildAccentInstructions,
   VoiceAccentProfile,
@@ -192,14 +192,23 @@ export function buildOpeningResponseInstructions(
   context: VoiceOpeningContext,
 ): string {
   const line = buildExampleOpeningMessage(context);
+  const permissionHint =
+    context.askPermissionBeforePitch !== false
+      ? 'Ask if this is a good time to speak.'
+      : 'State the call purpose, then stop and wait for the customer.';
+
   return [
-    `Say ONLY the opening line below — nothing else. Use agent name "${context.agentName}".`,
-    'Use a natural Indian English accent unless the opening line is entirely in Hindi.',
-    `Maximum ${OPENING_MAX_WORDS} words total.`,
-    `"${line}"`,
-    'Do not ask discovery questions, handle objections, pitch benefits, or use playbook content in this opening turn.',
+    'Say exactly one short opening message for an outbound phone call.',
+    `Greet the customer, introduce yourself as ${context.agentName}, mention ${context.companyName}, state the call purpose, and ${permissionHint}`,
+    'Do not continue with discovery questions.',
+    'Do not pitch.',
+    'Do not ask multiple questions.',
+    'After this opening message, stop and wait for the customer.',
+    'Match configured greeting and India time-aware greeting if enabled.',
+    `Example output: "${line}"`,
+    `Use agent name "${context.agentName}". Maximum ${OPENING_MAX_WORDS} words total.`,
+    'Do not handle objections, explain services, or use playbook content in this opening turn.',
     'Do NOT add pleasantries, explanations, context, or extra questions beyond that line.',
-    'After the permission question, stay silent until the customer responds.',
     'Then STOP immediately and end your turn.',
     'Do not mention AI, bots, systems, or models.',
   ].join(' ');
@@ -272,4 +281,68 @@ export function parseAskPermissionBeforePitch(
   }
 
   return undefined;
+}
+
+export interface OpeningReadinessInput {
+  aiSpeakFirstEnabled: boolean;
+  openingState: OpeningState;
+  authorized: boolean;
+  smartfloStartReceived: boolean;
+  streamSidKnown: boolean;
+  smartfloWebSocketOpen: boolean;
+  openAiWebSocketOpen: boolean;
+  openAiSessionCreated: boolean;
+  openAiSessionUpdated: boolean;
+  responsePending: boolean;
+  openingAlreadyRequested: boolean;
+}
+
+export function canTriggerOpening(input: OpeningReadinessInput): boolean {
+  if (!input.aiSpeakFirstEnabled) {
+    return false;
+  }
+  if (!input.authorized) {
+    return false;
+  }
+  if (!input.smartfloStartReceived) {
+    return false;
+  }
+  if (!input.streamSidKnown) {
+    return false;
+  }
+  if (!input.smartfloWebSocketOpen) {
+    return false;
+  }
+  if (!input.openAiWebSocketOpen) {
+    return false;
+  }
+  if (!input.openAiSessionCreated) {
+    return false;
+  }
+  if (!input.openAiSessionUpdated) {
+    return false;
+  }
+  if (input.responsePending) {
+    return false;
+  }
+  if (input.openingAlreadyRequested) {
+    return false;
+  }
+  if (
+    input.openingState !== 'waiting_for_openai_ready' &&
+    input.openingState !== 'ready_to_speak'
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function isOpeningInboundSuppressedState(state: OpeningState): boolean {
+  return (
+    state === 'opening_response_requested' || state === 'opening_audio_playing'
+  );
+}
+
+export function isOpeningFlowComplete(state: OpeningState): boolean {
+  return state === 'opening_done' || state === 'failed' || state === 'disabled';
 }

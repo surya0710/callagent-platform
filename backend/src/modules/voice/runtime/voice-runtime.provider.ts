@@ -15,6 +15,9 @@ export interface VoiceRuntimeSessionContext {
   to?: string;
   direction?: string;
   openingContext?: VoiceOpeningContext;
+  aiSpeakFirstEnabled?: boolean;
+  smartfloStartReceived?: boolean;
+  authorized?: boolean;
 }
 
 export interface VoiceRuntimeProvider {
