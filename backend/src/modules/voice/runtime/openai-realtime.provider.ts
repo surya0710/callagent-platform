@@ -119,11 +119,17 @@ interface OpenAiRealtimeSession {
   openingGreetingRequested: boolean;
   openingGreetingPending: boolean;
   openingGreetingComplete: boolean;
+  openingAvailabilityResponseHandled: boolean;
   openingCompletedAt?: Date;
   assistantTranscriptBuffer: string;
   lastAssistantTranscript?: string;
   assistantTranscriptItemId?: string;
 }
+
+export type CustomerCallEndIntent =
+  | 'explicit_hangup'
+  | 'negative_availability'
+  | null;
 
 function normalizeTranscriptForIntent(text: string): string {
   return text
@@ -133,25 +139,58 @@ function normalizeTranscriptForIntent(text: string): string {
     .trim();
 }
 
-function shouldEndCallAfterAssistantText(text: string): boolean {
+export function detectCustomerCallEndIntent(
+  text: string,
+  options?: { awaitingOpeningAvailabilityResponse?: boolean },
+): CustomerCallEndIntent {
   const normalized = normalizeTranscriptForIntent(text);
   if (!normalized) {
-    return false;
+    return null;
   }
 
-  const thanked =
-    /\b(thank you|thanks|thankyou|appreciate)\b/.test(normalized) ||
-    /(धन्यवाद|शुक्रिया|थैंक\s*यू)/.test(normalized);
-  const feedback =
-    /\b(feedback|review|response|input|sharing|experience)\b/.test(
+  const explicitHangup =
+    /\b(cut|disconnect|end|drop|close|stop)\s+(the\s+)?(call|phone|line)\b/.test(
       normalized,
-    ) || /(फीडबैक|प्रतिक्रिया|अनुभव)/.test(normalized);
-  const farewell =
-    /\b(have a nice day|have a good day|goodbye|bye|take care)\b/.test(
+    ) ||
+    /\b(hang\s*up|stop\s+calling|don'?t\s+call|do\s+not\s+call)\b/.test(
       normalized,
-    ) || /(अच्छा\s*दिन|नमस्ते|अलविदा)/.test(normalized);
+    ) ||
+    /(कॉल|फोन|फ़ोन)\s*(काट|बंद|डिस्कनेक्ट)/.test(normalized) ||
+    /(काट\s*दो|बंद\s*करो|डिस्कनेक्ट\s*करो)/.test(normalized);
+  if (explicitHangup) {
+    return 'explicit_hangup';
+  }
 
-  return thanked && (feedback || farewell);
+  const negativeBusy =
+    /\bbusy\b/.test(normalized) && !/\bnot\s+busy\b/.test(normalized);
+  const negativeAvailabilityPhrase =
+    negativeBusy ||
+    /\b(not\s+(a\s+)?good\s+time|bad\s+time|not\s+now|call\s+(me\s+)?later|talk\s+later|can'?t\s+(talk|speak)|cannot\s+(talk|speak))\b/.test(
+      normalized,
+    ) ||
+    /(अभी\s*नहीं|बाद\s*में|व्यस्त|बिजी|फुर्सत\s*नहीं|बात\s*नहीं\s*कर)/.test(
+      normalized,
+    );
+  const affirmativeAvailability =
+    /\b(yes|yeah|yep|sure|ok|okay|go\s+ahead|available|free|not\s+busy|can\s+(talk|speak))\b/.test(
+      normalized,
+    ) || /(हाँ|हा|जी|ठीक|बोलिए|फ्री|बात\s*कर\s*सक)/.test(normalized);
+  if (affirmativeAvailability && !negativeAvailabilityPhrase) {
+    return null;
+  }
+
+  if (negativeAvailabilityPhrase) {
+    return 'negative_availability';
+  }
+
+  if (
+    options?.awaitingOpeningAvailabilityResponse &&
+    /^(no|nope|nah|nahi|nahin|nhi|नहीं|ना|न)$/.test(normalized)
+  ) {
+    return 'negative_availability';
+  }
+
+  return null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -403,6 +442,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       openingGreetingRequested: false,
       openingGreetingPending: false,
       openingGreetingComplete: false,
+      openingAvailabilityResponseHandled: false,
       assistantTranscriptBuffer: '',
       lastAssistantTranscript: undefined,
     };
@@ -805,6 +845,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     );
   }
 
+  private isAwaitingOpeningAvailabilityResponse(
+    session: OpenAiRealtimeSession,
+  ): boolean {
+    return Boolean(
+      session.openingContext &&
+        session.openingContext.askPermissionBeforePitch !== false &&
+        session.openingGreetingComplete &&
+        !session.openingAvailabilityResponseHandled,
+    );
+  }
+
   private isWithinPostOpeningSpeechGate(session: OpenAiRealtimeSession): boolean {
     return Boolean(
       session.requireSpeechLikeUntilMs &&
@@ -1193,9 +1244,36 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
+  private markCustomerCallEndDetected(
+    session: OpenAiRealtimeSession,
+    intent: Exclude<CustomerCallEndIntent, null>,
+    text: string,
+  ): void {
+    if (session.callEndDetected) {
+      return;
+    }
+
+    session.callEndDetected = true;
+    session.callEndReason =
+      intent === 'explicit_hangup'
+        ? 'customer_requested_hangup'
+        : 'customer_negative_availability';
+    this.logger.log({
+      streamSid: session.streamSid,
+      intent,
+      text,
+      message: 'voice_call_end_detected',
+    });
+    this.updateRuntimeState(session.streamSid, {
+      callEndDetected: true,
+      callEndReason: session.callEndReason,
+    });
+    this.scheduleCallEndMaxWait(session);
+  }
+
   private executeCallEndClose(
     session: OpenAiRealtimeSession,
-    reason = 'ai_feedback_completion',
+    reason = session.callEndReason ?? 'customer_call_end_intent',
   ): void {
     try {
       const closeAt = new Date();
@@ -1247,7 +1325,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       }
       this.flushOutboundPcmRemainder(session);
       this.flushRemainingOutbound(session);
-      this.executeCallEndClose(session, 'ai_feedback_completion_max_wait');
+      this.executeCallEndClose(
+        session,
+        `${session.callEndReason ?? 'customer_call_end_intent'}_max_wait`,
+      );
     }, maxWaitMs);
   }
 
@@ -1595,6 +1676,18 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     ) {
       const text = extractTranscriptText(event);
       if (text) {
+        const awaitingOpeningAvailability =
+          this.isAwaitingOpeningAvailabilityResponse(session);
+        const callEndIntent = detectCustomerCallEndIntent(text, {
+          awaitingOpeningAvailabilityResponse: awaitingOpeningAvailability,
+        });
+        if (awaitingOpeningAvailability && callEndIntent === null) {
+          session.openingAvailabilityResponseHandled = true;
+        }
+        if (callEndIntent) {
+          session.openingAvailabilityResponseHandled = true;
+          this.markCustomerCallEndDetected(session, callEndIntent, text);
+        }
         void this.voiceTranscriptService
           .handleRealtimeCompleted({
             streamSid,
@@ -1655,23 +1748,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
               err: error instanceof Error ? error.message : String(error),
             });
           });
-        if (shouldEndCallAfterAssistantText(text)) {
-          session.callEndDetected = true;
-          session.callEndReason = 'assistant_feedback_completion';
-          this.logger.log({
-            streamSid,
-            text,
-            message: 'voice_call_end_detected',
-          });
-          this.updateRuntimeState(streamSid, {
-            callEndDetected: true,
-            callEndReason: session.callEndReason,
-          });
-          this.scheduleCallEndMaxWait(session);
-          if (!session.responseInProgress && session.responseComplete) {
-            this.scheduleHangupAfterCompletion(session);
-          }
-        }
       }
       session.assistantTranscriptBuffer = '';
       session.assistantTranscriptItemId = undefined;
@@ -1817,10 +1893,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         lastResponseDoneAt: now,
         outboundBufferedBytes: session.outboundMulawBuffer.length,
       });
-      if (
-        session.lastAssistantTranscript &&
-        shouldEndCallAfterAssistantText(session.lastAssistantTranscript)
-      ) {
+      if (session.callEndDetected) {
         this.scheduleHangupAfterCompletion(session);
       }
     }
