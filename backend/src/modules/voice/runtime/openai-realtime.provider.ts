@@ -1522,6 +1522,19 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       callEndReason: session.callEndReason,
     });
     this.scheduleCallEndMaxWait(session);
+
+    if (
+      !session.responseRequested &&
+      !session.responseInProgress &&
+      !session.openingGreetingPending
+    ) {
+      this.logger.log({
+        streamSid: session.streamSid,
+        intent,
+        message: 'voice_call_end_late_transcript_close_scheduled',
+      });
+      this.scheduleHangupAfterCompletion(session);
+    }
   }
 
   private executeCallEndClose(
