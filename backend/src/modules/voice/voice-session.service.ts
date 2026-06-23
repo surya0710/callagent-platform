@@ -519,8 +519,21 @@ export function fromVoiceSessionResponse(
     openingGreetingResponseCreatedAt: parseOptionalDate(
       response.openingGreetingResponseCreatedAt ?? undefined,
     ),
+    openingRequestedAt: parseOptionalDate(response.openingRequestedAt ?? undefined),
+    openingResponseCreatedAt: parseOptionalDate(
+      response.openingResponseCreatedAt ?? undefined,
+    ),
+    openingAudioStartedAt: parseOptionalDate(
+      response.openingAudioStartedAt ?? undefined,
+    ),
+    openingAudioDoneAt: parseOptionalDate(response.openingAudioDoneAt ?? undefined),
+    openingDoneAt: parseOptionalDate(response.openingDoneAt ?? undefined),
+    normalModeActivatedAt: parseOptionalDate(
+      response.normalModeActivatedAt ?? undefined,
+    ),
     openingContext: response.openingContext,
     openingGreetingError: nullToUndefined(response.openingGreetingError),
+    openingError: nullToUndefined(response.openingError),
     callEndScheduledAt: parseOptionalDate(response.callEndScheduledAt),
     callEndCloseAt: parseOptionalDate(response.callEndCloseAt),
     stopReason: nullToUndefined(response.stopReason),
