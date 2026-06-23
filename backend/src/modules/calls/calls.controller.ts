@@ -17,7 +17,10 @@ import type { LiveCallAnalysis } from './calls.service';
 import { CallQueryDto } from './dto/call-query.dto';
 import { ProviderWebhookDto } from './dto/provider-webhook.dto';
 import { TestCallDto } from './dto/test-call.dto';
-import { TranscriptEmailService } from '../voice/transcript-email.service';
+import {
+  TranscriptEmailService,
+  TranscriptEmailStatusResponse,
+} from '../voice/transcript-email.service';
 
 @ApiTags('Calls')
 @Controller('calls')
@@ -84,7 +87,7 @@ export class CallsController {
   sendTranscriptEmail(
     @Param('id') id: string,
     @Body() body: { resend?: boolean } = {},
-  ) {
+  ): Promise<TranscriptEmailStatusResponse> {
     return this.transcriptEmailService.requestManualSend({
       callId: id,
       resend: body.resend === true,
@@ -95,7 +98,9 @@ export class CallsController {
   @ApiBearerAuth()
   @RequirePermissions(PERMISSIONS.CALLS_READ)
   @ApiOperation({ summary: 'Get transcript email status for a call' })
-  getTranscriptEmailStatus(@Param('id') id: string) {
+  getTranscriptEmailStatus(
+    @Param('id') id: string,
+  ): Promise<TranscriptEmailStatusResponse> {
     return this.transcriptEmailService.getStatus({ callId: id });
   }
 

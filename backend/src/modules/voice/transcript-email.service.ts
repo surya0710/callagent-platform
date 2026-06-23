@@ -26,7 +26,7 @@ interface TranscriptEmailRecipients {
   bcc: string[];
 }
 
-interface TranscriptEmailStatusResponse {
+export interface TranscriptEmailStatusResponse {
   status: TranscriptEmailStatus;
   callId?: string | null;
   streamSid?: string | null;
