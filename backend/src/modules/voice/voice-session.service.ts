@@ -71,7 +71,18 @@ export interface VoiceSession {
   inboundSuppressedReason?: string;
   postOpeningIgnoreUntil?: Date;
   speechLikePacketCount?: number;
+  silencePacketCount?: number;
+  ignoredNoisePacketCount?: number;
   ignoredSpeechPacketCount?: number;
+  detectedCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+  lastCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+  responseLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+  languageMatchMode?: 'latest_customer_message';
+  firstCustomerSpeechAt?: Date;
+  firstResponseCreateAt?: Date;
+  startupListenDelayMs?: number;
+  autoReplyBlockedCount?: number;
+  responseBlockedReason?: string;
   isOpenAiConnected?: boolean;
   hasReceivedCallerAudio?: boolean;
   lastCallerAudioAt?: Date;
@@ -201,7 +212,18 @@ export interface VoiceSessionResponse {
   inboundSuppressedReason?: string;
   postOpeningIgnoreUntil?: string;
   speechLikePacketCount?: number;
+  silencePacketCount?: number;
+  ignoredNoisePacketCount?: number;
   ignoredSpeechPacketCount?: number;
+  detectedCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+  lastCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+  responseLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+  languageMatchMode?: 'latest_customer_message';
+  firstCustomerSpeechAt?: string;
+  firstResponseCreateAt?: string;
+  startupListenDelayMs?: number;
+  autoReplyBlockedCount?: number;
+  responseBlockedReason?: string;
   isOpenAiConnected?: boolean;
   hasReceivedCallerAudio?: boolean;
   lastCallerAudioAt?: string;
@@ -330,7 +352,18 @@ export function toVoiceSessionResponse(
     inboundSuppressedReason: session.inboundSuppressedReason,
     postOpeningIgnoreUntil: session.postOpeningIgnoreUntil?.toISOString(),
     speechLikePacketCount: session.speechLikePacketCount,
+    silencePacketCount: session.silencePacketCount,
+    ignoredNoisePacketCount: session.ignoredNoisePacketCount,
     ignoredSpeechPacketCount: session.ignoredSpeechPacketCount,
+    detectedCustomerLanguage: session.detectedCustomerLanguage,
+    lastCustomerLanguage: session.lastCustomerLanguage,
+    responseLanguage: session.responseLanguage,
+    languageMatchMode: session.languageMatchMode,
+    firstCustomerSpeechAt: session.firstCustomerSpeechAt?.toISOString(),
+    firstResponseCreateAt: session.firstResponseCreateAt?.toISOString(),
+    startupListenDelayMs: session.startupListenDelayMs,
+    autoReplyBlockedCount: session.autoReplyBlockedCount,
+    responseBlockedReason: session.responseBlockedReason,
     isOpenAiConnected: session.isOpenAiConnected,
     hasReceivedCallerAudio: session.hasReceivedCallerAudio,
     lastCallerAudioAt: session.lastCallerAudioAt?.toISOString(),
@@ -432,6 +465,8 @@ export function fromVoiceSessionResponse(
     runtimeLastEventAt: parseOptionalDate(response.runtimeLastEventAt),
     openingCompletedAt: parseOptionalDate(response.openingCompletedAt),
     postOpeningIgnoreUntil: parseOptionalDate(response.postOpeningIgnoreUntil),
+    firstCustomerSpeechAt: parseOptionalDate(response.firstCustomerSpeechAt),
+    firstResponseCreateAt: parseOptionalDate(response.firstResponseCreateAt),
     lastCallerAudioAt: parseOptionalDate(response.lastCallerAudioAt),
     lastMediaAt: parseOptionalDate(response.lastMediaAt),
     lastSpeechLikeAudioAt: parseOptionalDate(response.lastSpeechLikeAudioAt),
@@ -873,7 +908,18 @@ export class VoiceSessionService {
       inboundSuppressedReason?: string;
       postOpeningIgnoreUntil?: Date;
       speechLikePacketCount?: number;
+      silencePacketCount?: number;
+      ignoredNoisePacketCount?: number;
       ignoredSpeechPacketCount?: number;
+      detectedCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+      lastCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+      responseLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+      languageMatchMode?: 'latest_customer_message';
+      firstCustomerSpeechAt?: Date;
+      firstResponseCreateAt?: Date;
+      startupListenDelayMs?: number;
+      autoReplyBlockedCount?: number;
+      responseBlockedReason?: string;
       isOpenAiConnected?: boolean;
       hasReceivedCallerAudio?: boolean;
       lastCallerAudioAt?: Date;
@@ -970,8 +1016,41 @@ export class VoiceSessionService {
     if (update.speechLikePacketCount !== undefined) {
       session.speechLikePacketCount = update.speechLikePacketCount;
     }
+    if (update.silencePacketCount !== undefined) {
+      session.silencePacketCount = update.silencePacketCount;
+    }
+    if (update.ignoredNoisePacketCount !== undefined) {
+      session.ignoredNoisePacketCount = update.ignoredNoisePacketCount;
+    }
     if (update.ignoredSpeechPacketCount !== undefined) {
       session.ignoredSpeechPacketCount = update.ignoredSpeechPacketCount;
+    }
+    if (update.detectedCustomerLanguage !== undefined) {
+      session.detectedCustomerLanguage = update.detectedCustomerLanguage;
+    }
+    if (update.lastCustomerLanguage !== undefined) {
+      session.lastCustomerLanguage = update.lastCustomerLanguage;
+    }
+    if (update.responseLanguage !== undefined) {
+      session.responseLanguage = update.responseLanguage;
+    }
+    if (update.languageMatchMode !== undefined) {
+      session.languageMatchMode = update.languageMatchMode;
+    }
+    if (update.firstCustomerSpeechAt !== undefined) {
+      session.firstCustomerSpeechAt = update.firstCustomerSpeechAt;
+    }
+    if (update.firstResponseCreateAt !== undefined) {
+      session.firstResponseCreateAt = update.firstResponseCreateAt;
+    }
+    if (update.startupListenDelayMs !== undefined) {
+      session.startupListenDelayMs = update.startupListenDelayMs;
+    }
+    if (update.autoReplyBlockedCount !== undefined) {
+      session.autoReplyBlockedCount = update.autoReplyBlockedCount;
+    }
+    if (update.responseBlockedReason !== undefined) {
+      session.responseBlockedReason = update.responseBlockedReason;
     }
     if (update.isOpenAiConnected !== undefined) {
       session.isOpenAiConnected = update.isOpenAiConnected;

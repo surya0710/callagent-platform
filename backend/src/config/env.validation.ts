@@ -226,6 +226,10 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  VOICE_POST_OPENING_IGNORE_MS?: string;
+
+  @IsOptional()
+  @IsString()
   VOICE_OPENING_SPEECH_GATE_MAX_MS?: string;
 
   @IsOptional()
@@ -235,6 +239,18 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   VOICE_SPEECH_RMS_THRESHOLD?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_SPEECH_MIN_PACKETS?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_SPEECH_MIN_DURATION_MS?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_RECENT_SPEECH_MAX_AGE_MS?: string;
 
   @IsOptional()
   @IsString()
