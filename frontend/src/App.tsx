@@ -4,6 +4,7 @@ import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { AppLayout } from './components/layout/AppLayout';
 import { AgentPromptsPage } from './pages/AgentPromptsPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
+import { CallAnalysisPage } from './pages/CallAnalysisPage';
 import { CallDetailPage } from './pages/CallDetailPage';
 import { CallsPage } from './pages/CallsPage';
 import { CampaignDetailPage } from './pages/CampaignDetailPage';
@@ -45,6 +46,7 @@ export function App() {
             <Route path="agent-prompts" element={<AgentPromptsPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="training" element={<TrainingPage />} />
+            <Route path="training/call-analysis" element={<CallAnalysisPage />} />
             <Route path="training/insights" element={<TrainingInsightsPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="settings" element={<SettingsPage />} />

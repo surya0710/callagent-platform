@@ -10,6 +10,7 @@ const links = [
   { to: '/agent-prompts', label: 'Agent Prompts' },
   { to: '/analytics', label: 'Analytics' },
   { to: '/training', label: 'Training' },
+  { to: '/training/call-analysis', label: 'Call Analysis' },
   { to: '/users', label: 'Users' },
   { to: '/settings', label: 'Settings' },
 ];
