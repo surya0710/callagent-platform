@@ -146,7 +146,7 @@ export function formatCustomerNameForGreeting(customerName: string): string {
 }
 
 export function buildCallContextInstructions(callContext: CallContext): string {
-  const lines: string[] = ['Call-specific context (on-demand ride):'];
+  const lines: string[] = ['Call-specific context (on-demand driver service):'];
 
   if (callContext.bookingNumber) {
     lines.push(`- Booking Number: ${callContext.bookingNumber}`);
@@ -176,6 +176,9 @@ export function buildCallContextInstructions(callContext: CallContext): string {
   lines.push(
     '',
     'Rules:',
+    '- This is an on-demand driver service feedback call. Do not refer to this as a holiday trip, vacation, tour, travel package, or itinerary.',
+    '- After the customer agrees to speak, ask about their driver service experience (e.g. "How was your experience with the driver service?" or "Was everything smooth with your ride and driver?").',
+    '- Do not ask about holiday trips, packages, destinations, vacations, tours, or travel plans.',
     '- Use this information only when relevant.',
     '- Do not mention all details at once.',
     '- Do not invent missing values.',

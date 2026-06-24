@@ -38,13 +38,19 @@ describe('voice-call-context.util', () => {
     });
   });
 
-  it('builds structured call context instructions', () => {
+  it('builds structured call context instructions for driver service', () => {
     const instructions = buildCallContextInstructions(sampleContext);
 
+    expect(instructions).toContain(
+      'Call-specific context (on-demand driver service):',
+    );
     expect(instructions).toContain('Booking Number: OD482917');
     expect(instructions).toContain('Balance Amount: ₹150');
+    expect(instructions).toContain('on-demand driver service feedback call');
+    expect(instructions).toContain('How was your experience with the driver service?');
     expect(instructions).toContain('Do not invent missing values');
     expect(instructions).not.toContain('undefined');
+    expect(instructions).not.toMatch(/- (Trip|Destination|Package|Itinerary|Vacation|Tour):/i);
   });
 
   it('extracts safe runtime debug info', () => {
@@ -65,17 +71,18 @@ describe('voice-call-context.util', () => {
       {
         agentName: 'Aisha',
         companyName: 'TATD',
-        callPurpose: 'regarding your booking',
+        callPurpose: 'I wanted to hear about your recent driver service experience',
         openingGreeting: 'Namaste',
       },
       {
-        bookingNumber: 'BK1234',
+        bookingNumber: 'OD482917',
         customerName: 'Rahul Sharma',
       },
     );
 
     expect(opening).toContain('Namaste Rahul ji');
-    expect(opening).toContain('booking BK1234');
+    expect(opening).toContain('booking OD482917');
+    expect(opening).toContain('driver service experience');
     expect(opening).not.toContain('₹');
     expect(opening).not.toContain('Ramesh');
   });
@@ -112,5 +119,6 @@ describe('voice-call-context.util', () => {
     expect(instructions.indexOf('Playbook body')).toBeLessThan(
       instructions.indexOf('Balance Amount: ₹150'),
     );
+    expect(instructions).toContain('on-demand driver service feedback call');
   });
 });

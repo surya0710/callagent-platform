@@ -18,7 +18,7 @@ export const VOICE_OPENING_DEFAULTS: Required<
 > = {
   agentName: 'your AI assistant',
   companyName: 'our team',
-  callPurpose: 'regarding your recent enquiry',
+  callPurpose: 'I wanted to hear about your recent driver service experience',
   openingGreeting: 'Namaste',
   askPermissionBeforePitch: true,
 };
@@ -238,6 +238,7 @@ export function buildOpeningResponseInstructions(
   const minimalContextRules = callContext
     ? [
         'Use only customer name and booking number if available in the opening.',
+        'This is an on-demand driver service booking feedback call, not a holiday or travel package call.',
         'Do not mention driver, payment, or other ride details in the opening unless specifically configured.',
       ]
     : [];

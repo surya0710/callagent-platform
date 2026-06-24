@@ -20,7 +20,7 @@ const CUSTOMER_FIELDS: Array<{
   label: string;
   placeholder?: string;
 }> = [
-  { key: 'bookingNumber', label: 'Booking number', placeholder: 'BK1234' },
+  { key: 'bookingNumber', label: 'Booking number', placeholder: 'OD482917' },
   { key: 'customerName', label: 'Customer name', placeholder: 'Rahul Sharma' },
   { key: 'customerNumber', label: 'Customer mobile', placeholder: '9876543210' },
 ];
@@ -153,7 +153,7 @@ export function CallContextForm({
       <div>
         <p className="text-sm font-medium text-slate-300">Call context (optional)</p>
         <p className="mt-1 text-xs text-slate-500">
-          Customer, driver, and payment details for this on-demand ride call.
+          Customer, driver, and payment details for this on-demand driver service call.
         </p>
       </div>
 

@@ -66,22 +66,22 @@ describe('voice-opening.util', () => {
       expect(message).not.toContain("I'm reaching out Recently");
     });
 
-    it('uses customer name and booking number in opening when callContext is provided', () => {
+    it('uses customer name and booking number in driver service opening when callContext is provided', () => {
       const message = buildExampleOpeningMessage(
         {
           agentName: 'Aisha',
           companyName: 'TATD',
-          callPurpose: 'I wanted to hear about your recent booking experience',
+          callPurpose: 'I wanted to hear about your recent driver service experience',
           openingGreeting: 'Namaste',
         },
         {
           customerName: 'Rahul Sharma',
-          bookingNumber: 'BK1234',
+          bookingNumber: 'OD482917',
         },
       );
 
       expect(message).toBe(
-        'Namaste Rahul ji, this is Aisha calling from TATD regarding your booking BK1234. I wanted to hear about your recent booking experience. Is this a good time to speak?',
+        'Namaste Rahul ji, this is Aisha calling from TATD regarding your booking OD482917. I wanted to hear about your recent driver service experience. Is this a good time to speak?',
       );
     });
   });
@@ -176,6 +176,25 @@ describe('voice-opening.util', () => {
       expect(instructions).toContain('Do not continue with discovery questions');
       expect(instructions).toContain('stop and wait for the customer');
       expect(instructions).toContain('Then STOP immediately');
+    });
+
+    it('frames opening as driver service feedback when callContext is provided', () => {
+      const instructions = buildOpeningResponseInstructions(
+        {
+          agentName: 'Aisha',
+          companyName: 'TATD',
+          callPurpose: 'I wanted to hear about your recent driver service experience',
+          openingGreeting: 'Good morning',
+        },
+        {
+          bookingNumber: 'OD482917',
+          customerName: 'Rahul Sharma',
+        },
+      );
+
+      expect(instructions).toContain('driver service booking feedback call');
+      expect(instructions).toContain('booking OD482917');
+      expect(instructions).toContain('driver service experience');
     });
   });
 
