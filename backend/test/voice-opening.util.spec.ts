@@ -66,12 +66,12 @@ describe('voice-opening.util', () => {
       expect(message).not.toContain("I'm reaching out Recently");
     });
 
-    it('uses customer name and booking number in driver service opening when callContext is provided', () => {
+    it('uses customer name and booking number without repeating call purpose', () => {
       const message = buildExampleOpeningMessage(
         {
           agentName: 'Aisha',
           companyName: 'TATD',
-          callPurpose: 'I wanted to hear about your recent driver service experience',
+          callPurpose: 'for a quick follow-up',
           openingGreeting: 'Namaste',
         },
         {
@@ -81,7 +81,7 @@ describe('voice-opening.util', () => {
       );
 
       expect(message).toBe(
-        'Namaste Rahul ji, this is Aisha calling from TATD regarding your booking OD482917. I wanted to hear about your recent driver service experience. Is this a good time to speak?',
+        'Namaste Rahul ji, this is Aisha calling from TATD regarding your booking OD482917. Is this a good time to speak?',
       );
     });
   });
@@ -183,7 +183,7 @@ describe('voice-opening.util', () => {
         {
           agentName: 'Aisha',
           companyName: 'TATD',
-          callPurpose: 'I wanted to hear about your recent driver service experience',
+          callPurpose: 'for a quick follow-up',
           openingGreeting: 'Good morning',
         },
         {
@@ -194,7 +194,11 @@ describe('voice-opening.util', () => {
 
       expect(instructions).toContain('driver service booking feedback call');
       expect(instructions).toContain('booking OD482917');
-      expect(instructions).toContain('driver service experience');
+      expect(instructions).toContain('Is this a good time to speak?');
+      expect(instructions).toContain('do not repeat the call purpose in the opening');
+      expect(instructions).toContain(
+        'Good morning Rahul ji, this is Aisha calling from TATD regarding your booking OD482917. Is this a good time to speak?',
+      );
     });
   });
 

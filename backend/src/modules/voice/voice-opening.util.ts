@@ -18,7 +18,7 @@ export const VOICE_OPENING_DEFAULTS: Required<
 > = {
   agentName: 'your AI assistant',
   companyName: 'our team',
-  callPurpose: 'I wanted to hear about your recent driver service experience',
+  callPurpose: 'for a quick follow-up',
   openingGreeting: 'Namaste',
   askPermissionBeforePitch: true,
 };
@@ -173,6 +173,10 @@ function appendOpeningCallPurposeSentence(callPurpose: string): string {
   return ` I'm calling about ${purpose}.`;
 }
 
+function shouldOmitCallPurposeInOpening(callContext?: CallContext): boolean {
+  return Boolean(callContext?.bookingNumber?.trim());
+}
+
 export function buildExampleOpeningMessage(
   context: VoiceOpeningContext,
   callContext?: CallContext,
@@ -183,10 +187,13 @@ export function buildExampleOpeningMessage(
     context.askPermissionBeforePitch !== false
       ? ' Is this a good time to speak?'
       : '';
+  const omitPurpose = shouldOmitCallPurposeInOpening(callContext);
 
   if (callContext?.customerName && callContext.bookingNumber) {
     const name = formatCustomerNameForGreeting(callContext.customerName);
-    const purposeSentence = appendOpeningCallPurposeSentence(context.callPurpose);
+    const purposeSentence = omitPurpose
+      ? ''
+      : appendOpeningCallPurposeSentence(context.callPurpose);
     return `${greeting} ${name}, this is ${context.agentName} calling from ${context.companyName} regarding your booking ${callContext.bookingNumber}.${purposeSentence}${permission}`;
   }
 
@@ -230,22 +237,33 @@ export function buildOpeningResponseInstructions(
   callContext?: CallContext,
 ): string {
   const line = buildExampleOpeningMessage(context, callContext);
+  const omitPurpose = shouldOmitCallPurposeInOpening(callContext);
   const permissionHint =
     context.askPermissionBeforePitch !== false
       ? 'Ask if this is a good time to speak.'
-      : 'State the call purpose, then stop and wait for the customer.';
+      : omitPurpose
+        ? 'Stop and wait for the customer.'
+        : 'State the call purpose, then stop and wait for the customer.';
+  const openingTaskLine = omitPurpose
+    ? `Greet the customer, introduce yourself as ${context.agentName}, mention ${context.companyName} and the booking reference, and ${permissionHint} Do not state the call purpose separately or ask feedback questions in the opening.`
+    : `Greet the customer, introduce yourself as ${context.agentName}, mention ${context.companyName}, state the call purpose, and ${permissionHint}`;
 
   const minimalContextRules = callContext
     ? [
         'Use only customer name and booking number if available in the opening.',
         'This is an on-demand driver service booking feedback call, not a holiday or travel package call.',
         'Do not mention driver, payment, or other ride details in the opening unless specifically configured.',
+        ...(omitPurpose
+          ? [
+              'The booking reference already explains why you are calling; do not repeat the call purpose in the opening.',
+            ]
+          : []),
       ]
     : [];
 
   return [
     'Say exactly one short opening message for an outbound phone call.',
-    `Greet the customer, introduce yourself as ${context.agentName}, mention ${context.companyName}, state the call purpose, and ${permissionHint}`,
+    openingTaskLine,
     ...minimalContextRules,
     'Do not continue with discovery questions.',
     'Do not pitch.',
@@ -268,17 +286,28 @@ export function buildOpeningSessionInstructions(
   callContext?: CallContext,
 ): string {
   const example = buildExampleOpeningMessage(context, callContext);
+  const omitPurpose = shouldOmitCallPurposeInOpening(callContext);
   const permissionRule =
     context.askPermissionBeforePitch !== false
       ? 'End with one short permission question only.'
-      : 'After stating the purpose, stop and wait for the customer.';
+      : omitPurpose
+        ? 'Stop and wait for the customer.'
+        : 'After stating the purpose, stop and wait for the customer.';
+  const purposeLine = omitPurpose
+    ? `Call purpose (for later turns only, not the opening): ${context.callPurpose}.`
+    : `Call purpose: ${context.callPurpose}.`;
 
   const openingRules = [
     `You are ${context.agentName} from ${context.companyName}.`,
-    `Call purpose: ${context.callPurpose}.`,
+    purposeLine,
     'CALL OPENING RULES:',
     `- Deliver ONE short opening only, like: "${example}"`,
     `- ${permissionRule}`,
+    ...(omitPurpose
+      ? [
+          '- Do not state the call purpose in the opening; the booking reference is enough.',
+        ]
+      : []),
     `- Maximum ${OPENING_MAX_WORDS} words in the opening.`,
     '- Do not pitch, elaborate, or add filler.',
     '- Do not ask discovery questions, handle objections, or use playbook content during the opening.',

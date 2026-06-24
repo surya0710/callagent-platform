@@ -71,7 +71,7 @@ describe('voice-call-context.util', () => {
       {
         agentName: 'Aisha',
         companyName: 'TATD',
-        callPurpose: 'I wanted to hear about your recent driver service experience',
+        callPurpose: 'for a quick follow-up',
         openingGreeting: 'Namaste',
       },
       {
@@ -80,9 +80,10 @@ describe('voice-call-context.util', () => {
       },
     );
 
-    expect(opening).toContain('Namaste Rahul ji');
-    expect(opening).toContain('booking OD482917');
-    expect(opening).toContain('driver service experience');
+    expect(opening).toBe(
+      'Namaste Rahul ji, this is Aisha calling from TATD regarding your booking OD482917. Is this a good time to speak?',
+    );
+    expect(opening).not.toContain('follow-up');
     expect(opening).not.toContain('₹');
     expect(opening).not.toContain('Ramesh');
   });

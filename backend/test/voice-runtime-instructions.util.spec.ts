@@ -30,7 +30,7 @@ describe('voice-runtime-instructions.util', () => {
       mergeOpeningContext({
         agentName: 'Aisha',
         companyName: 'TATD',
-        callPurpose: 'I wanted to hear about your recent driver service experience',
+        callPurpose: 'for a quick follow-up',
         openingGreeting: 'Namaste',
       }),
     );
