@@ -5,20 +5,12 @@ import {
 } from './voice-call-context.types';
 import { normalizeVoicePhoneNumber } from './voice-phone.util';
 
-const INDIA_TIME_ZONE = 'Asia/Kolkata';
 const MAX_STRING_LENGTH = 200;
-const MAX_PACKAGE_LENGTH = 500;
 
 const FORBIDDEN_KEY_PATTERN =
   /^(api[_-]?key|password|secret|token|authorization|auth|credential|private)/i;
 
-const NUMERIC_FIELDS = new Set([
-  'totalCharges',
-  'balanceAmount',
-  'runningKms',
-  'overtimeMinutes',
-  'overtimeCharges',
-]);
+const NUMERIC_FIELDS = new Set(['totalCharges', 'balanceAmount']);
 
 function trimString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== 'string') {
@@ -99,8 +91,7 @@ export function sanitizeCallContext(input: unknown): CallContext | undefined {
       continue;
     }
 
-    const maxLength = key === 'package' ? MAX_PACKAGE_LENGTH : MAX_STRING_LENGTH;
-    const text = trimString(raw, maxLength);
+    const text = trimString(raw, MAX_STRING_LENGTH);
     if (text) {
       sanitized[key as keyof CallContext] = text as never;
     }
@@ -133,19 +124,6 @@ function formatCurrency(amount: number): string {
   return `₹${amount}`;
 }
 
-function formatIndiaDateTime(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat('en-IN', {
-    timeZone: INDIA_TIME_ZONE,
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(parsed);
-}
-
 function titleCase(value: string): string {
   return value
     .split(/\s+/)
@@ -168,7 +146,7 @@ export function formatCustomerNameForGreeting(customerName: string): string {
 }
 
 export function buildCallContextInstructions(callContext: CallContext): string {
-  const lines: string[] = ['Call-specific context:'];
+  const lines: string[] = ['Call-specific context (on-demand ride):'];
 
   if (callContext.bookingNumber) {
     lines.push(`- Booking Number: ${callContext.bookingNumber}`);
@@ -185,21 +163,6 @@ export function buildCallContextInstructions(callContext: CallContext): string {
   if (callContext.driverMobileNumber) {
     lines.push(`- Driver Mobile: ${callContext.driverMobileNumber}`);
   }
-  if (callContext.productType) {
-    lines.push(`- Product Type: ${titleCase(callContext.productType)}`);
-  }
-  if (callContext.city) {
-    lines.push(`- City: ${callContext.city}`);
-  }
-  if (callContext.zone) {
-    lines.push(`- Zone: ${callContext.zone}`);
-  }
-  if (callContext.package) {
-    lines.push(`- Package: ${callContext.package}`);
-  }
-  if (callContext.endTime) {
-    lines.push(`- End Time: ${formatIndiaDateTime(callContext.endTime)}`);
-  }
   if (callContext.totalCharges !== undefined) {
     lines.push(`- Total Charges: ${formatCurrency(callContext.totalCharges)}`);
   }
@@ -208,15 +171,6 @@ export function buildCallContextInstructions(callContext: CallContext): string {
   }
   if (callContext.paymentMode) {
     lines.push(`- Payment Mode: ${titleCase(callContext.paymentMode)}`);
-  }
-  if (callContext.runningKms !== undefined) {
-    lines.push(`- Running KMs: ${callContext.runningKms}`);
-  }
-  if (callContext.overtimeMinutes !== undefined) {
-    lines.push(`- Overtime Minutes: ${callContext.overtimeMinutes}`);
-  }
-  if (callContext.overtimeCharges !== undefined) {
-    lines.push(`- Overtime Charges: ${formatCurrency(callContext.overtimeCharges)}`);
   }
 
   lines.push(

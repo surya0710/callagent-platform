@@ -238,7 +238,7 @@ export function buildOpeningResponseInstructions(
   const minimalContextRules = callContext
     ? [
         'Use only customer name and booking number if available in the opening.',
-        'Do not mention charges, driver, payment, kms, overtime, or other booking details in the opening unless specifically configured.',
+        'Do not mention driver, payment, or other ride details in the opening unless specifically configured.',
       ]
     : [];
 

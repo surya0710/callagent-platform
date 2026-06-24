@@ -12,22 +12,14 @@ import {
 
 describe('voice-call-context.util', () => {
   const sampleContext = {
-    bookingNumber: 'BK1234',
+    bookingNumber: 'OD482917',
     customerName: 'Rahul Sharma',
     customerNumber: '9876543210',
-    driverName: 'Ramesh',
+    driverName: 'Rajesh Kumar',
     driverMobileNumber: '9999999999',
-    productType: 'cab',
-    city: 'Delhi',
-    zone: 'South Delhi',
-    package: '4 hours 40 km',
-    endTime: '2026-06-23T18:30:00+05:30',
-    totalCharges: 2500,
-    balanceAmount: 850,
-    paymentMode: 'cash',
-    runningKms: 52,
-    overtimeMinutes: 20,
-    overtimeCharges: 200,
+    totalCharges: 450,
+    balanceAmount: 150,
+    paymentMode: 'UPI',
   };
 
   it('sanitizes and trims call context fields', () => {
@@ -49,8 +41,8 @@ describe('voice-call-context.util', () => {
   it('builds structured call context instructions', () => {
     const instructions = buildCallContextInstructions(sampleContext);
 
-    expect(instructions).toContain('Booking Number: BK1234');
-    expect(instructions).toContain('Balance Amount: ₹850');
+    expect(instructions).toContain('Booking Number: OD482917');
+    expect(instructions).toContain('Balance Amount: ₹150');
     expect(instructions).toContain('Do not invent missing values');
     expect(instructions).not.toContain('undefined');
   });
@@ -59,7 +51,7 @@ describe('voice-call-context.util', () => {
     expect(extractCallContextDebugInfo(sampleContext)).toEqual({
       hasCallContext: true,
       callContextKeys: expect.arrayContaining(['bookingNumber', 'customerName']),
-      bookingNumber: 'BK1234',
+      bookingNumber: 'OD482917',
       customerName: 'Rahul Sharma',
     });
   });
@@ -90,7 +82,7 @@ describe('voice-call-context.util', () => {
 
   it('injects call context after playbook in normal mode instructions', () => {
     const callContextInstructions = buildCallContextInstructions({
-      balanceAmount: 850,
+      balanceAmount: 150,
     });
     const instructions = buildVoiceRuntimeInstructions({
       baseInstructions: 'Base voice behavior.',
@@ -118,7 +110,7 @@ describe('voice-call-context.util', () => {
       instructions.indexOf('Playbook body'),
     );
     expect(instructions.indexOf('Playbook body')).toBeLessThan(
-      instructions.indexOf('Balance Amount: ₹850'),
+      instructions.indexOf('Balance Amount: ₹150'),
     );
   });
 });

@@ -141,17 +141,9 @@ export interface VoiceCallContext {
   customerNumber?: string;
   driverName?: string;
   driverMobileNumber?: string;
-  productType?: string;
-  city?: string;
-  zone?: string;
-  package?: string;
-  endTime?: string;
   totalCharges?: number;
   balanceAmount?: number;
   paymentMode?: string;
-  runningKms?: number;
-  overtimeMinutes?: number;
-  overtimeCharges?: number;
 }
 
 export interface VoiceTestCallRequest {
