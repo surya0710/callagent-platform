@@ -17,6 +17,10 @@ import {
 } from './audio/smartflo-synthetic-tone.util';
 import { VoiceSessionService } from './voice-session.service';
 import { VoiceSocketRegistry } from './voice-socket.registry';
+import {
+  CallTimingDiagnosticsService,
+  CallTimingEvent,
+} from './call-timing-diagnostics.service';
 
 interface VoiceWebSocket extends WebSocket {
   socketSessionId?: string;
@@ -34,6 +38,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly smartfloStreamAdapter: SmartfloStreamAdapter,
     private readonly voiceRecordingService: VoiceRecordingService,
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
+    private readonly callTiming: CallTimingDiagnosticsService,
   ) {}
 
   handleConnection(client: VoiceWebSocket, request: IncomingMessage): void {
@@ -70,6 +75,11 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
         connectedAt: session.connectedAt,
         message: 'Smartflo WebSocket connected',
       });
+      this.callTiming.mark(
+        `socket:${session.socketSessionId}`,
+        CallTimingEvent.SMARTFLO_MEDIA_WS_CONNECTED,
+        { socketSessionId: session.socketSessionId },
+      );
     } catch (error) {
       this.logger.error({ err: error }, 'Failed to handle WebSocket connection');
       client.close();

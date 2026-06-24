@@ -24,7 +24,8 @@ export interface VoiceRuntimeSessionContext {
 
 /** Connect OpenAI while the outbound call is still ringing (before Smartflo start). */
 export interface VoiceRuntimePrewarmContext {
-  callSid: string;
+  callSid?: string;
+  customerNumber?: string;
   callId?: string;
   openingContext?: VoiceOpeningContext;
   callContext?: CallContext;

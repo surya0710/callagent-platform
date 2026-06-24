@@ -17,6 +17,11 @@ import { extractCallContextDebugInfo } from './voice-call-context.util';
 import { VoiceTranscriptConfigService } from './transcript/voice-transcript-config.service';
 import { VoiceTranscriptService } from './transcript/voice-transcript.service';
 import { PrismaService } from '../../database/prisma.service';
+import {
+  CallTimingDiagnosticsService,
+  CallTimingEvent,
+} from './call-timing-diagnostics.service';
+import { normalizeVoicePhoneNumber } from './voice-phone.util';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
@@ -42,6 +47,7 @@ export class SmartfloStreamAdapter {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => AudioGateway))
     private readonly audioGateway: AudioGateway,
+    private readonly callTiming: CallTimingDiagnosticsService,
   ) {}
 
   private get voiceRuntime() {
@@ -148,6 +154,27 @@ export class SmartfloStreamAdapter {
     this.voiceSessionService.markAuthorizationPending(streamSid);
     this.voiceRecordingService.start(streamSid, startData.callSid);
 
+    const linkedPhone = [startData.to, startData.from]
+      .map((value) =>
+        value ? normalizeVoicePhoneNumber(value) : undefined,
+      )
+      .find((value): value is string => Boolean(value));
+    if (linkedPhone) {
+      this.callTiming.linkStreamSid(streamSid, `phone:${linkedPhone}`);
+    }
+    if (startData.callSid) {
+      this.callTiming.linkStreamSid(streamSid, `callSid:${startData.callSid}`);
+    }
+    this.callTiming.linkAlias(
+      `socket:${socketSessionId}`,
+      linkedPhone ? `phone:${linkedPhone}` : `streamSid:${streamSid}`,
+    );
+    this.callTiming.markByStreamSid(streamSid, CallTimingEvent.SMARTFLO_START_RECEIVED, {
+      callSid: startData.callSid,
+      from: startData.from,
+      to: startData.to,
+    });
+
     await this.authorizeAndStartRuntime(socketSessionId, streamSid, startData);
   }
 
@@ -207,6 +234,14 @@ export class SmartfloStreamAdapter {
       authorizationId: authorization.authorizationId,
       message: 'authorization success',
     });
+    this.callTiming.markByStreamSid(
+      streamSid,
+      CallTimingEvent.CALL_AUTHORIZATION_LOADED,
+      {
+        authorizationId: authorization.authorizationId,
+        authorizationSource: authorization.source,
+      },
+    );
 
     if (authorization.callId) {
       this.voiceTranscriptService.bindCall(streamSid, authorization.callId);
@@ -240,11 +275,17 @@ export class SmartfloStreamAdapter {
         ...extractCallContextDebugInfo(callContext),
         message: 'voice_call_context_loaded',
       });
+      this.callTiming.markByStreamSid(streamSid, CallTimingEvent.CALL_CONTEXT_LOADED, {
+        hasCallContext: true,
+      });
     } else {
       this.logger.log({
         streamSid,
         authorizationId: authorization.authorizationId,
         message: 'voice_call_context_missing',
+      });
+      this.callTiming.markByStreamSid(streamSid, CallTimingEvent.CALL_CONTEXT_LOADED, {
+        hasCallContext: false,
       });
     }
 

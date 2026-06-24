@@ -52,6 +52,11 @@ import { VoiceTranscriptService } from '../transcript/voice-transcript.service';
 import { buildVoiceRuntimeInstructions } from '../voice-runtime-instructions.util';
 import { CallContext } from '../voice-call-context.types';
 import { buildCallContextInstructions } from '../voice-call-context.util';
+import {
+  CallTimingDiagnosticsService,
+  CallTimingEvent,
+} from '../call-timing-diagnostics.service';
+import { normalizeVoicePhoneNumber } from '../voice-phone.util';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
 const OPENAI_SAMPLE_RATE = OPENAI_REALTIME_SAMPLE_RATE;
@@ -448,6 +453,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private readonly logger = new Logger(OpenAIRealtimeProvider.name);
   private readonly sessions = new Map<string, OpenAiRealtimeSession>();
   private readonly prewarmByCallSid = new Map<string, string>();
+  private readonly prewarmByPhone = new Map<string, string>();
   private readonly prewarmCleanupTimers = new Map<string, NodeJS.Timeout>();
   private readonly loggedOpenAiOutputByStreamSid = new Set<string>();
 
@@ -462,6 +468,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     private readonly agentPlaybookService: AgentPlaybookService,
     private readonly voiceOpeningConfigService: VoiceOpeningConfigService,
     private readonly voiceSocketRegistry: VoiceSocketRegistry,
+    private readonly callTiming: CallTimingDiagnosticsService,
   ) {}
 
   private getTurnDetectionMode(): OpenAiTurnDetectionMode {
@@ -568,8 +575,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     const callSid = context.callSid?.trim();
-    if (callSid && context.smartfloStartReceived) {
-      const prewarmStreamSid = this.prewarmByCallSid.get(callSid);
+    if (context.smartfloStartReceived) {
+      const prewarmStreamSid = this.resolvePrewarmStreamSid(context);
       if (
         prewarmStreamSid &&
         prewarmStreamSid !== streamSid &&
@@ -593,23 +600,63 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     const callSid = input.callSid?.trim();
-    if (!callSid) {
+    const customerNumber = input.customerNumber
+      ? normalizeVoicePhoneNumber(input.customerNumber)
+      : undefined;
+
+    if (!callSid && !customerNumber) {
       return;
     }
 
-    if (this.prewarmByCallSid.has(callSid)) {
+    const prewarmKey = callSid ?? `phone:${customerNumber}`;
+    if (this.prewarmByCallSid.has(prewarmKey)) {
       return;
     }
 
-    const prewarmStreamSid = `prewarm:${callSid}`;
-    this.prewarmByCallSid.set(callSid, prewarmStreamSid);
-    this.schedulePrewarmCleanup(callSid, prewarmStreamSid);
+    const prewarmStreamSid = callSid
+      ? `prewarm:${callSid}`
+      : `prewarm:phone:${customerNumber}`;
+    this.prewarmByCallSid.set(prewarmKey, prewarmStreamSid);
+    if (callSid) {
+      this.prewarmByCallSid.set(callSid, prewarmStreamSid);
+    }
+    if (customerNumber) {
+      this.prewarmByPhone.set(customerNumber, prewarmStreamSid);
+      this.callTiming.linkPhone(customerNumber, `phone:${customerNumber}`);
+      this.callTiming.linkStreamSid(prewarmStreamSid, `phone:${customerNumber}`);
+    }
+    if (callSid) {
+      this.callTiming.linkCallSid(
+        callSid,
+        customerNumber ? `phone:${customerNumber}` : `callSid:${callSid}`,
+      );
+      if (!customerNumber) {
+        this.callTiming.linkStreamSid(prewarmStreamSid, `callSid:${callSid}`);
+      }
+    }
+    this.schedulePrewarmCleanup(prewarmKey, prewarmStreamSid, {
+      callSid,
+      customerNumber,
+    });
 
     this.logger.log({
       callSid,
+      customerNumber,
       prewarmStreamSid,
       message: 'voice_openai_prewarm_started',
     });
+    this.callTiming.markByPhone(
+      customerNumber,
+      CallTimingEvent.OPENAI_PREWARM_STARTED,
+      { callSid, prewarmStreamSid },
+    );
+    if (callSid) {
+      this.callTiming.markByCallSid(
+        callSid,
+        CallTimingEvent.OPENAI_PREWARM_STARTED,
+        { prewarmStreamSid },
+      );
+    }
 
     void this.startOpenAiSession({
       streamSid: prewarmStreamSid,
@@ -622,34 +669,97 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
   }
 
-  private schedulePrewarmCleanup(callSid: string, prewarmStreamSid: string): void {
-    const existing = this.prewarmCleanupTimers.get(callSid);
+  private resolvePrewarmStreamSid(
+    context: VoiceRuntimeSessionContext,
+  ): string | undefined {
+    const callSid = context.callSid?.trim();
+    if (callSid) {
+      const byCallSid = this.prewarmByCallSid.get(callSid);
+      if (byCallSid && this.sessions.has(byCallSid)) {
+        return byCallSid;
+      }
+    }
+
+    for (const rawPhone of [context.to, context.from]) {
+      const phone = rawPhone ? normalizeVoicePhoneNumber(rawPhone) : undefined;
+      if (!phone) {
+        continue;
+      }
+      const byPhone = this.prewarmByPhone.get(phone);
+      if (byPhone && this.sessions.has(byPhone)) {
+        this.logger.log({
+          streamSid: context.streamSid,
+          callSid,
+          matchedPhone: phone,
+          prewarmStreamSid: byPhone,
+          message: 'voice_openai_prewarm_adopted_by_phone',
+        });
+        return byPhone;
+      }
+    }
+
+    return undefined;
+  }
+
+  private schedulePrewarmCleanup(
+    prewarmKey: string,
+    prewarmStreamSid: string,
+    keys: { callSid?: string; customerNumber?: string },
+  ): void {
+    const existing = this.prewarmCleanupTimers.get(prewarmKey);
     if (existing) {
       clearTimeout(existing);
     }
 
     const timer = setTimeout(() => {
-      this.prewarmCleanupTimers.delete(callSid);
-      if (this.prewarmByCallSid.get(callSid) !== prewarmStreamSid) {
+      this.prewarmCleanupTimers.delete(prewarmKey);
+      if (this.prewarmByCallSid.get(prewarmKey) !== prewarmStreamSid) {
         return;
       }
-      this.prewarmByCallSid.delete(callSid);
+      this.prewarmByCallSid.delete(prewarmKey);
+      if (keys.callSid) {
+        this.prewarmByCallSid.delete(keys.callSid);
+      }
+      if (keys.customerNumber) {
+        this.prewarmByPhone.delete(keys.customerNumber);
+      }
       void this.endSession(prewarmStreamSid);
       this.logger.log({
-        callSid,
+        prewarmKey,
         prewarmStreamSid,
         message: 'voice_openai_prewarm_expired',
       });
     }, PREWARM_SESSION_TTL_MS);
 
-    this.prewarmCleanupTimers.set(callSid, timer);
+    this.prewarmCleanupTimers.set(prewarmKey, timer);
   }
 
-  private clearPrewarmCleanupTimer(callSid: string): void {
-    const timer = this.prewarmCleanupTimers.get(callSid);
+  private clearPrewarmCleanupTimer(prewarmKey: string): void {
+    const timer = this.prewarmCleanupTimers.get(prewarmKey);
     if (timer) {
       clearTimeout(timer);
-      this.prewarmCleanupTimers.delete(callSid);
+      this.prewarmCleanupTimers.delete(prewarmKey);
+    }
+  }
+
+  private clearPrewarmMappings(
+    prewarmStreamSid: string,
+    keys: { callSid?: string; customerNumber?: string; prewarmKey?: string },
+  ): void {
+    if (keys.prewarmKey) {
+      this.clearPrewarmCleanupTimer(keys.prewarmKey);
+      if (this.prewarmByCallSid.get(keys.prewarmKey) === prewarmStreamSid) {
+        this.prewarmByCallSid.delete(keys.prewarmKey);
+      }
+    }
+    if (keys.callSid && this.prewarmByCallSid.get(keys.callSid) === prewarmStreamSid) {
+      this.prewarmByCallSid.delete(keys.callSid);
+    }
+    if (
+      keys.customerNumber &&
+      this.prewarmByPhone.get(keys.customerNumber) === prewarmStreamSid
+    ) {
+      this.prewarmByPhone.delete(keys.customerNumber);
     }
   }
 
@@ -664,16 +774,36 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     const realStreamSid = context.streamSid;
     const callSid = context.callSid?.trim();
-    if (callSid) {
-      this.clearPrewarmCleanupTimer(callSid);
-      this.prewarmByCallSid.delete(callSid);
-    }
+    const customerNumber = [context.to, context.from]
+      .map((value) =>
+        value ? normalizeVoicePhoneNumber(value) : undefined,
+      )
+      .find((value): value is string => Boolean(value));
+
+    this.clearPrewarmMappings(prewarmStreamSid, {
+      callSid,
+      customerNumber,
+      prewarmKey: callSid ?? (customerNumber ? `phone:${customerNumber}` : undefined),
+    });
 
     this.sessions.delete(prewarmStreamSid);
     session.streamSid = realStreamSid;
     session.callSid = callSid ?? session.callSid;
     session.smartfloStartReceived = context.smartfloStartReceived === true;
+    if (context.openingContext) {
+      session.openingContext = context.openingContext;
+    }
+    if (context.callContext) {
+      session.callContext = context.callContext;
+    }
     this.sessions.set(realStreamSid, session);
+
+    if (customerNumber) {
+      this.callTiming.linkStreamSid(realStreamSid, `phone:${customerNumber}`);
+    }
+    if (callSid) {
+      this.callTiming.linkStreamSid(realStreamSid, `callSid:${callSid}`);
+    }
 
     const prewarmMs = session.connectedAt
       ? Date.now() - session.connectedAt.getTime()
@@ -687,6 +817,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       openAiSessionCreated: session.openAiSessionCreated,
       openingState: session.openingState,
       message: 'voice_openai_prewarm_adopted',
+    });
+    this.callTiming.markByStreamSid(realStreamSid, CallTimingEvent.PREWARM_ADOPTED, {
+      prewarmStreamSid,
+      prewarmMs,
+      callSid,
+    });
+    this.callTiming.markByCallSid(callSid, CallTimingEvent.PREWARM_ADOPTED, {
+      streamSid: realStreamSid,
+      prewarmMs,
     });
 
     this.updateRuntimeState(realStreamSid, {
@@ -837,6 +976,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     ws.on('open', () => {
       session.status = 'connected';
       session.connectedAt = new Date();
+      this.callTiming.markByStreamSid(
+        streamSid,
+        CallTimingEvent.OPENAI_WEBSOCKET_CONNECTED,
+        { callSid: context.callSid },
+      );
       this.updateRuntimeState(streamSid, {
         runtimeStatus: 'connected',
         runtimeConnectedAt: session.connectedAt,
@@ -1662,6 +1806,18 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     };
 
     const skipReason = getOpeningSkipReason(readinessInput);
+    if (session.smartfloStartReceived || skipReason === null) {
+      this.callTiming.markByStreamSid(
+        session.streamSid,
+        CallTimingEvent.OPENING_READINESS_EVALUATED,
+        {
+          skipReason,
+          openingState: session.openingState,
+          openAiSessionCreated: session.openAiSessionCreated,
+          smartfloStartReceived: session.smartfloStartReceived,
+        },
+      );
+    }
     if (skipReason) {
       this.logger.log({
         streamSid: session.streamSid,
@@ -1787,6 +1943,14 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         streamSid: session.streamSid,
         message: 'opening response.create sent',
       });
+      this.callTiming.markByStreamSid(
+        session.streamSid,
+        CallTimingEvent.OPENING_RESPONSE_CREATE_SENT,
+      );
+      this.callTiming.markByCallSid(
+        session.callSid,
+        CallTimingEvent.OPENING_RESPONSE_CREATE_SENT,
+      );
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Failed to send opening greeting';
@@ -2548,6 +2712,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     if (type === 'session.created') {
       session.openAiSessionCreated = true;
       session.sessionReady = true;
+      this.callTiming.markByStreamSid(
+        streamSid,
+        CallTimingEvent.OPENAI_SESSION_CREATED,
+      );
       const sessionPayload = asRecord(event.session);
       if (sessionPayload) {
         const outputFormat = parseOpenAiOutputAudioFormat(sessionPayload);
@@ -2574,6 +2742,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     if (type === 'session.updated') {
       session.openAiSessionUpdated = true;
       session.sessionReady = true;
+      this.callTiming.markByStreamSid(
+        streamSid,
+        CallTimingEvent.OPENAI_SESSION_UPDATED,
+      );
       const sessionPayload = asRecord(event.session);
       if (sessionPayload) {
         const outputFormat = parseOpenAiOutputAudioFormat(sessionPayload);
@@ -2939,6 +3111,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
+    this.callTiming.markByStreamSid(
+      session.streamSid,
+      CallTimingEvent.FIRST_OPENAI_AUDIO_DELTA,
+      { bytes: decoded.length },
+      { once: true },
+    );
+
     voiceDebugLog(this.logger, session.streamSid, 'openai_audio_delta', {
       bytes: decoded.length,
       format: session.outputAudioFormat,
@@ -3143,6 +3322,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       outboundMediaCount,
       message: 'Sending outbound media to Smartflo via AudioGateway',
     });
+
+    this.callTiming.markByStreamSid(
+      streamSid,
+      CallTimingEvent.FIRST_SMARTFLO_OUTBOUND_CHUNK,
+      { mulawBytes, outboundMediaCount },
+      { once: true },
+    );
 
     this.audioGateway.sendMedia(streamSid, base64MulawPayload);
   }

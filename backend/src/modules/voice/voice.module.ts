@@ -13,6 +13,7 @@ import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import { VoiceOpeningConfigService } from './voice-opening-config.service';
 import { SmartfloClickToCallService } from './smartflo-click-to-call.service';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
+import { CallTimingDiagnosticsService } from './call-timing-diagnostics.service';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
 import { VoiceSharedStateService } from './voice-shared-state.service';
 import { VoiceController } from './voice.controller';
@@ -31,6 +32,7 @@ import { VoiceTranscriptEmailController } from './voice-transcript-email.control
   imports: [NotificationsModule, TrainingModule],
   controllers: [VoiceController, VoiceTestCallController, VoiceTranscriptEmailController],
   providers: [
+    CallTimingDiagnosticsService,
     VoiceSharedStateService,
     VoiceSessionService,
     VoiceSocketRegistry,

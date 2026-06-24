@@ -13,6 +13,10 @@ import {
 import { PrismaService } from '../../database/prisma.service';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import {
+  CallTimingDiagnosticsService,
+  CallTimingEvent,
+} from './call-timing-diagnostics.service';
+import {
   extractSmartfloProviderCallSid,
   VoiceCallAuthorizationService,
 } from './voice-call-authorization.service';
@@ -45,6 +49,7 @@ export class SmartfloClickToCallService {
     private readonly prisma: PrismaService,
     private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
     private readonly voiceOpeningConfigService: VoiceOpeningConfigService,
+    private readonly callTiming: CallTimingDiagnosticsService,
   ) {}
 
   async initiateTestCall(
@@ -73,6 +78,14 @@ export class SmartfloClickToCallService {
       this.normalizeCustomerNumber(requestedCustomerNumber);
     this.logger.log(`Normalized customer number: ${normalizedCustomerNumber}`);
 
+    const traceId = this.callTiming.beginTrace(
+      `phone:${normalizedCustomerNumber}`,
+      { normalizedCustomerNumber },
+    );
+    this.callTiming.mark(traceId, CallTimingEvent.TEST_CALL_API_RECEIVED, {
+      hasCallContext: Boolean(callContext),
+    });
+
     const apiKey = this.configService
       .get<string>('SMARTFLO_CLICK_TO_CALL_API_KEY')
       ?.trim();
@@ -100,6 +113,7 @@ export class SmartfloClickToCallService {
 
     let response: Response;
     try {
+      this.callTiming.mark(traceId, CallTimingEvent.SMARTFLO_REQUEST_SENT);
       response = await fetch(`${baseUrl}/v1/click_to_call_support`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -119,6 +133,9 @@ export class SmartfloClickToCallService {
     const providerResponse = this.stripSensitiveFields(
       await this.parseProviderResponse(response),
     );
+    this.callTiming.mark(traceId, CallTimingEvent.SMARTFLO_RESPONSE_RECEIVED, {
+      smartfloStatus: response.status,
+    });
 
     if (!response.ok) {
       this.logger.error(
@@ -143,6 +160,22 @@ export class SmartfloClickToCallService {
     });
 
     const providerCallSid = extractSmartfloProviderCallSid(providerResponse);
+    this.callTiming.linkCallSid(providerCallSid, traceId);
+
+    const openingContext = this.voiceOpeningConfigService.isSpeakFirstEnabled()
+      ? this.voiceOpeningConfigService.resolve()
+      : undefined;
+
+    if (this.voiceOpeningConfigService.isSpeakFirstEnabled()) {
+      this.voiceRuntimeFactory.getProvider().prewarmAuthorizedCall?.({
+        callSid: providerCallSid,
+        customerNumber: normalizedCustomerNumber,
+        callContext,
+        openingContext,
+        aiSpeakFirstEnabled: true,
+      });
+    }
+
     const call = await this.createLiveAnalysisCallRecord({
       normalizedCustomerNumber,
       requestedCustomerNumber,
@@ -158,16 +191,6 @@ export class SmartfloClickToCallService {
       callId: call.id,
       callContext,
     });
-
-    if (providerCallSid && this.voiceOpeningConfigService.isSpeakFirstEnabled()) {
-      this.voiceRuntimeFactory.getProvider().prewarmAuthorizedCall?.({
-        callSid: providerCallSid,
-        callId: call.id,
-        callContext,
-        openingContext: this.voiceOpeningConfigService.resolve(),
-        aiSpeakFirstEnabled: true,
-      });
-    }
 
     return {
       success: true,
