@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   buildCallContextFromForm,
   CallContextForm,
-  emptyCallContextForm,
+  randomCallContextForm,
 } from '../components/voice/CallContextForm';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -36,7 +36,7 @@ function extractErrorMessage(error: unknown): string {
 export function VoiceTestCallPage() {
   const navigate = useNavigate();
   const [customerNumber, setCustomerNumber] = useState('');
-  const [callContextForm, setCallContextForm] = useState(emptyCallContextForm);
+  const [callContextForm, setCallContextForm] = useState(randomCallContextForm);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<VoiceTestCallResponse | null>(null);

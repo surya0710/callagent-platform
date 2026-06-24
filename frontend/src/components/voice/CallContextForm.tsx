@@ -23,6 +23,104 @@ export const emptyCallContextForm = (): CallContextFormValues => ({
   overtimeCharges: '',
 });
 
+const CUSTOMER_FIRST_NAMES = [
+  'Rahul',
+  'Priya',
+  'Amit',
+  'Neha',
+  'Vikram',
+  'Ananya',
+  'Arjun',
+  'Kavya',
+];
+const CUSTOMER_LAST_NAMES = [
+  'Sharma',
+  'Patel',
+  'Singh',
+  'Gupta',
+  'Reddy',
+  'Iyer',
+  'Mehta',
+  'Khan',
+];
+const DRIVER_FIRST_NAMES = ['Rajesh', 'Suresh', 'Manoj', 'Deepak', 'Sanjay'];
+const DRIVER_LAST_NAMES = ['Kumar', 'Yadav', 'Verma', 'Das', 'Nair'];
+const CITIES = ['Mumbai', 'Delhi', 'Bengaluru', 'Hyderabad', 'Pune', 'Chennai'];
+const ZONES: Record<string, string[]> = {
+  Mumbai: ['South Mumbai', 'Bandra', 'Andheri', 'Powai'],
+  Delhi: ['Connaught Place', 'Dwarka', 'Gurgaon', 'Noida'],
+  Bengaluru: ['Indiranagar', 'Whitefield', 'Koramangala', 'Electronic City'],
+  Hyderabad: ['Hitech City', 'Banjara Hills', 'Gachibowli', 'Secunderabad'],
+  Pune: ['Koregaon Park', 'Hinjewadi', 'Kothrud', 'Viman Nagar'],
+  Chennai: ['T Nagar', 'Adyar', 'OMR', 'Anna Nagar'],
+};
+const PRODUCT_TYPES = [
+  'Airport transfer',
+  'Local rental',
+  'Outstation trip',
+  'Corporate pickup',
+];
+const PACKAGES = [
+  '4 hours / 40 km',
+  '8 hours / 80 km',
+  '12 hours / 120 km',
+  'Airport drop — fixed',
+];
+const PAYMENT_MODES = ['Cash', 'UPI', 'Card', 'Corporate billing'];
+
+function pickRandom<T>(items: readonly T[]): T {
+  return items[Math.floor(Math.random() * items.length)]!;
+}
+
+function randomInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomMobile(): string {
+  const firstDigit = pickRandom(['6', '7', '8', '9']);
+  return `${firstDigit}${String(randomInt(100000000, 999999999))}`;
+}
+
+function randomEndTime(): string {
+  const date = new Date();
+  date.setHours(randomInt(9, 22), pickRandom([0, 15, 30, 45]), 0, 0);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+}
+
+/** Temporary dev helper — pre-fills call context with random sample data. */
+export function randomCallContextForm(): CallContextFormValues {
+  const city = pickRandom(CITIES);
+  const totalCharges = randomInt(1500, 6000);
+  const balanceAmount = randomInt(0, Math.min(1500, totalCharges));
+  const overtimeMinutes = randomInt(0, 90);
+  const overtimeCharges =
+    overtimeMinutes > 0 ? randomInt(100, Math.max(100, overtimeMinutes * 12)) : 0;
+
+  return {
+    bookingNumber: `BK${randomInt(1000, 9999)}`,
+    customerName: `${pickRandom(CUSTOMER_FIRST_NAMES)} ${pickRandom(CUSTOMER_LAST_NAMES)}`,
+    customerNumber: randomMobile(),
+    driverName: `${pickRandom(DRIVER_FIRST_NAMES)} ${pickRandom(DRIVER_LAST_NAMES)}`,
+    driverMobileNumber: randomMobile(),
+    productType: pickRandom(PRODUCT_TYPES),
+    city,
+    zone: pickRandom(ZONES[city] ?? ['Central']),
+    package: pickRandom(PACKAGES),
+    endTime: randomEndTime(),
+    totalCharges: String(totalCharges),
+    balanceAmount: String(balanceAmount),
+    paymentMode: pickRandom(PAYMENT_MODES),
+    runningKms: String(randomInt(15, 120)),
+    overtimeMinutes: String(overtimeMinutes),
+    overtimeCharges: String(overtimeCharges),
+  };
+}
+
 const TEXT_FIELDS: Array<{
   key: keyof VoiceCallContext;
   label: string;
