@@ -1011,7 +1011,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     ws.on('message', (data) => {
-      this.handleServerMessage(streamSid, data);
+      const activeSession = this.findSessionByWebSocket(ws);
+      if (!activeSession) {
+        this.logger.warn({
+          streamSid,
+          message: 'OpenAI WebSocket message after session removed',
+        });
+        return;
+      }
+      this.handleServerMessage(activeSession.streamSid, data);
     });
 
     ws.on('error', (error) => {
@@ -2660,6 +2668,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
+  private findSessionByWebSocket(
+    ws: WebSocket,
+  ): OpenAiRealtimeSession | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.ws === ws) {
+        return session;
+      }
+    }
+    return undefined;
+  }
+
   private handleServerMessage(
     streamSid: string,
     data: Buffer | ArrayBuffer | Buffer[],
@@ -2685,6 +2704,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     const session = this.sessions.get(streamSid);
     if (!session) {
+      this.logger.warn({
+        streamSid,
+        openaiEvent: type,
+        message: 'OpenAI event for unknown streamSid — session map miss',
+      });
       return;
     }
 
