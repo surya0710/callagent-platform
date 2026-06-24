@@ -12,7 +12,6 @@ export const CallTimingEvent = {
   SMARTFLO_MEDIA_WS_CONNECTED: 'smartflo_media_websocket_connected',
   SMARTFLO_START_RECEIVED: 'smartflo_start_received',
   CALL_AUTHORIZATION_LOADED: 'call_authorization_loaded',
-  OPENAI_SESSION_CREATE_CALLED: 'openai_session_create_called',
   CALL_CONTEXT_LOADED: 'call_context_loaded',
   PREWARM_ADOPTED: 'prewarmed_openai_session_adopted',
   OPENING_READINESS_EVALUATED: 'opening_readiness_evaluated',
@@ -38,26 +37,6 @@ const KEY_DURATION_PAIRS: Array<{
     label: 'prewarm_started_to_session_created',
     from: CallTimingEvent.OPENAI_PREWARM_STARTED,
     to: CallTimingEvent.OPENAI_SESSION_CREATED,
-  },
-  {
-    label: 'smartflo_start_to_authorization_loaded',
-    from: CallTimingEvent.SMARTFLO_START_RECEIVED,
-    to: CallTimingEvent.CALL_AUTHORIZATION_LOADED,
-  },
-  {
-    label: 'authorization_loaded_to_openai_session_create_called',
-    from: CallTimingEvent.CALL_AUTHORIZATION_LOADED,
-    to: CallTimingEvent.OPENAI_SESSION_CREATE_CALLED,
-  },
-  {
-    label: 'openai_session_create_called_to_session_created',
-    from: CallTimingEvent.OPENAI_SESSION_CREATE_CALLED,
-    to: CallTimingEvent.OPENAI_SESSION_CREATED,
-  },
-  {
-    label: 'session_created_to_opening_response_create',
-    from: CallTimingEvent.OPENAI_SESSION_CREATED,
-    to: CallTimingEvent.OPENING_RESPONSE_CREATE_SENT,
   },
   {
     label: 'smartflo_start_to_prewarm_adopted',

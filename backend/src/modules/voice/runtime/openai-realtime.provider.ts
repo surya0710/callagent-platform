@@ -30,7 +30,6 @@ import {
 } from './voice-runtime.provider';
 import { VoiceOpeningContext, OpeningState } from '../voice-opening.types';
 import {
-  buildBaseVoiceInstructions,
   buildDefaultRealtimeInstructions,
   buildOpeningResponseInstructions,
   buildOpeningSessionInstructions,
@@ -577,19 +576,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     const callSid = context.callSid?.trim();
     if (context.smartfloStartReceived) {
-      this.callTiming.markByStreamSid(
-        streamSid,
-        CallTimingEvent.OPENAI_SESSION_CREATE_CALLED,
-        { callSid },
-        { once: true },
-      );
-      this.callTiming.markByCallSid(
-        callSid,
-        CallTimingEvent.OPENAI_SESSION_CREATE_CALLED,
-        { streamSid },
-        { once: true },
-      );
-
       const prewarmStreamSid = this.resolvePrewarmStreamSid(context);
       if (
         prewarmStreamSid &&
@@ -842,23 +828,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       prewarmMs,
     });
 
-    if (session.openAiSessionCreated) {
-      this.callTiming.markByStreamSid(
-        realStreamSid,
-        CallTimingEvent.OPENAI_SESSION_CREATED,
-        { adoptedFromPrewarm: prewarmStreamSid },
-        { once: true },
-      );
-    }
-    if (session.connectedAt) {
-      this.callTiming.markByStreamSid(
-        realStreamSid,
-        CallTimingEvent.OPENAI_WEBSOCKET_CONNECTED,
-        { adoptedFromPrewarm: prewarmStreamSid },
-        { once: true },
-      );
-    }
-
     this.updateRuntimeState(realStreamSid, {
       runtimeProvider: this.name,
       runtimeStatus: session.status,
@@ -872,26 +841,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       openingState: session.openingState,
     });
 
-    this.sendOpeningGreetingIfReady(session);
+    this.evaluateOpeningReadiness(session);
   }
 
   private async startOpenAiSession(context: VoiceRuntimeSessionContext): Promise<void> {
     const { streamSid } = context;
-
-    if (!context.smartfloStartReceived) {
-      this.callTiming.markByStreamSid(
-        streamSid,
-        CallTimingEvent.OPENAI_SESSION_CREATE_CALLED,
-        { callSid: context.callSid, prewarm: true },
-        { once: true },
-      );
-      this.callTiming.markByCallSid(
-        context.callSid,
-        CallTimingEvent.OPENAI_SESSION_CREATE_CALLED,
-        { streamSid, prewarm: true },
-        { once: true },
-      );
-    }
 
     const apiKey = sanitizeApiKey(this.configService.get<string>('OPENAI_API_KEY'));
     const model =
@@ -1034,18 +988,19 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         runtimeError: undefined,
         isOpenAiConnected: true,
       });
-      void this.sendMinimalSessionUpdate(session, model);
+      void this.sendSessionUpdate(session, model);
       this.logger.log({
         streamSid,
         model,
         turnDetection: useServerVad ? 'server_vad' : 'manual',
-        message: 'OpenAI Realtime WebSocket open — minimal session.update sent',
+        message: 'OpenAI Realtime WebSocket open',
       });
 
       setTimeout(() => {
         if (!session.sessionReady && !session.closing) {
           session.sessionReady = true;
           session.openAiSessionUpdated = true;
+          this.evaluateOpeningReadiness(session);
           this.flushPendingInputIfReady(session);
           this.logger.warn({
             streamSid,
@@ -1227,52 +1182,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       responsePending: false,
       isAwaitingOpenAiResponse: false,
     });
-  }
-
-  private sendMinimalSessionUpdate(
-    session: OpenAiRealtimeSession,
-    model: string,
-  ): void {
-    const voice =
-      this.configService.get<string>('OPENAI_REALTIME_VOICE')?.trim() ??
-      DEFAULT_REALTIME_VOICE;
-    const accent = parseVoiceAccent(
-      this.configService.get<string>('VOICE_ACCENT'),
-    );
-    const instructions = buildBaseVoiceInstructions(accent);
-
-    const payload = buildGaSessionUpdate({
-      voice,
-      instructions,
-      model,
-      turnDetection: session.useServerVad ? 'server_vad' : 'manual',
-      ...(this.voiceTranscriptConfig.isRealtimeEnabled()
-        ? {
-            inputTranscription: {
-              model: this.voiceTranscriptConfig.getRealtimeModel(),
-              language: this.voiceTranscriptConfig.getLanguageHint(),
-              prompt: buildRealtimeTranscriptionPrompt(
-                this.voiceTranscriptConfig.getGlossaryTerms(),
-              ),
-            },
-          }
-        : {}),
-    });
-
-    session.activeInstructionsMode =
-      session.aiSpeakFirstEnabled && session.openingContext ? 'opening' : 'normal';
-
-    this.logger.log({
-      streamSid: session.streamSid,
-      voice,
-      model,
-      phase: 'minimal',
-      turnDetection: session.useServerVad ? 'server_vad' : 'manual',
-      aiSpeakFirstEnabled: session.aiSpeakFirstEnabled,
-      message: 'voice_runtime_minimal_session_update_sent',
-    });
-
-    session.ws.send(JSON.stringify(payload));
   }
 
   private async sendSessionUpdate(
@@ -1856,8 +1765,14 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
   }
 
-  private sendOpeningGreetingIfReady(session: OpenAiRealtimeSession): void {
+  private evaluateOpeningReadiness(session: OpenAiRealtimeSession): void {
     if (!session.aiSpeakFirstEnabled) {
+      this.logger.log({
+        streamSid: session.streamSid,
+        VOICE_AI_SPEAK_FIRST_ENABLED: false,
+        reason: 'speak_first_disabled',
+        message: 'opening skipped reason',
+      });
       return;
     }
 
@@ -1879,7 +1794,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       this.logger.log({
         streamSid: session.streamSid,
         openAiSessionCreated: session.openAiSessionCreated,
-        message: 'OpenAI session ready — opening greeting eligible',
+        openAiSessionUpdated: session.openAiSessionUpdated,
+        message: 'OpenAI session ready',
       });
     }
 
@@ -1920,10 +1836,14 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    this.sendOpeningGreeting(session);
+    this.startConversationWithGreeting(session);
   }
 
-  private sendOpeningGreeting(session: OpenAiRealtimeSession): void {
+  private tryStartOpeningGreeting(session: OpenAiRealtimeSession): void {
+    this.evaluateOpeningReadiness(session);
+  }
+
+  startConversationWithGreeting(session: OpenAiRealtimeSession): void {
     if (
       !session.aiSpeakFirstEnabled ||
       !session.openingContext ||
@@ -2034,14 +1954,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       this.callTiming.markByStreamSid(
         session.streamSid,
         CallTimingEvent.OPENING_RESPONSE_CREATE_SENT,
-        undefined,
-        { once: true },
       );
       this.callTiming.markByCallSid(
         session.callSid,
         CallTimingEvent.OPENING_RESPONSE_CREATE_SENT,
-        undefined,
-        { once: true },
       );
     } catch (error) {
       const message =
@@ -2837,11 +2753,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           });
         }
       }
-      this.logger.log({
-        streamSid,
-        message: 'OpenAI session.created — triggering opening greeting if ready',
-      });
-      this.sendOpeningGreetingIfReady(session);
+      if (session.aiSpeakFirstEnabled) {
+        this.logger.log({
+          streamSid,
+          message: 'voice_opening_waiting_for_openai_ready',
+        });
+      }
+      this.evaluateOpeningReadiness(session);
       return;
     }
 
@@ -2865,6 +2783,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           });
         }
       }
+      this.evaluateOpeningReadiness(session);
       this.flushPendingInputIfReady(session);
       return;
     }
