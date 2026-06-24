@@ -1856,9 +1856,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
   }
 
-    this.sendOpeningGreetingIfReady(session);
-  }
-
   private sendOpeningGreetingIfReady(session: OpenAiRealtimeSession): void {
     if (!session.aiSpeakFirstEnabled) {
       return;
