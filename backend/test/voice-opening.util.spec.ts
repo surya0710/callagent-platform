@@ -10,6 +10,7 @@ import {
   resolveTimeAwareOpeningGreeting,
   sanitizeBaseInstructionsForOpening,
   canTriggerOpening,
+  getOpeningSkipReason,
   VOICE_OPENING_DEFAULTS,
 } from '../src/modules/voice/voice-opening.util';
 
@@ -70,7 +71,7 @@ describe('voice-opening.util', () => {
         {
           agentName: 'Aisha',
           companyName: 'TATD',
-          callPurpose: 'regarding your booking',
+          callPurpose: 'I wanted to hear about your recent booking experience',
           openingGreeting: 'Namaste',
         },
         {
@@ -80,7 +81,7 @@ describe('voice-opening.util', () => {
       );
 
       expect(message).toBe(
-        'Namaste Rahul ji, this is Aisha calling from TATD regarding your booking BK1234. Is this a good time to speak?',
+        'Namaste Rahul ji, this is Aisha calling from TATD regarding your booking BK1234. I wanted to hear about your recent booking experience. Is this a good time to speak?',
       );
     });
   });
@@ -239,16 +240,36 @@ describe('voice-opening.util', () => {
       expect(
         canTriggerOpening({ ...baseReady, openingAlreadyRequested: true }),
       ).toBe(false);
+      expect(getOpeningSkipReason({ ...baseReady, openingAlreadyRequested: true })).toBe(
+        'opening_already_requested',
+      );
     });
 
-    it('returns false before OpenAI session.updated', () => {
+    it('returns true after OpenAI session.created even before session.updated', () => {
       expect(
         canTriggerOpening({
           ...baseReady,
           openAiSessionUpdated: false,
+          openingState: 'ready_to_speak',
+        }),
+      ).toBe(true);
+    });
+
+    it('returns false before OpenAI session.created', () => {
+      expect(
+        canTriggerOpening({
+          ...baseReady,
+          openAiSessionCreated: false,
           openingState: 'waiting_for_openai_ready',
         }),
       ).toBe(false);
+      expect(
+        getOpeningSkipReason({
+          ...baseReady,
+          openAiSessionCreated: false,
+          openingState: 'waiting_for_openai_ready',
+        }),
+      ).toBe('openai_session_not_created');
     });
   });
 });

@@ -33,7 +33,8 @@ import {
   buildOpeningResponseInstructions,
   buildOpeningSessionInstructions,
   buildPostOpeningSessionInstructions,
-  canTriggerOpening,
+  buildExampleOpeningMessage,
+  getOpeningSkipReason,
   CONVERSATION_MAX_OUTPUT_TOKENS,
   isOpeningInboundSuppressedState,
   OPENING_MAX_OUTPUT_TOKENS,
@@ -1470,19 +1471,40 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   }
 
   private evaluateOpeningReadiness(session: OpenAiRealtimeSession): void {
-    if (!session.aiSpeakFirstEnabled || !session.openingContext) {
+    if (!session.aiSpeakFirstEnabled) {
+      this.logger.log({
+        streamSid: session.streamSid,
+        VOICE_AI_SPEAK_FIRST_ENABLED: false,
+        reason: 'speak_first_disabled',
+        message: 'opening skipped reason',
+      });
+      return;
+    }
+
+    if (!session.openingContext) {
+      this.logger.log({
+        streamSid: session.streamSid,
+        VOICE_AI_SPEAK_FIRST_ENABLED: true,
+        reason: 'opening_context_missing',
+        message: 'opening skipped reason',
+      });
       return;
     }
 
     if (
       session.openingState === 'waiting_for_openai_ready' &&
-      session.openAiSessionCreated &&
-      session.openAiSessionUpdated
+      session.openAiSessionCreated
     ) {
       this.setOpeningState(session, 'ready_to_speak', 'voice_opening_ready');
+      this.logger.log({
+        streamSid: session.streamSid,
+        openAiSessionCreated: session.openAiSessionCreated,
+        openAiSessionUpdated: session.openAiSessionUpdated,
+        message: 'OpenAI session ready',
+      });
     }
 
-    const ready = canTriggerOpening({
+    const readinessInput = {
       aiSpeakFirstEnabled: session.aiSpeakFirstEnabled,
       openingState: session.openingState,
       authorized: session.authorized,
@@ -1494,11 +1516,20 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       openAiSessionUpdated: session.openAiSessionUpdated,
       responsePending: session.responseRequested || session.responseInProgress,
       openingAlreadyRequested: session.openingGreetingRequested,
-    });
+    };
 
-    if (ready) {
-      this.startConversationWithGreeting(session);
+    const skipReason = getOpeningSkipReason(readinessInput);
+    if (skipReason) {
+      this.logger.log({
+        streamSid: session.streamSid,
+        reason: skipReason,
+        openingState: session.openingState,
+        message: 'opening skipped reason',
+      });
+      return;
     }
+
+    this.startConversationWithGreeting(session);
   }
 
   private tryStartOpeningGreeting(session: OpenAiRealtimeSession): void {
@@ -1509,10 +1540,18 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     if (
       !session.aiSpeakFirstEnabled ||
       !session.openingContext ||
-      session.openingGreetingRequested ||
-      session.openingGreetingComplete ||
       session.closing
     ) {
+      return;
+    }
+
+    if (session.openingGreetingRequested || session.openingGreetingComplete) {
+      this.logger.log({
+        streamSid: session.streamSid,
+        openingGreetingRequested: session.openingGreetingRequested,
+        openingGreetingComplete: session.openingGreetingComplete,
+        message: 'opening already sent guard',
+      });
       return;
     }
 
@@ -1552,6 +1591,18 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       'voice_opening_response_requested',
     );
 
+    const openingGreetingText = buildExampleOpeningMessage(
+      session.openingContext,
+      session.callContext,
+    );
+
+    this.logger.log({
+      streamSid: session.streamSid,
+      openingGreetingText,
+      VOICE_AI_SPEAK_FIRST_ENABLED: true,
+      message: 'opening greeting text',
+    });
+
     this.logger.log({
       streamSid: session.streamSid,
       openingContext: session.openingContext,
@@ -1589,6 +1640,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           },
         }),
       );
+      this.logger.log({
+        streamSid: session.streamSid,
+        message: 'opening response.create sent',
+      });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Failed to send opening greeting';
@@ -2369,6 +2424,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           message: 'voice_opening_waiting_for_openai_ready',
         });
       }
+      this.evaluateOpeningReadiness(session);
       return;
     }
 

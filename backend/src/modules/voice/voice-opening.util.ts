@@ -156,6 +156,23 @@ export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
+function appendOpeningCallPurposeSentence(callPurpose: string): string {
+  const purpose = callPurpose.trim().replace(/\.$/, '');
+  if (!purpose) {
+    return '';
+  }
+  if (/^I('m| am) calling/i.test(purpose)) {
+    return ` ${purpose}.`;
+  }
+  if (/^(to |about |regarding )/i.test(purpose)) {
+    return ` I'm calling ${purpose}.`;
+  }
+  if (/^I /i.test(purpose)) {
+    return ` ${purpose}.`;
+  }
+  return ` I'm calling about ${purpose}.`;
+}
+
 export function buildExampleOpeningMessage(
   context: VoiceOpeningContext,
   callContext?: CallContext,
@@ -169,7 +186,8 @@ export function buildExampleOpeningMessage(
 
   if (callContext?.customerName && callContext.bookingNumber) {
     const name = formatCustomerNameForGreeting(callContext.customerName);
-    return `${greeting} ${name}, this is ${context.agentName} calling from ${context.companyName} regarding your booking ${callContext.bookingNumber}.${permission}`;
+    const purposeSentence = appendOpeningCallPurposeSentence(context.callPurpose);
+    return `${greeting} ${name}, this is ${context.agentName} calling from ${context.companyName} regarding your booking ${callContext.bookingNumber}.${purposeSentence}${permission}`;
   }
 
   if (callContext?.customerName) {
@@ -326,44 +344,47 @@ export interface OpeningReadinessInput {
   openingAlreadyRequested: boolean;
 }
 
-export function canTriggerOpening(input: OpeningReadinessInput): boolean {
+export function getOpeningSkipReason(
+  input: OpeningReadinessInput,
+): string | null {
   if (!input.aiSpeakFirstEnabled) {
-    return false;
+    return 'speak_first_disabled';
   }
   if (!input.authorized) {
-    return false;
+    return 'not_authorized';
   }
   if (!input.smartfloStartReceived) {
-    return false;
+    return 'smartflo_start_not_received';
   }
   if (!input.streamSidKnown) {
-    return false;
+    return 'stream_sid_unknown';
   }
   if (!input.smartfloWebSocketOpen) {
-    return false;
+    return 'smartflo_websocket_not_open';
   }
   if (!input.openAiWebSocketOpen) {
-    return false;
+    return 'openai_websocket_not_open';
   }
   if (!input.openAiSessionCreated) {
-    return false;
-  }
-  if (!input.openAiSessionUpdated) {
-    return false;
+    return 'openai_session_not_created';
   }
   if (input.responsePending) {
-    return false;
+    return 'response_pending';
   }
   if (input.openingAlreadyRequested) {
-    return false;
+    return 'opening_already_requested';
   }
   if (
     input.openingState !== 'waiting_for_openai_ready' &&
     input.openingState !== 'ready_to_speak'
   ) {
-    return false;
+    return `opening_state_${input.openingState}`;
   }
-  return true;
+  return null;
+}
+
+export function canTriggerOpening(input: OpeningReadinessInput): boolean {
+  return getOpeningSkipReason(input) === null;
 }
 
 export function isOpeningInboundSuppressedState(state: OpeningState): boolean {

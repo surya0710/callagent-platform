@@ -108,7 +108,7 @@ export class SmartfloStreamAdapter {
     this.logger.log({
       socketSessionId,
       smartfloEvent: 'connected',
-      message: 'Smartflo connected event received',
+      message: 'voice stream connected',
     });
     this.voiceRuntime.onSocketConnected?.(socketSessionId);
   }
@@ -199,6 +199,15 @@ export class SmartfloStreamAdapter {
       callId: authorization.callId,
     });
 
+    this.logger.log({
+      socketSessionId,
+      streamSid,
+      callSid: startData.callSid,
+      authorizationSource: authorization.source,
+      authorizationId: authorization.authorizationId,
+      message: 'authorization success',
+    });
+
     if (authorization.callId) {
       this.voiceTranscriptService.bindCall(streamSid, authorization.callId);
       void this.markCallInProgress(authorization.callId, startData.callSid).catch(
@@ -254,7 +263,7 @@ export class SmartfloStreamAdapter {
       authorizationSource: authorization.source,
       authorizationId: authorization.authorizationId,
       runtimeProvider: this.voiceRuntime.name,
-      aiSpeakFirstEnabled,
+      VOICE_AI_SPEAK_FIRST_ENABLED: aiSpeakFirstEnabled,
       agentName: openingContext?.agentName,
       companyName: openingContext?.companyName,
       hasCallContext: Boolean(callContext),
