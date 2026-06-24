@@ -24,6 +24,7 @@ import {
 } from './openai-realtime-ga.util';
 import {
   VoiceRuntimeProvider,
+  VoiceRuntimePrewarmContext,
   VoiceRuntimeSessionContext,
   VoiceRuntimeStatus,
 } from './voice-runtime.provider';
@@ -68,6 +69,7 @@ const DEFAULT_SPEECH_MIN_DURATION_MS = 80;
 const DEFAULT_RECENT_SPEECH_MAX_AGE_MS = 2500;
 const DEFAULT_AI_COMPLETION_HANGUP_DELAY_MS = 1500;
 const DEFAULT_AI_COMPLETION_HANGUP_MAX_WAIT_MS = 6000;
+const PREWARM_SESSION_TTL_MS = 10 * 60 * 1000;
 
 const LIVE_OUTBOUND_PCM_OPTIONS = {
   autoNormalize: false,
@@ -76,6 +78,7 @@ const LIVE_OUTBOUND_PCM_OPTIONS = {
 
 interface OpenAiRealtimeSession {
   streamSid: string;
+  callSid?: string;
   ws: WebSocket;
   status: VoiceRuntimeStatus;
   connectedAt?: Date;
@@ -444,6 +447,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   readonly name = 'openai-realtime';
   private readonly logger = new Logger(OpenAIRealtimeProvider.name);
   private readonly sessions = new Map<string, OpenAiRealtimeSession>();
+  private readonly prewarmByCallSid = new Map<string, string>();
+  private readonly prewarmCleanupTimers = new Map<string, NodeJS.Timeout>();
   private readonly loggedOpenAiOutputByStreamSid = new Set<string>();
 
   constructor(
@@ -562,9 +567,146 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
+    const callSid = context.callSid?.trim();
+    if (callSid && context.smartfloStartReceived) {
+      const prewarmStreamSid = this.prewarmByCallSid.get(callSid);
+      if (
+        prewarmStreamSid &&
+        prewarmStreamSid !== streamSid &&
+        this.sessions.has(prewarmStreamSid)
+      ) {
+        this.adoptPrewarmSession(prewarmStreamSid, context);
+        return;
+      }
+    }
+
     if (this.sessions.has(streamSid)) {
       await this.endSession(streamSid);
     }
+
+    await this.startOpenAiSession(context);
+  }
+
+  prewarmAuthorizedCall(input: VoiceRuntimePrewarmContext): void {
+    if (!input.aiSpeakFirstEnabled) {
+      return;
+    }
+
+    const callSid = input.callSid?.trim();
+    if (!callSid) {
+      return;
+    }
+
+    if (this.prewarmByCallSid.has(callSid)) {
+      return;
+    }
+
+    const prewarmStreamSid = `prewarm:${callSid}`;
+    this.prewarmByCallSid.set(callSid, prewarmStreamSid);
+    this.schedulePrewarmCleanup(callSid, prewarmStreamSid);
+
+    this.logger.log({
+      callSid,
+      prewarmStreamSid,
+      message: 'voice_openai_prewarm_started',
+    });
+
+    void this.startOpenAiSession({
+      streamSid: prewarmStreamSid,
+      callSid,
+      openingContext: input.openingContext,
+      callContext: input.callContext,
+      aiSpeakFirstEnabled: true,
+      smartfloStartReceived: false,
+      authorized: true,
+    });
+  }
+
+  private schedulePrewarmCleanup(callSid: string, prewarmStreamSid: string): void {
+    const existing = this.prewarmCleanupTimers.get(callSid);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.prewarmCleanupTimers.delete(callSid);
+      if (this.prewarmByCallSid.get(callSid) !== prewarmStreamSid) {
+        return;
+      }
+      this.prewarmByCallSid.delete(callSid);
+      void this.endSession(prewarmStreamSid);
+      this.logger.log({
+        callSid,
+        prewarmStreamSid,
+        message: 'voice_openai_prewarm_expired',
+      });
+    }, PREWARM_SESSION_TTL_MS);
+
+    this.prewarmCleanupTimers.set(callSid, timer);
+  }
+
+  private clearPrewarmCleanupTimer(callSid: string): void {
+    const timer = this.prewarmCleanupTimers.get(callSid);
+    if (timer) {
+      clearTimeout(timer);
+      this.prewarmCleanupTimers.delete(callSid);
+    }
+  }
+
+  private adoptPrewarmSession(
+    prewarmStreamSid: string,
+    context: VoiceRuntimeSessionContext,
+  ): void {
+    const session = this.sessions.get(prewarmStreamSid);
+    if (!session) {
+      return;
+    }
+
+    const realStreamSid = context.streamSid;
+    const callSid = context.callSid?.trim();
+    if (callSid) {
+      this.clearPrewarmCleanupTimer(callSid);
+      this.prewarmByCallSid.delete(callSid);
+    }
+
+    this.sessions.delete(prewarmStreamSid);
+    session.streamSid = realStreamSid;
+    session.callSid = callSid ?? session.callSid;
+    session.smartfloStartReceived = context.smartfloStartReceived === true;
+    this.sessions.set(realStreamSid, session);
+
+    const prewarmMs = session.connectedAt
+      ? Date.now() - session.connectedAt.getTime()
+      : undefined;
+
+    this.logger.log({
+      streamSid: realStreamSid,
+      prewarmStreamSid,
+      callSid,
+      prewarmMs,
+      openAiSessionCreated: session.openAiSessionCreated,
+      openingState: session.openingState,
+      message: 'voice_openai_prewarm_adopted',
+    });
+
+    this.updateRuntimeState(realStreamSid, {
+      runtimeProvider: this.name,
+      runtimeStatus: session.status,
+      runtimeConnectedAt: session.connectedAt,
+      runtimeError: undefined,
+      isOpenAiConnected: session.ws.readyState === WebSocket.OPEN,
+    });
+
+    this.voiceSessionService.updateOpeningState(realStreamSid, {
+      aiSpeakFirstEnabled: session.aiSpeakFirstEnabled,
+      openingState: session.openingState,
+    });
+
+    this.evaluateOpeningReadiness(session);
+  }
+
+  private async startOpenAiSession(context: VoiceRuntimeSessionContext): Promise<void> {
+    const { streamSid } = context;
 
     const apiKey = sanitizeApiKey(this.configService.get<string>('OPENAI_API_KEY'));
     const model =
@@ -608,6 +750,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     const session: OpenAiRealtimeSession = {
       streamSid,
+      callSid: context.callSid?.trim(),
       ws,
       status: 'connecting',
       sessionReady: false,

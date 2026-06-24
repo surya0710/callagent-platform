@@ -11,6 +11,7 @@ import {
   CallRequestOriginInfo,
 } from '../../common/server-origin.util';
 import { PrismaService } from '../../database/prisma.service';
+import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import {
   extractSmartfloProviderCallSid,
   VoiceCallAuthorizationService,
@@ -20,6 +21,7 @@ import {
   sanitizeCallContext,
 } from './voice-call-context.util';
 import { CallContext } from './voice-call-context.types';
+import { VoiceOpeningConfigService } from './voice-opening-config.service';
 
 export interface VoiceTestCallResult {
   success: boolean;
@@ -41,6 +43,8 @@ export class SmartfloClickToCallService {
     private readonly configService: ConfigService,
     private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
     private readonly prisma: PrismaService,
+    private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
+    private readonly voiceOpeningConfigService: VoiceOpeningConfigService,
   ) {}
 
   async initiateTestCall(
@@ -154,6 +158,16 @@ export class SmartfloClickToCallService {
       callId: call.id,
       callContext,
     });
+
+    if (providerCallSid && this.voiceOpeningConfigService.isSpeakFirstEnabled()) {
+      this.voiceRuntimeFactory.getProvider().prewarmAuthorizedCall?.({
+        callSid: providerCallSid,
+        callId: call.id,
+        callContext,
+        openingContext: this.voiceOpeningConfigService.resolve(),
+        aiSpeakFirstEnabled: true,
+      });
+    }
 
     return {
       success: true,

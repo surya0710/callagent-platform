@@ -22,10 +22,20 @@ export interface VoiceRuntimeSessionContext {
   authorized?: boolean;
 }
 
+/** Connect OpenAI while the outbound call is still ringing (before Smartflo start). */
+export interface VoiceRuntimePrewarmContext {
+  callSid: string;
+  callId?: string;
+  openingContext?: VoiceOpeningContext;
+  callContext?: CallContext;
+  aiSpeakFirstEnabled: boolean;
+}
+
 export interface VoiceRuntimeProvider {
   readonly name: string;
 
   onSocketConnected?(socketSessionId: string): void;
+  prewarmAuthorizedCall?(input: VoiceRuntimePrewarmContext): void;
   createSession(context: VoiceRuntimeSessionContext): Promise<void>;
   handleAudio(streamSid: string, pcm16Audio: Buffer): void;
   endSession(streamSid: string): Promise<void>;

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { VoiceSessionService } from '../voice-session.service';
 import {
+  VoiceRuntimePrewarmContext,
   VoiceRuntimeProvider,
   VoiceRuntimeSessionContext,
 } from './voice-runtime.provider';
@@ -17,6 +18,14 @@ export class MockVoiceRuntimeProvider implements VoiceRuntimeProvider {
       socketSessionId,
       event: 'connected',
       message: 'Smartflo handshake received',
+    });
+  }
+
+  prewarmAuthorizedCall(input: VoiceRuntimePrewarmContext): void {
+    this.logger.log({
+      callSid: input.callSid,
+      aiSpeakFirstEnabled: input.aiSpeakFirstEnabled,
+      message: 'voice_openai_prewarm_skipped_mock_runtime',
     });
   }
 
