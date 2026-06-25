@@ -14,8 +14,8 @@ describe('voice-runtime-instructions.util', () => {
     id: 'playbook_1',
     title: 'Approved Training Playbook',
     version: 3,
-    playbookText: 'Ask discovery question: What challenge are you solving?',
-    agentInstructions: 'Use the approved greeting and handle price objections calmly.',
+    playbookText: 'Ask about driver service quality and ride experience.',
+    agentInstructions: 'Use the approved greeting and handle fare objections calmly.',
     commonObjectionsJson: null,
     objectionResponsesJson: null,
     winningPhrasesJson: null,
@@ -43,7 +43,8 @@ describe('voice-runtime-instructions.util', () => {
     expect(instructions).toContain('Speak first when the call begins');
     expect(instructions).toContain('Namaste');
     expect(instructions).toContain('Approved Training Playbook v3');
-    expect(instructions).toContain('What challenge are you solving?');
+    expect(instructions).toContain('driver service quality and ride experience');
+    expect(instructions).toContain('Domain lock:');
   });
 
   it('keeps the fixed safety block after playbook guidance', () => {
@@ -61,12 +62,13 @@ describe('voice-runtime-instructions.util', () => {
 
   it('falls back to base instructions when no active playbook exists', () => {
     const instructions = buildVoiceRuntimeInstructions({
-      baseInstructions: 'Existing runtime behavior.',
+      baseInstructions: 'Existing runtime behavior for on-demand driver service.',
       activePlaybook: null,
     });
 
-    expect(instructions).toContain('Existing runtime behavior.');
+    expect(instructions).toContain('Existing runtime behavior for on-demand driver service');
     expect(instructions).toContain(VOICE_LANGUAGE_MATCH_HARD_RULE);
+    expect(instructions).toContain('Domain lock:');
     expect(instructions).not.toContain('Active approved AI playbook guidance');
     expect(instructions).not.toContain('Hard rules:');
   });

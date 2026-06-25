@@ -99,6 +99,7 @@ export class VoiceController {
       ignoredSpeechPacketCount: response.ignoredSpeechPacketCount ?? 0,
       detectedCustomerLanguage: response.detectedCustomerLanguage ?? null,
       lastCustomerLanguage: response.lastCustomerLanguage ?? null,
+      preferredLanguage: response.preferredLanguage ?? null,
       responseLanguage: response.responseLanguage ?? null,
       languageMatchMode: response.languageMatchMode ?? null,
       firstCustomerSpeechAt: response.firstCustomerSpeechAt ?? null,

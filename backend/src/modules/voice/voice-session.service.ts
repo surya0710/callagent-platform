@@ -78,6 +78,7 @@ export interface VoiceSession {
   ignoredSpeechPacketCount?: number;
   detectedCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   lastCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+  preferredLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   responseLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   languageMatchMode?: 'latest_customer_message';
   firstCustomerSpeechAt?: Date;
@@ -237,6 +238,7 @@ export interface VoiceSessionResponse {
   ignoredSpeechPacketCount?: number;
   detectedCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   lastCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+  preferredLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   responseLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   languageMatchMode?: 'latest_customer_message';
   firstCustomerSpeechAt?: string;
@@ -394,6 +396,7 @@ export function toVoiceSessionResponse(
     ignoredSpeechPacketCount: session.ignoredSpeechPacketCount,
     detectedCustomerLanguage: session.detectedCustomerLanguage,
     lastCustomerLanguage: session.lastCustomerLanguage,
+    preferredLanguage: session.preferredLanguage,
     responseLanguage: session.responseLanguage,
     languageMatchMode: session.languageMatchMode,
     firstCustomerSpeechAt: session.firstCustomerSpeechAt?.toISOString(),
@@ -1073,6 +1076,7 @@ export class VoiceSessionService {
       ignoredSpeechPacketCount?: number;
       detectedCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
       lastCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
+      preferredLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
       responseLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
       languageMatchMode?: 'latest_customer_message';
       firstCustomerSpeechAt?: Date;
@@ -1193,6 +1197,9 @@ export class VoiceSessionService {
     }
     if (update.lastCustomerLanguage !== undefined) {
       session.lastCustomerLanguage = update.lastCustomerLanguage;
+    }
+    if (update.preferredLanguage !== undefined) {
+      session.preferredLanguage = update.preferredLanguage;
     }
     if (update.responseLanguage !== undefined) {
       session.responseLanguage = update.responseLanguage;

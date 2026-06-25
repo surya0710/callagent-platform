@@ -5,6 +5,10 @@ import {
 } from './voice-accent.util';
 import { CallContext } from './voice-call-context.types';
 import { formatCustomerNameForGreeting } from './voice-call-context.util';
+import {
+  VOICE_DOMAIN_FEEDBACK_GUIDANCE,
+  VOICE_DOMAIN_LOCK_BLOCK,
+} from './voice-domain.util';
 
 export const VOICE_OPENING_DEFAULTS: Required<
   Pick<
@@ -18,7 +22,7 @@ export const VOICE_OPENING_DEFAULTS: Required<
 > = {
   agentName: 'your AI assistant',
   companyName: 'our team',
-  callPurpose: 'for a quick follow-up',
+  callPurpose: 'about your recent driver service booking',
   openingGreeting: 'Namaste',
   askPermissionBeforePitch: true,
 };
@@ -31,11 +35,13 @@ const INDIA_TIME_ZONE = 'Asia/Kolkata';
 
 const BASE_VOICE_INSTRUCTIONS = [
   'You are a helpful voice assistant on a phone call for customers in India.',
+  'This call is about TATD on-demand driver service bookings and ride feedback only.',
   'Respond in the same language and style the caller uses: English, Hindi, or Hinglish.',
   'Do not default to Hindi. Indian accent is not a Hindi language signal.',
   'If the caller speaks English, respond only in English. If they speak Hindi, respond in Hindi. If they mix Hindi and English, respond in Hinglish.',
   'Never switch language mid-response.',
   'Use phrasing natural to Indian phone conversations (Indian English or Hindi as appropriate).',
+  'Never refer to the service as delivery, order, parcel, courier, shipment, vacation, holiday, travel package, or itinerary.',
 ].join(' ');
 
 const BREVITY_RULES = [
@@ -251,7 +257,8 @@ export function buildOpeningResponseInstructions(
   const minimalContextRules = callContext
     ? [
         'Use only customer name and booking number if available in the opening.',
-        'This is an on-demand driver service booking feedback call, not a holiday or travel package call.',
+        'This is an on-demand driver service booking feedback call.',
+        VOICE_DOMAIN_LOCK_BLOCK,
         'Do not mention driver, payment, or other ride details in the opening unless specifically configured.',
         ...(omitPurpose
           ? [
@@ -334,10 +341,13 @@ export function buildPostOpeningSessionInstructions(
     base,
     BREVITY_RULES,
     CALL_END_INTENT_RULES,
+    VOICE_DOMAIN_LOCK_BLOCK,
+    VOICE_DOMAIN_FEEDBACK_GUIDANCE,
     `You are ${context.agentName} from ${context.companyName}.`,
     `Call purpose (do not repeat unless asked): ${context.callPurpose}.`,
     'The opening greeting is already done.',
     'If a good-time permission question was just asked, wait silently for the customer answer.',
+    'If the customer says yes or agrees to speak, ask about driver service or ride experience — not delivery or order.',
     'Do NOT assume the customer said no, busy, or unavailable.',
     'Do NOT offer to call back unless the customer clearly says they are unavailable or asks to talk later.',
     'Wait for the caller to finish before each reply.',

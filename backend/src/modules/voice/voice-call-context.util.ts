@@ -4,6 +4,10 @@ import {
   CallContextDebugInfo,
 } from './voice-call-context.types';
 import { normalizeVoicePhoneNumber } from './voice-phone.util';
+import {
+  VOICE_DOMAIN_FEEDBACK_GUIDANCE,
+  VOICE_DOMAIN_LOCK_BLOCK,
+} from './voice-domain.util';
 
 const MAX_STRING_LENGTH = 200;
 
@@ -175,10 +179,11 @@ export function buildCallContextInstructions(callContext: CallContext): string {
 
   lines.push(
     '',
+    VOICE_DOMAIN_LOCK_BLOCK,
+    '',
     'Rules:',
-    '- This is an on-demand driver service feedback call. Do not refer to this as a holiday trip, vacation, tour, travel package, or itinerary.',
-    '- After the customer agrees to speak, ask about their driver service experience (e.g. "How was your experience with the driver service?" or "Was everything smooth with your ride and driver?").',
-    '- Do not ask about holiday trips, packages, destinations, vacations, tours, or travel plans.',
+    '- This is an on-demand driver service feedback call about a driver service booking or ride.',
+    VOICE_DOMAIN_FEEDBACK_GUIDANCE,
     '- Use this information only when relevant.',
     '- Do not mention all details at once.',
     '- Do not invent missing values.',

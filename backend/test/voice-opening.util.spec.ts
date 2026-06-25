@@ -192,7 +192,7 @@ describe('voice-opening.util', () => {
         },
       );
 
-      expect(instructions).toContain('driver service booking feedback call');
+      expect(instructions).toContain('on-demand driver service booking feedback call');
       expect(instructions).toContain('booking OD482917');
       expect(instructions).toContain('Is this a good time to speak?');
       expect(instructions).toContain('do not repeat the call purpose in the opening');

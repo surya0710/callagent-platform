@@ -41,15 +41,16 @@ describe('voice-call-context.util', () => {
   it('builds structured call context instructions for driver service', () => {
     const instructions = buildCallContextInstructions(sampleContext);
 
-    expect(instructions).toContain(
-      'Call-specific context (on-demand driver service):',
-    );
+    expect(instructions).toContain('Call-specific context (on-demand driver service):');
     expect(instructions).toContain('Booking Number: OD482917');
     expect(instructions).toContain('Balance Amount: ₹150');
-    expect(instructions).toContain('on-demand driver service feedback call');
+    expect(instructions).toContain('Domain lock:');
+    expect(instructions).toContain("This call is ONLY about TATD's on-demand driver service booking.");
     expect(instructions).toContain('How was your experience with the driver service?');
     expect(instructions).toContain('Do not invent missing values');
     expect(instructions).not.toContain('undefined');
+    expect(instructions).not.toMatch(/how was your delivery/i);
+    expect(instructions).not.toMatch(/how was your order/i);
     expect(instructions).not.toMatch(/- (Trip|Destination|Package|Itinerary|Vacation|Tour):/i);
   });
 
@@ -120,6 +121,7 @@ describe('voice-call-context.util', () => {
     expect(instructions.indexOf('Playbook body')).toBeLessThan(
       instructions.indexOf('Balance Amount: ₹150'),
     );
-    expect(instructions).toContain('on-demand driver service feedback call');
+    expect(instructions).toContain('on-demand driver service');
+    expect(instructions).toContain('Domain lock:');
   });
 });

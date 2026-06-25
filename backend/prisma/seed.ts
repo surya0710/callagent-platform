@@ -172,11 +172,11 @@ const CX_DEPARTMENT = 'customer_experience';
 async function seedCustomerExperienceKnowledgeBase() {
   const entries = [
     {
-      title: 'Post-Trip Feedback Call Script',
+      title: 'Post-Ride Driver Service Feedback Script',
       category: 'scripts',
       tags: ['feedback', 'greeting', 'flow'],
       content:
-        'Greet the customer by name. Confirm the recent trip date and route if available. Ask one open question about their experience. Listen without interrupting. If positive, thank them and close. If negative, empathize and ask one follow-up before offering ticket or executive callback.',
+        'Greet the customer by name. Confirm the recent booking date and route if available. Ask one open question about their driver service or ride experience. Listen without interrupting. If positive, thank them and close. If negative, empathize and ask one follow-up before offering ticket or executive callback. Never refer to delivery, order, parcel, courier, or travel packages.',
     },
     {
       title: 'Issue Categories Reference',
@@ -230,13 +230,13 @@ async function seedCustomerExperienceKnowledgeBase() {
 async function seedCustomerExperienceExamples() {
   const examples = [
     {
-      title: 'Positive feedback - smooth trip',
-      summary: 'Customer had a great trip, no issues reported.',
+      title: 'Positive feedback - smooth ride',
+      summary: 'Customer had a great driver service experience, no issues reported.',
       goodPractices:
-        'Warm greeting, confirm trip, single open question, positive acknowledgment, polite close.',
-      transcript: `Agent: Hello Mr. Sharma, this is Priya from customer experience. I am calling about your trip yesterday from Koramangala to the airport. Do you have a minute?
+        'Warm greeting, confirm booking, single open question about driver service, positive acknowledgment, polite close.',
+      transcript: `Agent: Hello Mr. Sharma, this is Priya from customer experience. I am calling about your driver service booking yesterday from Koramangala to the airport. Do you have a minute?
 Customer: Yes, sure.
-Agent: How was your overall experience?
+Agent: How was your experience with the driver service?
 Customer: It was great, the driver was on time and the car was clean.
 Agent: That is wonderful to hear. Thank you for sharing. Is there anything else you would like us to note?
 Customer: No, everything was fine.
@@ -248,7 +248,7 @@ Agent: Thank you for your time. Have a great day!`,
       summary: 'Customer reports late pickup; agent gathers details and offers ticket.',
       goodPractices:
         'Empathize first, ask one follow-up, classify issue, offer ticket without pressure.',
-      transcript: `Agent: Hello, I am calling about your recent trip. How did everything go?
+      transcript: `Agent: Hello, I am calling about your recent driver service booking. How was your ride and driver experience?
 Customer: The driver was 20 minutes late. I almost missed my meeting.
 Agent: I am sorry to hear that. That must have been stressful. Was the driver in contact with you during the wait?
 Customer: No, I had to call support.
@@ -263,8 +263,8 @@ Customer: No, that is all.`,
       summary: 'Customer disputes fare; agent offers executive callback.',
       goodPractices:
         'Do not promise refund on call, acknowledge concern, offer human follow-up.',
-      transcript: `Agent: Hello, I am following up on your completed trip. How was your experience?
-Customer: The trip was fine but I was charged twice.
+      transcript: `Agent: Hello, I am following up on your completed driver service booking. How was your ride experience?
+Customer: The ride was fine but I was charged twice.
 Agent: I understand that is frustrating. I want to make sure we look into this properly. Would you like an executive to call you back about the billing?
 Customer: Yes, I want someone to call me.
 Agent: Absolutely. I will arrange a callback from our team. They will reach out shortly. Thank you for your patience.`,
