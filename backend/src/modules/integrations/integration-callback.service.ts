@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  ApiKey,
   Call,
   CallStatus,
   CallTranscriptLifecycleStatus,
@@ -64,20 +65,67 @@ export class IntegrationCallbackService {
   ) {}
 
   async resolveWebhookUrl(call: Pick<Call, 'callbackUrl' | 'apiKeyId'>): Promise<string | null> {
-    if (call.callbackUrl?.trim()) {
-      return call.callbackUrl.trim();
+    const delivery = await this.resolveWebhookDelivery(call);
+    return delivery?.url ?? null;
+  }
+
+  private async resolveWebhookDelivery(
+    call: Pick<Call, 'callbackUrl' | 'apiKeyId'>,
+  ): Promise<{ url: string; authHeaders: Record<string, string> } | null> {
+    let url = call.callbackUrl?.trim() || null;
+    let apiKey: Pick<
+      ApiKey,
+      'webhookUrl' | 'webhookAuthType' | 'webhookAuthHeaderName' | 'webhookAuthToken'
+    > | null = null;
+
+    if (call.apiKeyId) {
+      apiKey = await this.prisma.apiKey.findUnique({
+        where: { id: call.apiKeyId },
+        select: {
+          webhookUrl: true,
+          webhookAuthType: true,
+          webhookAuthHeaderName: true,
+          webhookAuthToken: true,
+        },
+      });
+
+      if (!url) {
+        url = apiKey?.webhookUrl?.trim() || null;
+      }
     }
 
-    if (!call.apiKeyId) {
+    if (!url) {
       return null;
     }
 
-    const apiKey = await this.prisma.apiKey.findUnique({
-      where: { id: call.apiKeyId },
-      select: { webhookUrl: true },
-    });
+    return {
+      url,
+      authHeaders: this.buildWebhookAuthHeaders(apiKey),
+    };
+  }
 
-    return apiKey?.webhookUrl?.trim() || null;
+  private buildWebhookAuthHeaders(
+    apiKey: Pick<
+      ApiKey,
+      'webhookAuthType' | 'webhookAuthHeaderName' | 'webhookAuthToken'
+    > | null,
+  ): Record<string, string> {
+    if (!apiKey?.webhookAuthToken?.trim()) {
+      return {};
+    }
+
+    const token = apiKey.webhookAuthToken.trim();
+
+    switch (apiKey.webhookAuthType) {
+      case 'bearer':
+        return { Authorization: `Bearer ${token}` };
+      case 'header': {
+        const headerName = apiKey.webhookAuthHeaderName?.trim() || 'X-API-Key';
+        return { [headerName]: token };
+      }
+      default:
+        return {};
+    }
   }
 
   async notifyStatusChange(call: Call) {
@@ -85,8 +133,8 @@ export class IntegrationCallbackService {
       return { sent: false };
     }
 
-    const webhookUrl = await this.resolveWebhookUrl(call);
-    if (!webhookUrl) {
+    const delivery = await this.resolveWebhookDelivery(call);
+    if (!delivery) {
       return { sent: false };
     }
 
@@ -103,7 +151,13 @@ export class IntegrationCallbackService {
       timestamp: new Date().toISOString(),
     };
 
-    return this.postWebhook(webhookUrl, 'call.status_changed', payload, call.id);
+    return this.postWebhook(
+      delivery.url,
+      'call.status_changed',
+      payload,
+      call.id,
+      delivery.authHeaders,
+    );
   }
 
   async notifyCallResultReady(
@@ -127,13 +181,13 @@ export class IntegrationCallbackService {
     }
 
     const metadata = asRecord(call.metadata) ?? {};
-    const delivery = asRecord(metadata.integrationWebhook);
-    if (delivery?.resultDeliveredAt) {
+    const priorDelivery = asRecord(metadata.integrationWebhook);
+    if (priorDelivery?.resultDeliveredAt) {
       return { sent: false, reason: 'already_delivered' };
     }
 
-    const webhookUrl = await this.resolveWebhookUrl(call);
-    if (!webhookUrl) {
+    const delivery = await this.resolveWebhookDelivery(call);
+    if (!delivery) {
       return { sent: false, reason: 'no_webhook' };
     }
 
@@ -167,10 +221,11 @@ export class IntegrationCallbackService {
     };
 
     const result = await this.postWebhook(
-      webhookUrl,
+      delivery.url,
       'call.result_ready',
       payload,
       call.id,
+      delivery.authHeaders,
     );
 
     if (result.sent) {
@@ -180,7 +235,7 @@ export class IntegrationCallbackService {
           metadata: {
             ...metadata,
             integrationWebhook: {
-              ...(delivery ?? {}),
+              ...(priorDelivery ?? {}),
               resultDeliveredAt: new Date().toISOString(),
             },
           },
@@ -244,6 +299,7 @@ export class IntegrationCallbackService {
     event: 'call.status_changed' | 'call.result_ready',
     payload: CallStatusCallbackPayload | CallResultReadyPayload,
     callId: string,
+    authHeaders: Record<string, string> = {},
   ) {
     try {
       const response = await fetch(webhookUrl, {
@@ -251,6 +307,7 @@ export class IntegrationCallbackService {
         headers: {
           'Content-Type': 'application/json',
           'X-AI-Voice-Event': event,
+          ...authHeaders,
         },
         body: JSON.stringify(payload),
       });

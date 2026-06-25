@@ -278,15 +278,24 @@ model CampaignCustomer {
   @@map("campaign_customers")
 }
 
+enum ApiKeyWebhookAuthType {
+  none
+  bearer
+  header
+}
+
 model ApiKey {
-  id         String   @id @default(uuid())
-  name       String
-  keyPrefix  String   @map("key_prefix")
-  keyHash    String   @map("key_hash")
-  webhookUrl String?  @map("webhook_url")
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id                     String                 @id @default(uuid())
+  name                   String
+  keyPrefix              String                 @map("key_prefix")
+  keyHash                String                 @map("key_hash")
+  webhookUrl             String?                @map("webhook_url")
+  webhookAuthType        ApiKeyWebhookAuthType  @default(none) @map("webhook_auth_type")
+  webhookAuthHeaderName  String?                @map("webhook_auth_header_name")
+  webhookAuthToken       String?                @map("webhook_auth_token") @db.VarChar(512)
+  isActive               Boolean                @default(true) @map("is_active")
+  createdAt              DateTime               @default(now()) @map("created_at")
+  updatedAt              DateTime               @updatedAt @map("updated_at")
 
   calls Call[]
 

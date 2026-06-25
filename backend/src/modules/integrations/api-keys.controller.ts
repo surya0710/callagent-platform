@@ -4,6 +4,7 @@ import { RequirePermissions } from '../../common/decorators/permissions.decorato
 import { PERMISSIONS } from '../../common/constants/permissions';
 import { ApiKeysService } from './api-keys.service';
 import { CreateApiKeyDto } from './dto/create-api-key.dto';
+import { UpdateApiKeyDto } from './dto/update-api-key.dto';
 
 @ApiTags('Integrations')
 @ApiBearerAuth()
@@ -22,7 +23,14 @@ export class ApiKeysController {
   @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
   @ApiOperation({ summary: 'Create a new integration API key' })
   create(@Body() dto: CreateApiKeyDto) {
-    return this.apiKeysService.create(dto.name, dto.webhookUrl);
+    return this.apiKeysService.create(dto);
+  }
+
+  @Patch(':id')
+  @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
+  @ApiOperation({ summary: 'Update integration API key webhook settings' })
+  update(@Param('id') id: string, @Body() dto: UpdateApiKeyDto) {
+    return this.apiKeysService.update(id, dto);
   }
 
   @Patch(':id/revoke')

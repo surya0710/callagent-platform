@@ -1,18 +1,13 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString, IsUrl } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsString } from 'class-validator';
+import { ApiKeyWebhookConfigDto } from './api-key-webhook-config.dto';
 
-export class CreateApiKeyDto {
-  @ApiProperty({ example: 'Driver Service Production' })
+export class CreateApiKeyDto extends ApiKeyWebhookConfigDto {
+  @ApiProperty({
+    example: 'Driver Service Production',
+    description: 'Application or client name these credentials are for',
+  })
   @IsString()
   @IsNotEmpty()
   name!: string;
-
-  @ApiPropertyOptional({
-    example: 'https://your-driver-app.com/webhooks/voice',
-    description:
-      'Default webhook URL for call status updates and post-call recording + transcript delivery',
-  })
-  @IsOptional()
-  @IsUrl({ require_tld: false })
-  webhookUrl?: string;
 }

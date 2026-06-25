@@ -19,16 +19,36 @@ Content-Type: application/json
 
 {
   "name": "Driver Service Production",
-  "webhookUrl": "https://your-driver-app.com/webhooks/voice"
+  "webhookUrl": "https://your-driver-app.com/webhooks/voice",
+  "webhookAuthType": "bearer",
+  "webhookAuthToken": "your-webhook-secret"
 }
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Label for this integration client |
-| `webhookUrl` | No | Default webhook for status updates and post-call recording + transcript delivery |
+| `name` | Yes | Application/client name these credentials are for |
+| `webhookUrl` | No | Callback URL for status updates and post-call recording + transcript |
+| `webhookAuthType` | No | `none` (default), `bearer`, or `header` |
+| `webhookAuthHeaderName` | No | Header name when `webhookAuthType` is `header` (default: `X-API-Key`) |
+| `webhookAuthToken` | No | Bearer token or header value sent to your callback URL |
 
-The raw key is shown **once** on creation. Store it securely.
+Update an existing key (callback URL / auth only — the API key itself cannot be rotated here):
+
+```http
+PATCH /api/integrations/api-keys/{id}
+Authorization: Bearer <admin-jwt-cookie>
+Content-Type: application/json
+
+{
+  "webhookUrl": "https://your-driver-app.com/webhooks/voice",
+  "webhookAuthType": "header",
+  "webhookAuthHeaderName": "X-API-Key",
+  "webhookAuthToken": "new-secret"
+}
+```
+
+The raw integration key is shown **once** on creation. Store it securely. Webhook auth tokens are stored but never returned again in list responses.
 
 ### Dev seed key (local only)
 
@@ -195,6 +215,14 @@ Every webhook includes:
 Content-Type: application/json
 X-AI-Voice-Event: <event name>
 ```
+
+If configured on the API key, outbound auth is also sent:
+
+| `webhookAuthType` | Header sent to your URL |
+|-------------------|-------------------------|
+| `bearer` | `Authorization: Bearer <webhookAuthToken>` |
+| `header` | `<webhookAuthHeaderName>: <webhookAuthToken>` (default header name: `X-API-Key`) |
+| `none` | No extra auth headers |
 
 ### Event: `call.status_changed`
 
