@@ -75,9 +75,9 @@ const SESSION_READY_TIMEOUT_MS = 5000;
 const WS_OPEN_TIMEOUT_MS = 8000;
 const PLAYBOOK_LOOKUP_TIMEOUT_MS = 750;
 const DEFAULT_POST_OPENING_SPEECH_GATE_MAX_MS = 300;
-const DEFAULT_OPENING_AVAILABILITY_IGNORE_MS = 1500;
-const DEFAULT_OPENING_AVAILABILITY_MIN_SPEECH_MS = 400;
-const DEFAULT_OPENING_AVAILABILITY_MIN_PACKETS = 4;
+const DEFAULT_OPENING_AVAILABILITY_IGNORE_MS = 800;
+const DEFAULT_OPENING_AVAILABILITY_MIN_SPEECH_MS = 80;
+const DEFAULT_OPENING_AVAILABILITY_MIN_PACKETS = 2;
 const DEFAULT_SPEECH_RMS_THRESHOLD = 0.01;
 const DEFAULT_SPEECH_MIN_PACKETS = 2;
 const DEFAULT_SPEECH_MIN_DURATION_MS = 80;
@@ -1595,6 +1595,95 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     );
   }
 
+  /** Count speech during post-opening echo tail without forwarding to OpenAI yet. */
+  private accumulateInboundDuringPostOpeningIgnore(
+    session: OpenAiRealtimeSession,
+    pcm8: Buffer,
+    speech: { speechLike: boolean; rms: number; threshold: number },
+  ): void {
+    if (speech.speechLike) {
+      session.speechLikePacketCount += 1;
+      session.pendingSpeechPcm8.push(pcm8);
+      session.pendingSpeechDurationMs += this.estimatePcm8DurationMs(pcm8);
+      this.updateRuntimeState(session.streamSid, {
+        speechLikePacketCount: session.speechLikePacketCount,
+      });
+
+      const hasEnoughSpeech =
+        session.speechLikePacketCount >=
+          this.getSpeechMinPacketsForSession(session) &&
+        session.pendingSpeechDurationMs >=
+          this.getSpeechMinDurationMsForSession(session);
+      if (hasEnoughSpeech && !session.validCustomerSpeechSinceLastResponse) {
+        this.markRealCustomerSpeech(session, speech);
+      }
+    }
+
+    session.inboundSuppressedCount += 1;
+    session.inboundSuppressedReason = 'post_opening_ignore_window';
+    voiceDebugLog(
+      this.logger,
+      session.streamSid,
+      'voice_inbound_suppressed',
+      {
+        reason: 'post_opening_ignore_window_accumulated',
+        pcmBytes: pcm8.length,
+        speechLike: speech.speechLike,
+        pendingSpeechDurationMs: Math.round(session.pendingSpeechDurationMs),
+      },
+    );
+  }
+
+  /** Forward speech accumulated during the post-opening echo tail once the window ends. */
+  private tryForwardAccumulatedSpeechAfterIgnore(
+    session: OpenAiRealtimeSession,
+    speech: { speechLike: boolean; rms: number; threshold: number },
+  ): void {
+    if (session.pendingSpeechPcm8.length === 0) {
+      return;
+    }
+
+    const hasEnoughSpeech =
+      session.speechLikePacketCount >=
+        this.getSpeechMinPacketsForSession(session) &&
+      session.pendingSpeechDurationMs >=
+        this.getSpeechMinDurationMsForSession(session);
+    if (!hasEnoughSpeech || !session.validCustomerSpeechSinceLastResponse) {
+      return;
+    }
+
+    if (session.awaitingCustomerInput && !session.customerTurnConfirmed) {
+      this.confirmCustomerTurn(session, 'local_speech', {
+        accumulatedDuringIgnore: true,
+        speechDurationMs: Math.round(session.pendingSpeechDurationMs),
+      });
+    }
+
+    const pendingSpeech = session.pendingSpeechPcm8.splice(0);
+    for (const pending of pendingSpeech) {
+      this.appendInputAudioChunk(session, pending, true, speech);
+    }
+
+    if (
+      !session.closing &&
+      !session.useServerVad &&
+      !this.isAiTurnActive(session)
+    ) {
+      this.scheduleInputCommit(session);
+    }
+
+    this.logTurnTaking(session, 'voice_accumulated_speech_forwarded', {
+      chunks: pendingSpeech.length,
+      speechDurationMs: Math.round(session.pendingSpeechDurationMs),
+    });
+  }
+
+  private shouldRequireLocalSpeechForCallEndIntent(
+    session: OpenAiRealtimeSession,
+  ): boolean {
+    return this.isAwaitingOpeningAvailabilityResponse(session);
+  }
+
   private isAwaitingOpeningAvailabilityResponse(
     session: OpenAiRealtimeSession,
   ): boolean {
@@ -2297,12 +2386,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
+    const speech = this.isSpeechLikeForRuntime(pcm8);
+
     if (this.shouldIgnoreInboundAfterOpening(session)) {
-      this.suppressInboundAudio(session, 'post_opening_ignore_window', pcm8.length);
+      this.accumulateInboundDuringPostOpeningIgnore(session, pcm8, speech);
       return;
     }
 
-    const speech = this.isSpeechLikeForRuntime(pcm8);
+    this.tryForwardAccumulatedSpeechAfterIgnore(session, speech);
+
     const { speechLike } = speech;
     const forwardGate = this.shouldForwardInboundToOpenAi(session);
 
@@ -2595,7 +2687,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    if (!this.hasLocallyValidatedCustomerSpeechSinceAssistantDone(session)) {
+    if (
+      this.shouldRequireLocalSpeechForCallEndIntent(session) &&
+      !this.hasLocallyValidatedCustomerSpeechSinceAssistantDone(session)
+    ) {
       this.logTurnTaking(session, 'voice_call_end_intent_ignored', {
         intent,
         text,
@@ -2846,7 +2941,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     if (
       session.useServerVad &&
       !options?.forceOnEnd &&
-      !options?.manualFallback
+      !options?.manualFallback &&
+      !session.customerTurnConfirmed
     ) {
       return;
     }
@@ -3171,6 +3267,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       if (session.awaitingCustomerInput && !session.customerTurnConfirmed) {
         this.clearOpenAiInputBuffer(session, 'speech_stopped_without_customer_turn');
       } else if (session.customerTurnConfirmed) {
+        if (session.useServerVad) {
+          session.allowNextServerVadResponse = true;
+        }
         this.confirmCustomerTurn(session, 'speech_stopped', {
           turnDetection: session.useServerVad ? 'server_vad' : 'manual',
         });
@@ -3243,27 +3342,29 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         return;
       }
 
-      if (!this.hasLocallyValidatedCustomerSpeechSinceAssistantDone(session)) {
-        this.logTurnTaking(session, 'voice_input_transcript_ignored', {
-          role: transcriptRole,
-          reason: 'no_local_speech_validation',
-          text,
-          textLength: text.length,
-          awaitingOpeningAvailability:
-            this.isAwaitingOpeningAvailabilityResponse(session),
-        });
-        return;
-      }
-
       this.logTurnTaking(session, 'voice_input_transcript_completed', {
         role: transcriptRole,
         text,
         textLength: text.length,
       });
-      this.confirmCustomerTurn(session, 'transcript', {
-        text,
-        textLength: text.length,
-      });
+
+      if (!session.customerTurnConfirmed) {
+        this.confirmCustomerTurn(session, 'transcript', {
+          text,
+          textLength: text.length,
+        });
+      }
+
+      if (
+        session.useServerVad &&
+        !this.isAiTurnActive(session) &&
+        session.customerAudioAppendedSinceLastResponse
+      ) {
+        session.allowNextServerVadResponse = true;
+        void this.commitInputAndCreateResponse(session, {
+          reason: 'transcript_turn_confirmed',
+        });
+      }
 
       const detectedCustomerLanguage = detectCustomerLanguage(text);
         session.detectedCustomerLanguage = detectedCustomerLanguage;
@@ -3412,7 +3513,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     if (type === 'response.created') {
       const authorizedLocally = Boolean(session.pendingAuthorizedResponseSource);
-      const authorizedServerVad = session.allowNextServerVadResponse;
+      const authorizedServerVad =
+        session.allowNextServerVadResponse || session.customerTurnConfirmed;
 
       if (!authorizedLocally && !authorizedServerVad) {
         this.tryCancelUnauthorizedResponse(
