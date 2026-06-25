@@ -75,6 +75,9 @@ const SESSION_READY_TIMEOUT_MS = 5000;
 const WS_OPEN_TIMEOUT_MS = 8000;
 const PLAYBOOK_LOOKUP_TIMEOUT_MS = 750;
 const DEFAULT_POST_OPENING_SPEECH_GATE_MAX_MS = 300;
+const DEFAULT_OPENING_AVAILABILITY_IGNORE_MS = 1500;
+const DEFAULT_OPENING_AVAILABILITY_MIN_SPEECH_MS = 400;
+const DEFAULT_OPENING_AVAILABILITY_MIN_PACKETS = 4;
 const DEFAULT_SPEECH_RMS_THRESHOLD = 0.01;
 const DEFAULT_SPEECH_MIN_PACKETS = 2;
 const DEFAULT_SPEECH_MIN_DURATION_MS = 80;
@@ -201,7 +204,7 @@ export type CustomerCallEndIntent =
 function normalizeTranscriptForIntent(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}\s]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -231,7 +234,9 @@ export function detectCustomerCallEndIntent(
       normalized,
     ) ||
     /\b(hang\s*up)\b/.test(normalized) ||
-    /(कॉल|फोन|फ़ोन)\s*(काट|बंद|डिस्कनेक्ट)/.test(normalized) ||
+    /\bcall\s+(cut|kaat|kaat do)\b/.test(normalized) ||
+    /\b(kaat|kaat)\s+do\b/.test(normalized) ||
+    /(कॉल|फोन|फ़ोन|call)\s*(काट|बंद|डिस्कनेक्ट)/.test(normalized) ||
     /(काट\s*दो|बंद\s*करो|डिस्कनेक्ट\s*करो)/.test(normalized);
   if (explicitHangup) {
     return 'explicit_hangup';
@@ -263,10 +268,13 @@ export function detectCustomerCallEndIntent(
     /\bbusy\b/.test(normalized) && !/\bnot\s+busy\b/.test(normalized);
   const negativeAvailabilityPhrase =
     negativeBusy ||
-    /\b(not\s+(a\s+)?good\s+time|bad\s+time|not\s+now|call\s+(me\s+)?later|talk\s+later|later|in\s+a\s+meeting|driving|can'?t\s+(talk|speak)|cannot\s+(talk|speak)|unable\s+to\s+(talk|speak))\b/.test(
+    /\b(not\s+(a\s+)?good\s+time|bad\s+time|not\s+now|call\s+(me\s+)?later|talk\s+later|in\s+a\s+meeting|driving|can'?t\s+(talk|speak)|cannot\s+(talk|speak)|unable\s+to\s+(talk|speak))\b/.test(
       normalized,
     ) ||
     /(अभी\s*नहीं|बाद\s*में|व्यस्त|बिजी|मीटिंग|ड्राइव|फुर्सत\s*नहीं|बात\s*नहीं\s*कर)/.test(
+      normalized,
+    ) ||
+    /(abhi\s+nahi|baad\s+mein|baad\s+me|busy\s+hu|busy\s+hoon|call\s+kar\s+lena|call\s+kar\s+lunga)/.test(
       normalized,
     );
   const affirmativeAvailability =
@@ -1482,7 +1490,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.responseInProgress = false;
 
     const nowMs = Date.now();
-    const ignoreMs = this.getPostOpeningIgnoreMs();
+    const baseIgnoreMs = this.getPostOpeningIgnoreMs();
+    const ignoreMs =
+      session.openingContext?.askPermissionBeforePitch !== false
+        ? Math.max(baseIgnoreMs, DEFAULT_OPENING_AVAILABILITY_IGNORE_MS)
+        : baseIgnoreMs;
     const speechGateMaxMs = this.getPostOpeningSpeechGateMaxMs();
     const completedAt = new Date();
     session.openingCompletedAt = completedAt;
@@ -1769,6 +1781,49 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
   private isAiTurnActive(session: OpenAiRealtimeSession): boolean {
     return session.responseInProgress || session.responseRequested;
+  }
+
+  private hasLocallyValidatedCustomerSpeechSinceAssistantDone(
+    session: OpenAiRealtimeSession,
+  ): boolean {
+    if (!session.validCustomerSpeechSinceLastResponse || !session.lastRealSpeechAt) {
+      return false;
+    }
+    if (!session.lastAssistantResponseDoneAt) {
+      return true;
+    }
+    return (
+      session.lastRealSpeechAt.getTime() >
+      session.lastAssistantResponseDoneAt.getTime()
+    );
+  }
+
+  private getSpeechMinPacketsForSession(session: OpenAiRealtimeSession): number {
+    if (
+      this.isAwaitingOpeningAvailabilityResponse(session) &&
+      !session.customerTurnConfirmed
+    ) {
+      return Math.max(
+        this.getSpeechMinPackets(),
+        DEFAULT_OPENING_AVAILABILITY_MIN_PACKETS,
+      );
+    }
+    return this.getSpeechMinPackets();
+  }
+
+  private getSpeechMinDurationMsForSession(
+    session: OpenAiRealtimeSession,
+  ): number {
+    if (
+      this.isAwaitingOpeningAvailabilityResponse(session) &&
+      !session.customerTurnConfirmed
+    ) {
+      return Math.max(
+        this.getSpeechMinDurationMs(),
+        DEFAULT_OPENING_AVAILABILITY_MIN_SPEECH_MS,
+      );
+    }
+    return this.getSpeechMinDurationMs();
   }
 
   private logTurnTaking(
@@ -2260,8 +2315,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       });
 
       const hasEnoughSpeech =
-        session.speechLikePacketCount >= this.getSpeechMinPackets() &&
-        session.pendingSpeechDurationMs >= this.getSpeechMinDurationMs();
+        session.speechLikePacketCount >=
+          this.getSpeechMinPacketsForSession(session) &&
+        session.pendingSpeechDurationMs >=
+          this.getSpeechMinDurationMsForSession(session);
       if (!hasEnoughSpeech) {
         return;
       }
@@ -2535,6 +2592,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     text: string,
   ): void {
     if (session.callEndDetected) {
+      return;
+    }
+
+    if (!this.hasLocallyValidatedCustomerSpeechSinceAssistantDone(session)) {
+      this.logTurnTaking(session, 'voice_call_end_intent_ignored', {
+        intent,
+        text,
+        reason: 'no_local_speech_validation',
+      });
       return;
     }
 
@@ -3173,6 +3239,18 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           text,
           textLength: text.length,
           lastAssistantTranscript: session.lastAssistantTranscript,
+        });
+        return;
+      }
+
+      if (!this.hasLocallyValidatedCustomerSpeechSinceAssistantDone(session)) {
+        this.logTurnTaking(session, 'voice_input_transcript_ignored', {
+          role: transcriptRole,
+          reason: 'no_local_speech_validation',
+          text,
+          textLength: text.length,
+          awaitingOpeningAvailability:
+            this.isAwaitingOpeningAvailabilityResponse(session),
         });
         return;
       }

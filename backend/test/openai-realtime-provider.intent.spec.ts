@@ -14,19 +14,23 @@ describe('detectCustomerCallEndIntent', () => {
     ).toBeNull();
   });
 
-  it('detects negative opening availability responses', () => {
-    expect(
-      detectCustomerCallEndIntent('No', {
-        awaitingOpeningAvailabilityResponse: true,
-      }),
-    ).toBe('negative_availability');
-    expect(detectCustomerCallEndIntent('I am busy, call me later')).toBe(
-      'negative_availability',
-    );
-    expect(detectCustomerCallEndIntent('Abhi nahi, baad mein call karna')).toBe(
-      'negative_availability',
-    );
-  });
+    it('detects negative opening availability responses', () => {
+      expect(
+        detectCustomerCallEndIntent('No', {
+          awaitingOpeningAvailabilityResponse: true,
+        }),
+      ).toBe('negative_availability');
+      expect(detectCustomerCallEndIntent('I am busy, call me later')).toBe(
+        'negative_availability',
+      );
+      expect(detectCustomerCallEndIntent('Abhi nahi, baad mein call karna')).toBe(
+        'negative_availability',
+      );
+    });
+
+    it('does not treat the word later alone as negative availability', () => {
+      expect(detectCustomerCallEndIntent('See you later maybe')).toBeNull();
+    });
 
   it('does not treat a bare no as hangup outside the opening permission response', () => {
     expect(detectCustomerCallEndIntent('No')).toBeNull();
