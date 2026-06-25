@@ -96,6 +96,9 @@ export interface VoiceSession {
   lastCommitAt?: Date;
   lastResponseCreateAt?: Date;
   lastResponseDoneAt?: Date;
+  lastAssistantResponseDoneAt?: Date;
+  lastCustomerSpeechAt?: Date;
+  awaitingCustomerInput?: boolean;
   lastOpenAiAudioDoneAt?: Date;
   lastOpenAiEvent?: string;
   lastError?: string;
@@ -252,6 +255,9 @@ export interface VoiceSessionResponse {
   lastCommitAt?: string;
   lastResponseCreateAt?: string;
   lastResponseDoneAt?: string;
+  lastAssistantResponseDoneAt?: string;
+  lastCustomerSpeechAt?: string;
+  awaitingCustomerInput?: boolean;
   lastOpenAiAudioDoneAt?: string;
   lastOpenAiEvent?: string;
   lastError?: string;
@@ -406,6 +412,9 @@ export function toVoiceSessionResponse(
     lastCommitAt: session.lastCommitAt?.toISOString(),
     lastResponseCreateAt: session.lastResponseCreateAt?.toISOString(),
     lastResponseDoneAt: session.lastResponseDoneAt?.toISOString(),
+    lastAssistantResponseDoneAt: session.lastAssistantResponseDoneAt?.toISOString(),
+    lastCustomerSpeechAt: session.lastCustomerSpeechAt?.toISOString(),
+    awaitingCustomerInput: session.awaitingCustomerInput,
     lastOpenAiAudioDoneAt: session.lastOpenAiAudioDoneAt?.toISOString(),
     lastOpenAiEvent: session.lastOpenAiEvent,
     lastError: session.lastError,
@@ -522,6 +531,11 @@ export function fromVoiceSessionResponse(
     lastCommitAt: parseOptionalDate(response.lastCommitAt),
     lastResponseCreateAt: parseOptionalDate(response.lastResponseCreateAt),
     lastResponseDoneAt: parseOptionalDate(response.lastResponseDoneAt),
+    lastAssistantResponseDoneAt: parseOptionalDate(
+      response.lastAssistantResponseDoneAt,
+    ),
+    lastCustomerSpeechAt: parseOptionalDate(response.lastCustomerSpeechAt),
+    awaitingCustomerInput: response.awaitingCustomerInput,
     lastOpenAiAudioDoneAt: parseOptionalDate(response.lastOpenAiAudioDoneAt),
     lastOpenAiAudioAt: parseOptionalDate(response.lastOpenAiAudioAt),
     outboundFirstSentAt: parseOptionalDate(response.outboundFirstSentAt),
@@ -1077,6 +1091,9 @@ export class VoiceSessionService {
       lastCommitAt?: Date;
       lastResponseCreateAt?: Date;
       lastResponseDoneAt?: Date;
+      lastAssistantResponseDoneAt?: Date;
+      lastCustomerSpeechAt?: Date;
+      awaitingCustomerInput?: boolean;
       lastOpenAiAudioDoneAt?: Date;
       lastOpenAiEvent?: string;
       lastError?: string;
@@ -1230,6 +1247,15 @@ export class VoiceSessionService {
     }
     if (update.lastResponseDoneAt !== undefined) {
       session.lastResponseDoneAt = update.lastResponseDoneAt;
+    }
+    if (update.lastAssistantResponseDoneAt !== undefined) {
+      session.lastAssistantResponseDoneAt = update.lastAssistantResponseDoneAt;
+    }
+    if (update.lastCustomerSpeechAt !== undefined) {
+      session.lastCustomerSpeechAt = update.lastCustomerSpeechAt;
+    }
+    if (update.awaitingCustomerInput !== undefined) {
+      session.awaitingCustomerInput = update.awaitingCustomerInput;
     }
     if (update.lastOpenAiAudioDoneAt !== undefined) {
       session.lastOpenAiAudioDoneAt = update.lastOpenAiAudioDoneAt;
