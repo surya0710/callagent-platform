@@ -1,6 +1,7 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { TrainingModule } from '../training/training.module';
+import { IntegrationsModule } from '../integrations/integrations.module';
 import { AudioGateway } from './audio.gateway';
 import { LocalVoiceRecordingStorage } from './audio/storage/local-voice-recording-storage.provider';
 import { S3VoiceRecordingStorage } from './audio/storage/s3-voice-recording-storage.provider';
@@ -29,7 +30,7 @@ import { TranscriptEmailService } from './transcript-email.service';
 import { VoiceTranscriptEmailController } from './voice-transcript-email.controller';
 
 @Module({
-  imports: [NotificationsModule, TrainingModule],
+  imports: [NotificationsModule, TrainingModule, forwardRef(() => IntegrationsModule)],
   controllers: [VoiceController, VoiceTestCallController, VoiceTranscriptEmailController],
   providers: [
     CallTimingDiagnosticsService,
@@ -61,6 +62,7 @@ import { VoiceTranscriptEmailController } from './voice-transcript-email.control
     VoiceCallAuthorizationService,
     VoiceTranscriptService,
     TranscriptEmailService,
+    SmartfloClickToCallService,
   ],
 })
 export class VoiceModule {}

@@ -10,6 +10,7 @@ interface ApiKeyRow {
   id: string;
   name: string;
   keyPrefix: string;
+  webhookUrl: string | null;
   isActive: boolean;
   _count: { calls: number };
 }
@@ -28,7 +29,8 @@ export function SettingsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (name: string) => api.post('/integrations/api-keys', { name }),
+    mutationFn: (payload: { name: string; webhookUrl?: string }) =>
+      api.post('/integrations/api-keys', payload),
     onSuccess: (res) => {
       setNewKey(res.data.apiKey);
       queryClient.invalidateQueries({ queryKey: ['api-keys'] });
@@ -44,7 +46,12 @@ export function SettingsPage() {
   const handleCreate = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    createMutation.mutate(fd.get('name') as string);
+    const name = fd.get('name') as string;
+    const webhookUrl = (fd.get('webhookUrl') as string)?.trim();
+    createMutation.mutate({
+      name,
+      ...(webhookUrl ? { webhookUrl } : {}),
+    });
   };
 
   return (
@@ -75,6 +82,8 @@ export function SettingsPage() {
         <p className="mb-4 text-sm text-slate-400">
           External apps (e.g. driver service) use these keys with the{' '}
           <code className="text-indigo-300">X-API-Key</code> header to request on-demand calls.
+          Set a webhook URL to receive call status updates and post-call recording + transcript
+          delivery.
         </p>
 
         {newKey && (
@@ -89,11 +98,14 @@ export function SettingsPage() {
         ) : error ? (
           <ErrorState message="Failed to load API keys" />
         ) : (
-          <Table headers={['Name', 'Prefix', 'Calls', 'Status', '']} empty={!data?.length}>
+          <Table headers={['Name', 'Prefix', 'Webhook', 'Calls', 'Status', '']} empty={!data?.length}>
             {data?.map((k) => (
               <tr key={k.id} className="text-slate-300">
                 <td className="px-4 py-3">{k.name}</td>
                 <td className="px-4 py-3 font-mono text-xs">{k.keyPrefix}...</td>
+                <td className="max-w-xs truncate px-4 py-3 text-xs text-slate-400">
+                  {k.webhookUrl ?? '—'}
+                </td>
                 <td className="px-4 py-3">{k._count.calls}</td>
                 <td className="px-4 py-3">{k.isActive ? 'Active' : 'Revoked'}</td>
                 <td className="px-4 py-3">
@@ -115,6 +127,16 @@ export function SettingsPage() {
       <Modal title="Create Integration API Key" open={showCreate} onClose={() => setShowCreate(false)}>
         <form onSubmit={handleCreate} className="space-y-4">
           <Input label="Application Name" name="name" required placeholder="Driver Service Production" />
+          <Input
+            label="Webhook URL"
+            name="webhookUrl"
+            type="url"
+            placeholder="https://your-driver-app.com/webhooks/voice"
+          />
+          <p className="text-xs text-slate-500">
+            Receives <code>call.status_changed</code> during the call and{' '}
+            <code>call.result_ready</code> after the call with recording download URL and transcript.
+          </p>
           <Button type="submit" disabled={createMutation.isPending}>
             {createMutation.isPending ? 'Creating...' : 'Generate Key'}
           </Button>

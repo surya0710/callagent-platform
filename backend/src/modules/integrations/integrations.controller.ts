@@ -34,10 +34,10 @@ export class IntegrationsController {
 
   @Post('calls')
   @ApiOperation({
-    summary: 'Request an on-demand outbound call (driver service / external apps)',
+    summary: 'Initiate an outbound AI voice call (Smartflo click-to-call)',
     description:
-      'Push trip and passenger data from your application to trigger a voice call. ' +
-      'Idempotent per externalRef + API key.',
+      'Same payload shape as POST /voice/test-call, plus externalRef for idempotency and optional callbackUrl. ' +
+      'Places a Smartflo outbound call and injects callContext into the AI voice runtime.',
   })
   createOnDemandCall(
     @Body() dto: OnDemandCallDto,

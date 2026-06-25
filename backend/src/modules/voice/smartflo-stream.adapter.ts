@@ -22,6 +22,7 @@ import {
   CallTimingEvent,
 } from './call-timing-diagnostics.service';
 import { normalizeVoicePhoneNumber } from './voice-phone.util';
+import { IntegrationCallbackService } from '../integrations/integration-callback.service';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
@@ -48,6 +49,8 @@ export class SmartfloStreamAdapter {
     @Inject(forwardRef(() => AudioGateway))
     private readonly audioGateway: AudioGateway,
     private readonly callTiming: CallTimingDiagnosticsService,
+    @Inject(forwardRef(() => IntegrationCallbackService))
+    private readonly integrationCallbackService: IntegrationCallbackService,
   ) {}
 
   private get voiceRuntime() {
@@ -672,6 +675,17 @@ export class SmartfloStreamAdapter {
               'Failed to enqueue post-call transcription',
             );
           });
+      } else if (callId) {
+        void this.deliverIntegrationCallResult(
+          callId,
+          streamSid,
+          metadata.durationMsEstimate,
+        ).catch((error) => {
+          this.logger.error(
+            { streamSid, callId, err: error },
+            'Failed to deliver integration call result',
+          );
+        });
       }
     } catch (error) {
       this.logger.error(
@@ -733,5 +747,34 @@ export class SmartfloStreamAdapter {
         },
       },
     });
+
+    const call = await this.prisma.call.findUnique({ where: { id: callId } });
+    if (call) {
+      void this.integrationCallbackService
+        .notifyStatusChange(call)
+        .catch((error) => {
+          this.logger.warn({
+            callId,
+            err: error instanceof Error ? error.message : String(error),
+            message: 'Failed to send integration status webhook',
+          });
+        });
+    }
+  }
+
+  private async deliverIntegrationCallResult(
+    callId: string,
+    streamSid: string,
+    durationMsEstimate?: number,
+  ): Promise<void> {
+    await this.voiceTranscriptService.finalizeLiveTranscriptForCall(
+      callId,
+      streamSid,
+    );
+    await this.integrationCallbackService.notifyCallResultReady(
+      callId,
+      streamSid,
+      durationMsEstimate,
+    );
   }
 }

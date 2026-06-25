@@ -19,6 +19,7 @@ import {
 import {
   extractSmartfloProviderCallSid,
   VoiceCallAuthorizationService,
+  VoiceCallSource,
 } from './voice-call-authorization.service';
 import {
   isEmptyCallContext,
@@ -37,6 +38,26 @@ export interface VoiceTestCallResult {
   authorizationId?: string;
   callId?: string;
   providerCallSid?: string | null;
+}
+
+export interface InitiateVoiceCallIntegrationMeta {
+  apiKeyId: string;
+  externalRef: string;
+  callbackUrl?: string;
+  apiKeyName?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface InitiateVoiceCallInput {
+  customerNumber: string;
+  callContext?: unknown;
+  source: VoiceCallSource;
+  callSource: CallSource;
+  integration?: InitiateVoiceCallIntegrationMeta;
+  requestMeta?: {
+    requestedByIp?: string;
+    requestedByForwardedFor?: string;
+  };
 }
 
 @Injectable()
@@ -60,13 +81,25 @@ export class SmartfloClickToCallService {
       callContext?: unknown;
     },
   ): Promise<VoiceTestCallResult> {
-    const requestedCustomerNumber = customerNumber.trim();
-    const callOrigin = this.buildCallOrigin(requestMeta);
-    const callContext = this.resolveCallContext(requestMeta?.callContext);
+    return this.initiateCall({
+      customerNumber,
+      callContext: requestMeta?.callContext,
+      source: 'test-call',
+      callSource: CallSource.test,
+      requestMeta,
+    });
+  }
+
+  async initiateCall(input: InitiateVoiceCallInput): Promise<VoiceTestCallResult> {
+    const requestedCustomerNumber = input.customerNumber.trim();
+    const callOrigin = this.buildCallOrigin(input.requestMeta);
+    const callContext = this.resolveCallContext(input.callContext);
 
     this.logger.log({
       requestedCustomerNumber,
       callOrigin,
+      source: input.source,
+      externalRef: input.integration?.externalRef,
       hasCallContext: Boolean(callContext),
       callContextKeys: callContext ? Object.keys(callContext) : [],
       message: callContext
@@ -78,12 +111,17 @@ export class SmartfloClickToCallService {
       this.normalizeCustomerNumber(requestedCustomerNumber);
     this.logger.log(`Normalized customer number: ${normalizedCustomerNumber}`);
 
-    const traceId = this.callTiming.beginTrace(
-      `phone:${normalizedCustomerNumber}`,
-      { normalizedCustomerNumber },
-    );
+    const traceLabel =
+      input.integration?.externalRef ??
+      `phone:${normalizedCustomerNumber}`;
+    const traceId = this.callTiming.beginTrace(traceLabel, {
+      normalizedCustomerNumber,
+      source: input.source,
+      externalRef: input.integration?.externalRef,
+    });
     this.callTiming.mark(traceId, CallTimingEvent.TEST_CALL_API_RECEIVED, {
       hasCallContext: Boolean(callContext),
+      source: input.source,
     });
 
     const apiKey = this.configService
@@ -156,6 +194,8 @@ export class SmartfloClickToCallService {
       normalizedCustomerNumber,
       callOrigin,
       smartfloStatus: response.status,
+      source: input.source,
+      externalRef: input.integration?.externalRef,
       message: 'Smartflo click-to-call accepted',
     });
 
@@ -183,18 +223,25 @@ export class SmartfloClickToCallService {
       providerResponse,
       callOrigin,
       callContext,
+      callSource: input.callSource,
+      integration: input.integration,
     });
     const authorizationId = this.voiceCallAuthorizationService.register({
-      source: 'test-call',
+      source: input.source,
       customerNumber: normalizedCustomerNumber,
       callSid: providerCallSid,
       callId: call.id,
       callContext,
     });
 
+    const successMessage =
+      input.source === 'integration'
+        ? 'Integration call initiated successfully'
+        : 'Test call initiated successfully';
+
     return {
       success: true,
-      message: 'Test call initiated successfully',
+      message: successMessage,
       providerResponse,
       requestedCustomerNumber,
       normalizedCustomerNumber,
@@ -222,18 +269,28 @@ export class SmartfloClickToCallService {
     providerResponse: unknown;
     callOrigin: CallRequestOriginInfo;
     callContext?: CallContext;
+    callSource: CallSource;
+    integration?: InitiateVoiceCallIntegrationMeta;
   }) {
+    const customerName = input.callContext?.customerName?.trim();
+    const [firstName, ...lastNameParts] = customerName
+      ? customerName.split(/\s+/).filter(Boolean)
+      : ['Voice'];
+
     const customer =
       (await this.prisma.customer.findFirst({
         where: { phone: input.normalizedCustomerNumber },
       })) ??
       (await this.prisma.customer.create({
         data: {
-          firstName: 'Voice',
-          lastName: 'Caller',
+          firstName: firstName || 'Voice',
+          lastName: lastNameParts.join(' ') || 'Caller',
           phone: input.normalizedCustomerNumber,
           metadata: {
-            createdBy: 'voice_test_call',
+            createdBy:
+              input.callSource === CallSource.integration
+                ? 'integration_call'
+                : 'voice_test_call',
             requestedCustomerNumber: input.requestedCustomerNumber,
           },
         },
@@ -242,14 +299,24 @@ export class SmartfloClickToCallService {
     const call = await this.prisma.call.create({
       data: {
         customerId: customer.id,
-        source: CallSource.test,
+        source: input.callSource,
+        apiKeyId: input.integration?.apiKeyId,
+        externalRef: input.integration?.externalRef,
+        callbackUrl: input.integration?.callbackUrl,
         status: CallStatus.initiated,
         phone: input.normalizedCustomerNumber,
         providerRef: input.providerCallSid,
+        startedAt: new Date(),
         metadata: this.toJsonValue({
           origin: input.callOrigin,
           providerResponse: input.providerResponse,
           ...(input.callContext ? { callContext: input.callContext } : {}),
+          ...(input.integration?.metadata
+            ? { custom: input.integration.metadata }
+            : {}),
+          ...(input.integration?.apiKeyName
+            ? { integration: { apiKeyName: input.integration.apiKeyName } }
+            : {}),
         }),
       },
     });
@@ -259,8 +326,12 @@ export class SmartfloClickToCallService {
         callId: call.id,
         type: CallEventType.system,
         payload: {
-          action: 'voice_test_call_initiated',
+          action:
+            input.callSource === CallSource.integration
+              ? 'integration_call_initiated'
+              : 'voice_test_call_initiated',
           providerCallSid: input.providerCallSid ?? null,
+          externalRef: input.integration?.externalRef ?? null,
         },
       },
     });

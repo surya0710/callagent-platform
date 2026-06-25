@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import {
   CallTranscriptLifecycleStatus,
   TranscriptSegmentSource,
@@ -14,6 +14,7 @@ import { VoiceTranscriptPostCallService } from './voice-transcript-postcall.serv
 import { VoiceTranscriptPostProcessService } from './voice-transcript-postprocess.service';
 import { detectTranscriptLanguage } from './voice-transcript-prompt.util';
 import { VoiceRecordingPathService } from './voice-recording-path.service';
+import { IntegrationCallbackService } from '../../integrations/integration-callback.service';
 import {
   PostCallTranscriptJobPayload,
   RealtimeTranscriptCompletedInput,
@@ -61,6 +62,8 @@ export class VoiceTranscriptService {
     private readonly recordingPathService: VoiceRecordingPathService,
     private readonly voiceSessionService: VoiceSessionService,
     private readonly transcriptEmailService: TranscriptEmailService,
+    @Inject(forwardRef(() => IntegrationCallbackService))
+    private readonly integrationCallbackService: IntegrationCallbackService,
   ) {}
 
   bindCall(streamSid: string, callId: string): void {
@@ -254,6 +257,21 @@ export class VoiceTranscriptService {
             err: error instanceof Error ? error.message : String(error),
           });
         });
+
+      void this.integrationCallbackService
+        .notifyCallResultReady(
+          payload.callId,
+          payload.streamSid,
+          payload.durationMsEstimate,
+        )
+        .catch((error) => {
+          this.logger.error({
+            callId: payload.callId,
+            streamSid: payload.streamSid,
+            message: 'integration_result_webhook_failed',
+            err: error instanceof Error ? error.message : String(error),
+          });
+        });
     } catch (error) {
       this.recordTranscriptError(payload.streamSid, payload.callId, error);
       throw error;
@@ -317,6 +335,62 @@ export class VoiceTranscriptService {
 
   clearLiveState(streamSid: string): void {
     this.liveByStreamSid.delete(streamSid);
+  }
+
+  async finalizeLiveTranscriptForCall(
+    callId: string,
+    streamSid: string,
+  ): Promise<void> {
+    const state = this.liveByStreamSid.get(streamSid);
+    const transcript = await this.prisma.callTranscript.findUnique({
+      where: { callId },
+      include: { segments: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    if (state?.segments.length) {
+      const flatContent = formatFlatTranscript(state.segments);
+      const languageDetected = this.detectOverallLanguage(state.segments);
+
+      if (transcript) {
+        await this.prisma.callTranscript.update({
+          where: { callId },
+          data: {
+            content: flatContent,
+            lifecycleStatus: CallTranscriptLifecycleStatus.final,
+            transcriptLanguageDetected: languageDetected,
+            transcriptError: null,
+          },
+        });
+        await this.prisma.callTranscriptSegment.updateMany({
+          where: { callTranscriptId: transcript.id },
+          data: { status: TranscriptSegmentStatus.final },
+        });
+      } else {
+        await this.persistFinalSegments(
+          callId,
+          state.segments.map((segment) => ({
+            ...segment,
+            status: 'final',
+          })),
+        );
+      }
+    } else if (
+      transcript &&
+      transcript.lifecycleStatus === CallTranscriptLifecycleStatus.draft
+    ) {
+      await this.prisma.callTranscript.update({
+        where: { callId },
+        data: { lifecycleStatus: CallTranscriptLifecycleStatus.final },
+      });
+      await this.prisma.callTranscriptSegment.updateMany({
+        where: { callTranscriptId: transcript.id },
+        data: { status: TranscriptSegmentStatus.final },
+      });
+    }
+
+    this.voiceSessionService.updateTranscriptState(streamSid, {
+      finalTranscriptStatus: 'final',
+    });
   }
 
   private ensureLiveState(streamSid: string): LiveTranscriptState {
@@ -497,6 +571,9 @@ export class VoiceTranscriptService {
           transcriptError: message,
         },
       })
+      .then(() =>
+        this.integrationCallbackService.notifyCallResultReady(callId, streamSid),
+      )
       .catch(() => undefined);
   }
 

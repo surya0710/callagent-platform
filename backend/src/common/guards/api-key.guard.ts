@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiKeysService } from '../../modules/integrations/api-keys.service';
+import { IntegrationApiKeyContext } from '../../modules/integrations/interfaces/integration-context.interface';
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
@@ -13,7 +14,7 @@ export class ApiKeyGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<{
       headers: Record<string, string | undefined>;
-      integrationApiKey?: { id: string; name: string };
+      integrationApiKey?: IntegrationApiKeyContext;
     }>();
 
     const headerKey =
@@ -25,7 +26,11 @@ export class ApiKeyGuard implements CanActivate {
     }
 
     const apiKey = await this.apiKeysService.validateKey(headerKey);
-    request.integrationApiKey = { id: apiKey.id, name: apiKey.name };
+    request.integrationApiKey = {
+      id: apiKey.id,
+      name: apiKey.name,
+      webhookUrl: apiKey.webhookUrl,
+    };
     return true;
   }
 

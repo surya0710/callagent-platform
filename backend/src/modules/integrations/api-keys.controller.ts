@@ -22,7 +22,7 @@ export class ApiKeysController {
   @RequirePermissions(PERMISSIONS.SETTINGS_WRITE)
   @ApiOperation({ summary: 'Create a new integration API key' })
   create(@Body() dto: CreateApiKeyDto) {
-    return this.apiKeysService.create(dto.name);
+    return this.apiKeysService.create(dto.name, dto.webhookUrl);
   }
 
   @Patch(':id/revoke')

@@ -18,6 +18,7 @@ export class ApiKeysService {
         id: true,
         name: true,
         keyPrefix: true,
+        webhookUrl: true,
         isActive: true,
         createdAt: true,
         updatedAt: true,
@@ -28,19 +29,25 @@ export class ApiKeysService {
     return keys;
   }
 
-  async create(name: string) {
+  async create(name: string, webhookUrl?: string) {
     const rawKey = `${KEY_PREFIX}${randomBytes(24).toString('hex')}`;
     const keyPrefix = rawKey.slice(0, 12);
     const keyHash = await bcrypt.hash(rawKey, this.saltRounds);
 
     const apiKey = await this.prisma.apiKey.create({
-      data: { name, keyPrefix, keyHash },
+      data: {
+        name,
+        keyPrefix,
+        keyHash,
+        webhookUrl: webhookUrl?.trim() || null,
+      },
     });
 
     return {
       id: apiKey.id,
       name: apiKey.name,
       keyPrefix: apiKey.keyPrefix,
+      webhookUrl: apiKey.webhookUrl,
       apiKey: rawKey,
       message: 'Store this API key securely. It will not be shown again.',
     };

@@ -1,6 +1,6 @@
-# External Integration API — On-Demand Calls
+# External Integration API — Initiate Voice Call
 
-Push call requests from your driver service (or any external app) into the AI Voice Platform.
+Initiate outbound AI voice calls from your driver service using the same payload as the internal `POST /api/voice/test-call` endpoint.
 
 ## Authentication
 
@@ -15,8 +15,18 @@ Create keys from the admin dashboard (**Settings → Integration API Keys**) or:
 ```http
 POST /api/integrations/api-keys
 Authorization: Bearer <admin-jwt-cookie>
-{ "name": "Driver Service Production" }
+Content-Type: application/json
+
+{
+  "name": "Driver Service Production",
+  "webhookUrl": "https://your-driver-app.com/webhooks/voice"
+}
 ```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Label for this integration client |
+| `webhookUrl` | No | Default webhook for status updates and post-call recording + transcript delivery |
 
 The raw key is shown **once** on creation. Store it securely.
 
@@ -28,23 +38,26 @@ After `npm run prisma:seed`:
 avp_dev_driver_service_key_change_in_production
 ```
 
-## On-demand call flow
+## Call flow
 
 ```mermaid
 sequenceDiagram
     participant App as Driver Service App
     participant API as AI Voice Platform
-    participant Worker as Call Worker
-    participant Tel as Telephony (future)
+    participant Smartflo as Smartflo
+    participant AI as OpenAI Realtime
 
     App->>API: POST /integrations/v1/calls
-    API->>API: Upsert passenger, create call record
-    API->>Worker: Queue on-demand job
-    Worker->>Tel: Place outbound call (TODO)
-    Worker->>App: POST callbackUrl (status update)
+    API->>Smartflo: click_to_call_support
+    Smartflo-->>API: provider call SID
+    API->>AI: prewarm + authorize callContext
+    Smartflo->>API: voice WebSocket stream
+    API->>App: POST webhook (call.status_changed)
+    Note over API,App: After call ends
+    API->>App: POST webhook (call.result_ready)
 ```
 
-## Request on-demand call
+## Initiate call
 
 ```http
 POST /api/integrations/v1/calls
@@ -52,78 +65,116 @@ X-API-Key: avp_...
 Content-Type: application/json
 ```
 
-### Example — driver assigned
+### Request body
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `externalRef` | Yes | Your unique booking/reference ID (idempotency key) |
+| `customerNumber` | Yes | 10-digit Indian mobile or `91XXXXXXXXXX` |
+| `callContext` | No | Booking/customer details injected into AI runtime |
+| `callbackUrl` | No | Per-call webhook override (falls back to API key `webhookUrl`) |
+| `metadata` | No | Opaque JSON stored on the call record |
+
+### Example — driver service feedback call
 
 ```json
 {
-  "externalRef": "trip_9f3a21",
-  "callPurpose": "driver_assigned",
-  "priority": "high",
-  "callbackUrl": "https://your-driver-app.com/webhooks/voice-status",
-  "passenger": {
-    "phone": "+15551234567",
-    "firstName": "Alex",
-    "lastName": "Rivera",
-    "language": "en"
-  },
-  "driver": {
-    "name": "Sam Taylor",
-    "phone": "+15559876543",
-    "vehicleId": "VH-204",
-    "vehiclePlate": "ABC-1234"
-  },
-  "trip": {
-    "pickupAddress": "123 Main St, Austin, TX",
-    "dropoffAddress": "456 Oak Ave, Austin, TX",
-    "scheduledPickupAt": "2026-06-08T18:30:00Z",
-    "estimatedArrival": "2026-06-08T18:42:00Z",
-    "fare": "24.50",
-    "currency": "USD"
+  "externalRef": "OD482917",
+  "customerNumber": "9876543210",
+  "callContext": {
+    "bookingNumber": "OD482917",
+    "customerName": "Rahul Sharma",
+    "customerNumber": "9876543210",
+    "driverName": "Rajesh Kumar",
+    "driverMobileNumber": "9999999999",
+    "totalCharges": 450,
+    "balanceAmount": 150,
+    "paymentMode": "UPI"
   },
   "metadata": {
-    "fleetId": "fleet_austin_01",
-    "rideType": "standard"
+    "fleetId": "fleet_delhi_01"
   }
 }
 ```
 
-### Call purposes
+If you omit `callbackUrl`, webhooks are sent to the `webhookUrl` configured on the API key.
 
-| Value | Use case |
-|-------|----------|
-| `driver_assigned` | Driver matched to trip |
-| `ride_reminder` | Upcoming pickup reminder |
-| `pickup_update` | ETA or location change |
-| `trip_completed` | Post-ride follow-up |
-| `payment_reminder` | Payment due |
-| `custom` | Generic scripted call |
+### `callContext` fields (all optional)
 
-### Response
+| Field | Example | Used for |
+|-------|---------|----------|
+| `bookingNumber` | `OD482917` | Opening + AI context |
+| `customerName` | `Rahul Sharma` | Greeting by name |
+| `customerNumber` | `9876543210` | Reference only |
+| `driverName` | `Rajesh Kumar` | Driver issue follow-up |
+| `driverMobileNumber` | `9999999999` | Reference only |
+| `totalCharges` | `450` | Fare context |
+| `balanceAmount` | `150` | Payment follow-up |
+| `paymentMode` | `UPI` | Payment context |
+
+If `callContext.bookingNumber` is omitted, `externalRef` is used as the booking reference in AI context.
+
+### Response — success
 
 ```json
 {
   "idempotent": false,
+  "success": true,
+  "message": "Integration call initiated successfully",
+  "authorizationId": "uuid",
+  "providerCallSid": "CAxxxxxxxx",
+  "normalizedCustomerNumber": "919876543210",
   "call": {
     "id": "uuid",
-    "externalRef": "trip_9f3a21",
-    "status": "queued",
-    "callPurpose": "driver_assigned",
-    "phone": "+15551234567",
-    "priority": "high",
-    "metadata": { "...": "..." },
-    "createdAt": "2026-06-08T18:25:00.000Z"
+    "externalRef": "OD482917",
+    "status": "initiated",
+    "callPurpose": null,
+    "phone": "919876543210",
+    "priority": "normal",
+    "callbackUrl": "https://your-driver-app.com/webhooks/voice",
+    "providerRef": "CAxxxxxxxx",
+    "metadata": {
+      "callContext": { "...": "..." },
+      "providerResponse": { "...": "..." }
+    },
+    "createdAt": "2026-06-25T10:00:00.000Z",
+    "startedAt": "2026-06-25T10:00:00.000Z",
+    "endedAt": null,
+    "hasTranscript": false,
+    "summary": null,
+    "sentiment": null
   }
 }
 ```
 
-**Idempotency:** Re-sending the same `externalRef` with the same API key returns the existing call (`idempotent: true`).
+### Response — idempotent replay
+
+Re-sending the same `externalRef` with the same API key returns the existing call:
+
+```json
+{
+  "idempotent": true,
+  "call": { "...": "..." }
+}
+```
+
+### Error — Smartflo rejected the call
+
+HTTP `400` with:
+
+```json
+{
+  "message": "Smartflo click-to-call failed with status 4xx",
+  "providerResponse": { "...": "..." }
+}
+```
 
 ## Poll call status
 
-By your trip/booking ID:
+By your booking/reference ID:
 
 ```http
-GET /api/integrations/v1/calls/ref/trip_9f3a21
+GET /api/integrations/v1/calls/ref/OD482917
 X-API-Key: avp_...
 ```
 
@@ -134,26 +185,86 @@ GET /api/integrations/v1/calls/{callId}
 X-API-Key: avp_...
 ```
 
-## Status callbacks
+## Webhooks
 
-If you provide `callbackUrl`, the platform POSTs on status changes:
+Webhooks are POST requests to your `webhookUrl` (API key default) or per-call `callbackUrl` override.
+
+Every webhook includes:
+
+```http
+Content-Type: application/json
+X-AI-Voice-Event: <event name>
+```
+
+### Event: `call.status_changed`
+
+Sent when call status changes (e.g. `initiated`, `in_progress`, `completed`).
 
 ```json
 {
   "callId": "uuid",
-  "externalRef": "trip_9f3a21",
+  "externalRef": "OD482917",
   "status": "initiated",
-  "callPurpose": "driver_assigned",
-  "phone": "+15551234567",
-  "startedAt": "2026-06-08T18:25:01.000Z",
+  "callPurpose": null,
+  "phone": "919876543210",
+  "startedAt": "2026-06-25T10:00:00.000Z",
   "endedAt": null,
   "failureReason": null,
   "metadata": {},
-  "timestamp": "2026-06-08T18:25:01.000Z"
+  "timestamp": "2026-06-25T10:00:00.000Z"
 }
 ```
 
-Header: `X-AI-Voice-Event: call.status_changed`
+### Event: `call.result_ready`
+
+Sent once after the call ends, when the recording is available and the transcript is finalized (or marked failed). Includes a downloadable recording URL and full transcript.
+
+```json
+{
+  "callId": "uuid",
+  "externalRef": "OD482917",
+  "status": "completed",
+  "phone": "919876543210",
+  "startedAt": "2026-06-25T10:00:00.000Z",
+  "endedAt": "2026-06-25T10:05:12.000Z",
+  "durationSec": 312,
+  "callContext": {
+    "bookingNumber": "OD482917",
+    "customerName": "Rahul Sharma",
+    "driverName": "Rajesh Kumar"
+  },
+  "metadata": {},
+  "recording": {
+    "streamSid": "MZxxxxxxxx",
+    "downloadUrl": "https://tatdai.in/api/voice/recordings/MZxxxxxxxx/download",
+    "durationMsEstimate": 312000
+  },
+  "transcript": {
+    "status": "final",
+    "content": "Assistant: Namaste...\nCustomer: Haan...",
+    "language": "hi",
+    "error": null,
+    "segments": [
+      {
+        "speaker": "assistant",
+        "text": "Namaste...",
+        "startedAtMs": 0,
+        "endedAtMs": 4200,
+        "source": "postcall",
+        "status": "final",
+        "language": "hi"
+      }
+    ]
+  },
+  "timestamp": "2026-06-25T10:05:30.000Z"
+}
+```
+
+**Recording download:** `GET` the `recording.downloadUrl` to fetch the mixed call audio (WAV). The endpoint is public; no API key is required for download.
+
+**Transcript timing:** When post-call transcription is enabled on the platform, `call.result_ready` is sent after transcription completes. If transcription fails, `transcript.status` is `failed` and `transcript.error` describes the issue; the recording is still included.
+
+**Idempotency:** `call.result_ready` is delivered at most once per call.
 
 ## curl example
 
@@ -162,16 +273,29 @@ curl -X POST http://localhost:3000/api/integrations/v1/calls \
   -H "X-API-Key: avp_dev_driver_service_key_change_in_production" \
   -H "Content-Type: application/json" \
   -d '{
-    "externalRef": "trip_demo_001",
-    "callPurpose": "driver_assigned",
-    "passenger": { "phone": "+15551234567", "firstName": "Alex" },
-    "driver": { "name": "Sam", "vehiclePlate": "XYZ-999" },
-    "trip": { "pickupAddress": "Airport Terminal 1" }
+    "externalRef": "OD482917",
+    "customerNumber": "9876543210",
+    "callContext": {
+      "bookingNumber": "OD482917",
+      "customerName": "Rahul Sharma",
+      "driverName": "Rajesh Kumar",
+      "totalCharges": 450,
+      "balanceAmount": 150,
+      "paymentMode": "UPI"
+    }
   }'
 ```
 
+## Interactive API docs
+
+Swagger UI: `http://localhost:3000/api/docs` (production: `https://tatdai.in/api/docs`)
+
+Look under the **Integrations** tag → `POST /integrations/v1/calls`.
+
 ## Notes
 
-- Works without Redis (`REDIS_ENABLED=false`) — calls process inline
-- Telephony provider is still a placeholder; call records and AI context are created
-- Passenger is auto-created/updated in the customers table by phone number
+- Same Smartflo click-to-call path as the admin **Voice Test Call** feature
+- `callContext` is passed to OpenAI prewarm and live runtime instructions
+- Calls require app authorization (`VOICE_REQUIRE_APP_AUTHORIZATION`) — the integration endpoint registers authorization automatically after Smartflo accepts the call
+- Indian mobile numbers only: 10 digits or `91` + 10 digits
+- Configure `webhookUrl` when creating the API key in **Settings → Integration API Keys** to receive webhooks without passing `callbackUrl` on every call
