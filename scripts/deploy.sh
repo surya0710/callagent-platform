@@ -37,7 +37,27 @@ echo "==> Running Prisma generate"
 npx prisma generate
 
 echo "==> Running database migrations"
-npx prisma migrate deploy
+run_migrate_deploy() {
+  npx prisma migrate deploy 2>&1
+}
+
+MIGRATE_OUTPUT="$(run_migrate_deploy)" && {
+  echo "$MIGRATE_OUTPUT"
+} || {
+  echo "$MIGRATE_OUTPUT" >&2
+  if echo "$MIGRATE_OUTPUT" | grep -q 'P3009'; then
+    FAILED_MIGRATION="$(echo "$MIGRATE_OUTPUT" | sed -n 's/.*The `\([^`]*\)` migration.*/\1/p' | head -1)"
+    if [ -n "$FAILED_MIGRATION" ]; then
+      echo "==> Recovering failed migration (not applied): $FAILED_MIGRATION"
+      npx prisma migrate resolve --rolled-back "$FAILED_MIGRATION"
+      npx prisma migrate deploy
+    else
+      exit 1
+    fi
+  else
+    exit 1
+  fi
+}
 
 if [ "${RUN_PRISMA_SEED:-true}" = "true" ]; then
   echo "==> Seeding database roles, permissions, and defaults"
