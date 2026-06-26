@@ -2,6 +2,7 @@ import api from './api';
 import {
   VoiceHealthResponse,
   VoiceSessionsResponse,
+  VoiceSignedRecordingUrlResponse,
   VoiceTestCallRequest,
   VoiceTestCallResponse,
   VoiceTranscriptResponse,
@@ -14,6 +15,13 @@ export const voiceApi = {
 
   getSessions: () =>
     api.get<VoiceSessionsResponse>('/voice/sessions').then((res) => res.data),
+
+  getSignedRecordingUrl: (streamSid: string) =>
+    api
+      .get<VoiceSignedRecordingUrlResponse>(
+        `/voice/recordings/${encodeURIComponent(streamSid)}/signed-url`,
+      )
+      .then((res) => res.data),
 
   getSessionTranscript: (streamSid: string) =>
     api

@@ -20,7 +20,8 @@ export interface VoiceRecordingMetadata {
   callSid?: string;
   fileName: string;
   storageKey: string;
-  recordingS3Url: string;
+  /** S3 object key (legacy field name; not a public HTTP URL). */
+  recordingS3Url?: string;
   inboundStorageKey?: string;
   outboundStorageKey?: string;
   sampleRate: number;
@@ -325,9 +326,9 @@ export class VoiceRecordingService {
       const fileName = toSafeRecordingFileName(streamSid);
 
       if (options?.callId) {
-        await this.saveS3UrlToDb(
+        await this.saveS3KeyToDb(
           options.callId,
-          mixedUpload.url,
+          mixedUpload.key,
           streamSid,
         );
       }
@@ -337,7 +338,7 @@ export class VoiceRecordingService {
         callSid: resolvedCallSid,
         fileName,
         storageKey: mixedUpload.key,
-        recordingS3Url: mixedUpload.url,
+        recordingS3Url: mixedUpload.key,
         inboundStorageKey,
         outboundStorageKey,
         sampleRate: SAMPLE_RATE,
@@ -369,7 +370,7 @@ export class VoiceRecordingService {
         streamSid,
         fileName,
         storageKey: mixedUpload.key,
-        recordingS3Url: mixedUpload.url,
+        s3Key: mixedUpload.key,
         mulawBytes: metadata.mulawBytes,
         wavBytes: metadata.wavBytes,
         inboundChunks: active.inboundChunks.length,
@@ -406,8 +407,44 @@ export class VoiceRecordingService {
     return this.finalizedByStreamSid.get(streamSid)?.storageKey;
   }
 
-  getRecordingS3Url(streamSid: string): string | undefined {
-    return this.finalizedByStreamSid.get(streamSid)?.recordingS3Url;
+  getRecordingS3Key(streamSid: string): string | undefined {
+    const recording = this.finalizedByStreamSid.get(streamSid);
+    return (
+      this.s3RecordingStorageService.normalizeS3Key(recording?.s3Key) ??
+      this.s3RecordingStorageService.normalizeS3Key(recording?.storageKey) ??
+      this.s3RecordingStorageService.normalizeS3Key(recording?.recordingS3Url) ??
+      undefined
+    );
+  }
+
+  async resolveRecordingS3Key(streamSid: string): Promise<string | null> {
+    const fromMemory = this.getRecordingS3Key(streamSid);
+    if (fromMemory) {
+      return fromMemory;
+    }
+
+    const session = await this.voiceSessionService.resolveByStreamSid(streamSid);
+    const fromSession = this.s3RecordingStorageService.normalizeS3Key(
+      session?.recordingS3Url,
+    );
+    if (fromSession) {
+      return fromSession;
+    }
+
+    if (session?.callId) {
+      const call = await this.prisma.call.findUnique({
+        where: { id: session.callId },
+        select: { recordingS3Url: true },
+      });
+      const fromCall = this.s3RecordingStorageService.normalizeS3Key(
+        call?.recordingS3Url,
+      );
+      if (fromCall) {
+        return fromCall;
+      }
+    }
+
+    return null;
   }
 
   clearOldRecordings(maxCount = MAX_METADATA_ENTRIES): void {
@@ -425,31 +462,35 @@ export class VoiceRecordingService {
   toPublicMetadata(
     metadata: VoiceRecordingMetadata,
   ): VoiceRecordingPublicMetadata {
-    const { storageKey: _storageKey, ...publicMetadata } = metadata;
+    const {
+      storageKey: _storageKey,
+      recordingS3Url: _recordingS3Url,
+      ...publicMetadata
+    } = metadata;
     return publicMetadata;
   }
 
   async recordingExists(streamSid: string): Promise<boolean> {
-    const recording = this.finalizedByStreamSid.get(streamSid);
-    if (!recording?.storageKey) {
+    const s3Key = await this.resolveRecordingS3Key(streamSid);
+    if (!s3Key) {
       return false;
     }
 
-    return this.s3RecordingStorageService.objectExists(recording.storageKey);
+    return this.s3RecordingStorageService.objectExists(s3Key);
   }
 
   async openRecordingReadStream(streamSid: string): Promise<Readable | null> {
-    const storageKey = this.getRecordingStorageKey(streamSid);
-    if (!storageKey) {
+    const s3Key = await this.resolveRecordingS3Key(streamSid);
+    if (!s3Key) {
       return null;
     }
 
     try {
-      return await this.s3RecordingStorageService.createReadStream(storageKey);
+      return await this.s3RecordingStorageService.createReadStream(s3Key);
     } catch (error) {
       this.logger.error({
         streamSid,
-        storageKey,
+        s3Key,
         err: error,
         message: 'Failed to open S3 recording read stream',
       });
@@ -466,15 +507,14 @@ export class VoiceRecordingService {
     expiresInSeconds: number;
     url: string;
   }> {
-    const recording = this.getRecording(streamSid);
-    const s3Key = recording?.s3Key?.trim();
+    if (!this.s3RecordingStorageService.isEnabled()) {
+      throw new NotFoundException(
+        'S3 recording is not available for this streamSid',
+      );
+    }
 
-    if (
-      !recording ||
-      !s3Key ||
-      !this.s3RecordingStorageService.isEnabled() ||
-      recording.s3UploadError
-    ) {
+    const s3Key = await this.resolveRecordingS3Key(streamSid);
+    if (!s3Key) {
       throw new NotFoundException(
         'S3 recording is not available for this streamSid',
       );
@@ -509,23 +549,23 @@ export class VoiceRecordingService {
     this.clearOldRecordings(MAX_METADATA_ENTRIES);
   }
 
-  private async saveS3UrlToDb(
+  private async saveS3KeyToDb(
     callId: string,
-    s3Url: string,
+    s3Key: string,
     streamSid: string,
   ): Promise<void> {
     try {
       await this.prisma.call.update({
         where: { id: callId },
-        data: { recordingS3Url: s3Url },
+        data: { recordingS3Url: s3Key },
       });
-      this.logger.log({ streamSid, callId, s3Url, message: 'Recording S3 URL saved to DB' });
+      this.logger.log({ streamSid, callId, s3Key, message: 'Recording S3 key saved to DB' });
     } catch (error) {
       this.logger.error({
         streamSid,
         callId,
         err: error,
-        message: 'Failed to save recording S3 URL to DB',
+        message: 'Failed to save recording S3 key to DB',
       });
     }
   }

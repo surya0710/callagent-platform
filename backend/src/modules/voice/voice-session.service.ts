@@ -368,7 +368,7 @@ export function toVoiceSessionResponse(
     stopReason: session.stopReason ?? null,
     remoteAddress: session.remoteAddress,
     recordingAvailable: session.recordingAvailable ?? false,
-    recordingS3Url: session.recordingS3Url ?? null,
+    recordingS3Url: null,
     recordingFileName: session.recordingFileName,
     recordingDurationMsEstimate: session.recordingDurationMsEstimate,
     recordingMulawBytes: session.recordingMulawBytes,

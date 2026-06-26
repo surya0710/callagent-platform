@@ -163,6 +163,13 @@ export interface VoiceTestCallResponse {
   providerCallSid?: string | null;
 }
 
+export interface VoiceSignedRecordingUrlResponse {
+  streamSid: string;
+  s3Key: string;
+  expiresInSeconds: number;
+  url: string;
+}
+
 export function voiceRecordingDownloadUrl(streamSid: string): string {
   const base = import.meta.env.VITE_API_BASE_URL || '/api';
   return `${base}/voice/recordings/${encodeURIComponent(streamSid)}/download`;

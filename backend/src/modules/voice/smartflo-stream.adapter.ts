@@ -644,7 +644,7 @@ export class SmartfloStreamAdapter {
         durationMsEstimate: metadata.durationMsEstimate,
         mulawBytes: metadata.mulawBytes,
         wavBytes: metadata.wavBytes,
-        recordingS3Url: metadata.recordingS3Url,
+        recordingS3Url: metadata.s3Key ?? metadata.storageKey,
         inboundTimelineStartMs: metadata.inboundTimelineStartMs,
         inboundTimelineEndMs: metadata.inboundTimelineEndMs,
         outboundTimelineStartMs: metadata.outboundTimelineStartMs,

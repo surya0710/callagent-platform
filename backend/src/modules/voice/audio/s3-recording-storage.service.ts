@@ -91,6 +91,28 @@ export class S3RecordingStorageService {
     return `https://${bucket}.s3.${this.getRegion()}.amazonaws.com/${encodedKey}`;
   }
 
+  normalizeS3Key(value?: string | null): string | null {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      try {
+        const pathname = new URL(trimmed).pathname.replace(/^\/+/, '');
+        return decodeURIComponent(pathname);
+      } catch {
+        this.logger.warn({
+          value: trimmed.slice(0, 120),
+          message: 'Failed to parse S3 URL when normalizing key',
+        });
+        return null;
+      }
+    }
+
+    return trimmed;
+  }
+
   async uploadRecording(
     wavBuffer: Buffer,
     streamSid: string,
@@ -166,7 +188,7 @@ export class S3RecordingStorageService {
       throw new Error('S3 recordings are disabled');
     }
 
-    const s3Key = params.s3Key?.trim();
+    const s3Key = this.normalizeS3Key(params.s3Key);
     if (!s3Key) {
       this.logger.error({
         message: 'S3 recording signed URL requested without s3Key',
@@ -178,6 +200,8 @@ export class S3RecordingStorageService {
     const expiresInSeconds = params.expiresInSeconds ?? 900;
 
     try {
+      this.logger.log(`Generating signed S3 URL bucket=${bucket} key=${s3Key}`);
+
       const { GetObjectCommand } = await this.loadS3Module();
       const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
       const client = await this.getClient();
@@ -189,6 +213,13 @@ export class S3RecordingStorageService {
         }),
         { expiresIn: expiresInSeconds },
       );
+
+      if (!url.includes('X-Amz-Signature')) {
+        const message =
+          'S3 recording signed URL is missing X-Amz-Signature (signing failed or wrong URL returned)';
+        this.logger.error({ s3Key, bucket, url: url.slice(0, 160), message });
+        throw new Error(message);
+      }
 
       this.logger.log({
         s3Key,
