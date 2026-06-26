@@ -320,9 +320,10 @@ model Call {
   startedAt     DateTime?    @map("started_at")
   endedAt       DateTime?    @map("ended_at")
   failureReason String?      @map("failure_reason")
-  providerRef   String?      @map("provider_ref")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
+  providerRef      String?      @map("provider_ref")
+  recordingS3Url   String?      @map("recording_s3_url") @db.VarChar(2048)
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
 
   campaign   Campaign?       @relation(fields: [campaignId], references: [id])
   customer   Customer        @relation(fields: [customerId], references: [id])

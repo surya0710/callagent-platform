@@ -1,13 +1,21 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Readable } from 'node:stream';
 
 type S3Module = typeof import('@aws-sdk/client-s3');
 type S3ClientInstance = InstanceType<S3Module['S3Client']>;
+
+export type RecordingTrackVariant = 'mixed' | 'inbound' | 'outbound';
 
 export interface S3RecordingUploadSuccess {
   key: string;
   bucket: string;
   uploadedAt: string;
+  url: string;
 }
 
 export interface S3RecordingUploadFailure {
@@ -16,8 +24,7 @@ export interface S3RecordingUploadFailure {
 
 export type S3RecordingUploadResult =
   | S3RecordingUploadSuccess
-  | S3RecordingUploadFailure
-  | null;
+  | S3RecordingUploadFailure;
 
 export interface GetSignedRecordingUrlParams {
   s3Key: string;
@@ -37,43 +44,61 @@ export class S3RecordingStorageService {
   private s3Client: S3ClientInstance | null = null;
   private s3Module: S3Module | null = null;
 
-  constructor(private readonly configService: ConfigService) {
-    if (!this.isEnabled()) {
-      this.logger.log({
-        message: 'S3 recording upload disabled (S3_RECORDINGS_ENABLED is not true)',
-      });
-    }
-  }
+  constructor(private readonly configService: ConfigService) {}
 
   isEnabled(): boolean {
-    return this.configService.get<string>('S3_RECORDINGS_ENABLED') === 'true';
+    return Boolean(this.configService.get<string>('S3_RECORDINGS_BUCKET')?.trim());
   }
 
-  async uploadRecording(
-    wavBuffer: Buffer,
-    streamSid: string,
-    callSid?: string,
-  ): Promise<S3RecordingUploadResult> {
-    if (!this.isEnabled()) {
-      return null;
-    }
-
+  getBucket(): string {
     const bucket = this.configService.get<string>('S3_RECORDINGS_BUCKET')?.trim();
     if (!bucket) {
-      this.logger.warn({
-        streamSid,
-        message: 'S3_RECORDINGS_BUCKET is not configured; skipping upload',
-      });
-      return null;
+      throw new ServiceUnavailableException(
+        'S3 recordings bucket is not configured (S3_RECORDINGS_BUCKET missing)',
+      );
     }
+    return bucket;
+  }
 
+  getRegion(): string {
+    return this.configService.get<string>('AWS_REGION')?.trim() || 'ap-south-1';
+  }
+
+  buildRecordingKey(
+    streamSid: string,
+    variant: RecordingTrackVariant = 'mixed',
+  ): string {
     const prefix =
       this.configService.get<string>('S3_RECORDINGS_PREFIX')?.trim() ||
       'recordings';
     const date = new Date().toISOString().slice(0, 10);
     const safeStreamSid =
       streamSid.replace(/[^a-zA-Z0-9_-]/g, '_') || 'recording';
-    const key = `${prefix}/${date}/${safeStreamSid}.wav`;
+    const suffix =
+      variant === 'mixed'
+        ? '.wav'
+        : variant === 'inbound'
+          ? '_inbound.wav'
+          : '_outbound.wav';
+    return `${prefix}/${date}/${safeStreamSid}${suffix}`;
+  }
+
+  buildHttpUrl(bucket: string, key: string): string {
+    const encodedKey = key
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    return `https://${bucket}.s3.${this.getRegion()}.amazonaws.com/${encodedKey}`;
+  }
+
+  async uploadRecording(
+    wavBuffer: Buffer,
+    streamSid: string,
+    callSid?: string,
+    variant: RecordingTrackVariant = 'mixed',
+  ): Promise<S3RecordingUploadResult> {
+    const bucket = this.getBucket();
+    const key = this.buildRecordingKey(streamSid, variant);
 
     const metadata: Record<string, string> = { streamSid };
     if (callSid) {
@@ -85,6 +110,7 @@ export class S3RecordingStorageService {
       callSid,
       bucket,
       key,
+      variant,
       message: 'Starting S3 recording upload',
     });
 
@@ -105,6 +131,7 @@ export class S3RecordingStorageService {
         streamSid,
         bucket,
         key,
+        variant,
         message: 'S3 recording upload succeeded',
       });
 
@@ -112,6 +139,7 @@ export class S3RecordingStorageService {
         key,
         bucket,
         uploadedAt: new Date().toISOString(),
+        url: this.buildHttpUrl(bucket, key),
       };
     } catch (error) {
       const errorMessage =
@@ -120,6 +148,7 @@ export class S3RecordingStorageService {
         streamSid,
         bucket,
         key,
+        variant,
         err: error,
         message: 'S3 recording upload failed',
       });
@@ -132,7 +161,7 @@ export class S3RecordingStorageService {
   ): Promise<SignedRecordingUrlResult> {
     if (!this.isEnabled()) {
       this.logger.warn({
-        message: 'S3 recording signed URL requested while S3 upload is disabled',
+        message: 'S3 recording signed URL requested while S3 bucket is not configured',
       });
       throw new Error('S3 recordings are disabled');
     }
@@ -145,15 +174,7 @@ export class S3RecordingStorageService {
       throw new Error('S3 recording key is missing');
     }
 
-    const bucket = this.configService.get<string>('S3_RECORDINGS_BUCKET')?.trim();
-    if (!bucket) {
-      this.logger.error({
-        s3Key,
-        message: 'S3_RECORDINGS_BUCKET is not configured',
-      });
-      throw new Error('S3 recordings bucket is not configured');
-    }
-
+    const bucket = this.getBucket();
     const expiresInSeconds = params.expiresInSeconds ?? 900;
 
     try {
@@ -193,6 +214,86 @@ export class S3RecordingStorageService {
     }
   }
 
+  async objectExists(key: string): Promise<boolean> {
+    try {
+      const { HeadObjectCommand } = await this.loadS3Module();
+      const client = await this.getClient();
+      await client.send(
+        new HeadObjectCommand({
+          Bucket: this.getBucket(),
+          Key: key,
+        }),
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async downloadObject(key: string): Promise<Buffer> {
+    const { GetObjectCommand } = await this.loadS3Module();
+    const client = await this.getClient();
+    const response = await client.send(
+      new GetObjectCommand({
+        Bucket: this.getBucket(),
+        Key: key,
+      }),
+    );
+
+    if (!response.Body) {
+      throw new Error(`S3 object body missing for key: ${key}`);
+    }
+
+    return this.bodyToBuffer(response.Body);
+  }
+
+  async createReadStream(key: string): Promise<Readable> {
+    const { GetObjectCommand } = await this.loadS3Module();
+    const client = await this.getClient();
+    const response = await client.send(
+      new GetObjectCommand({
+        Bucket: this.getBucket(),
+        Key: key,
+      }),
+    );
+
+    if (!response.Body) {
+      throw new Error(`S3 object body missing for key: ${key}`);
+    }
+
+    if (response.Body instanceof Readable) {
+      return response.Body;
+    }
+
+    const buffer = await this.bodyToBuffer(response.Body);
+    return Readable.from(buffer);
+  }
+
+  private async bodyToBuffer(body: unknown): Promise<Buffer> {
+    if (Buffer.isBuffer(body)) {
+      return body;
+    }
+
+    if (body instanceof Uint8Array) {
+      return Buffer.from(body);
+    }
+
+    if (
+      body &&
+      typeof body === 'object' &&
+      'transformToByteArray' in body &&
+      typeof (body as { transformToByteArray: () => Promise<Uint8Array> })
+        .transformToByteArray === 'function'
+    ) {
+      const bytes = await (
+        body as { transformToByteArray: () => Promise<Uint8Array> }
+      ).transformToByteArray();
+      return Buffer.from(bytes);
+    }
+
+    throw new Error('Unsupported S3 response body type');
+  }
+
   private async loadS3Module(): Promise<S3Module> {
     if (!this.s3Module) {
       this.s3Module = await import('@aws-sdk/client-s3');
@@ -204,15 +305,13 @@ export class S3RecordingStorageService {
   private async getClient(): Promise<S3ClientInstance> {
     if (!this.s3Client) {
       const { S3Client } = await this.loadS3Module();
-      const region =
-        this.configService.get<string>('AWS_REGION')?.trim() || 'ap-south-1';
       const accessKeyId =
         this.configService.get<string>('AWS_ACCESS_KEY_ID')?.trim();
       const secretAccessKey =
         this.configService.get<string>('AWS_SECRET_ACCESS_KEY')?.trim();
 
       this.s3Client = new S3Client({
-        region,
+        region: this.getRegion(),
         ...(accessKeyId && secretAccessKey
           ? { credentials: { accessKeyId, secretAccessKey } }
           : {}),

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { CallEventType, CallStatus } from '@prisma/client';
-import { decodeMulawBuffer } from './audio/mulaw-codec';
+import { decodeMulawBuffer, encodePcm16ToMulaw } from './audio/mulaw-codec';
 import { analyzePcm16, formatPcm16Stats } from './audio/pcm-stats.util';
 import { isSpeechLikePcm16 } from './audio/speech-detection.util';
 import { voiceDebugLog } from './audio/voice-debug.util';
@@ -23,6 +23,7 @@ import {
 } from './call-timing-diagnostics.service';
 import { normalizeVoicePhoneNumber } from './voice-phone.util';
 import { IntegrationCallbackService } from '../integrations/integration-callback.service';
+import { TelephonyProviderConfigService } from './telephony/telephony-provider.config';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
@@ -51,6 +52,7 @@ export class SmartfloStreamAdapter {
     private readonly callTiming: CallTimingDiagnosticsService,
     @Inject(forwardRef(() => IntegrationCallbackService))
     private readonly integrationCallbackService: IntegrationCallbackService,
+    private readonly telephonyProviderConfig: TelephonyProviderConfigService,
   ) {}
 
   private get voiceRuntime() {
@@ -377,29 +379,44 @@ export class SmartfloStreamAdapter {
 
     if (payloadStr) {
       try {
-        const mulawBuffer = Buffer.from(payloadStr, 'base64');
-        if (mulawBuffer.length > 0) {
-          const pcm16Audio = decodeMulawBuffer(mulawBuffer);
+        const useExotelPcm = this.telephonyProviderConfig.isExotel();
+        const mulawBuffer = useExotelPcm
+          ? null
+          : Buffer.from(payloadStr, 'base64');
+        const pcm16Audio = useExotelPcm
+          ? Buffer.from(payloadStr, 'base64')
+          : mulawBuffer && mulawBuffer.length > 0
+            ? decodeMulawBuffer(mulawBuffer)
+            : Buffer.alloc(0);
+
+        if (pcm16Audio.length > 0) {
           const pcmStats = analyzePcm16(pcm16Audio);
           const now = new Date();
           const speechLike = isSpeechLikePcm16(pcm16Audio);
 
           voiceDebugLog(this.logger, streamSid, 'smartflo_media', {
-            payloadBytes: mulawBuffer.length,
+            payloadBytes: useExotelPcm
+              ? pcm16Audio.length
+              : (mulawBuffer?.length ?? 0),
             decodedSamples: Math.floor(pcm16Audio.length / 2),
             rms: Number(pcmStats.rms.toFixed(2)),
             silence: speechLike ? 0 : 1,
             track: parsed.track,
+            encoding: useExotelPcm ? 'pcm16' : 'mulaw',
           });
 
           if (!this.loggedInboundDecodeByStreamSid.has(streamSid)) {
             this.loggedInboundDecodeByStreamSid.add(streamSid);
             this.logger.log({
               streamSid,
-              mulawBytes: mulawBuffer.length,
+              encoding: useExotelPcm ? 'pcm16' : 'mulaw',
+              mulawBytes: mulawBuffer?.length,
+              pcmBytes: pcm16Audio.length,
               pcmStats: formatPcm16Stats(pcmStats),
               track: parsed.track,
-              message: 'Inbound μ-law decode stats (first chunk)',
+              message: useExotelPcm
+                ? 'Inbound Exotel PCM stats (first chunk)'
+                : 'Inbound μ-law decode stats (first chunk)',
             });
           }
 
@@ -428,7 +445,10 @@ export class SmartfloStreamAdapter {
       }
 
       try {
-        this.voiceRecordingService.appendInboundMulawBase64(streamSid, payloadStr);
+        const recordingPayload = this.telephonyProviderConfig.isExotel()
+          ? encodePcm16ToMulaw(Buffer.from(payloadStr, 'base64')).toString('base64')
+          : payloadStr;
+        this.voiceRecordingService.appendInboundMulawBase64(streamSid, recordingPayload);
       } catch (error) {
         voiceDebugLog(this.logger, streamSid, 'recording_error', {
           error: error instanceof Error ? error.message : String(error),
@@ -606,11 +626,13 @@ export class SmartfloStreamAdapter {
     callSid?: string,
   ): Promise<void> {
     try {
+      const callId = this.voiceSessionService.getByStreamSid(streamSid)?.callId;
       const metadata = await this.voiceRecordingService.finalize(
         streamSid,
         callSid,
         {
           includeSpeakerTracks: this.voiceTranscriptConfig.isPostCallEnabled(),
+          callId,
         },
       );
       if (!metadata) {
@@ -622,6 +644,7 @@ export class SmartfloStreamAdapter {
         durationMsEstimate: metadata.durationMsEstimate,
         mulawBytes: metadata.mulawBytes,
         wavBytes: metadata.wavBytes,
+        recordingS3Url: metadata.recordingS3Url,
         inboundTimelineStartMs: metadata.inboundTimelineStartMs,
         inboundTimelineEndMs: metadata.inboundTimelineEndMs,
         outboundTimelineStartMs: metadata.outboundTimelineStartMs,
@@ -644,8 +667,6 @@ export class SmartfloStreamAdapter {
         message: 'Voice recording generated',
       });
 
-      const session = this.voiceSessionService.getByStreamSid(streamSid);
-      const callId = session?.callId;
       if (callId) {
         void this.markCallCompleted(
           callId,

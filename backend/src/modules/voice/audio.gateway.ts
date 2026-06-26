@@ -21,6 +21,9 @@ import {
   CallTimingDiagnosticsService,
   CallTimingEvent,
 } from './call-timing-diagnostics.service';
+import { TelephonyProviderConfigService } from './telephony/telephony-provider.config';
+import { TelephonyMediaEncoding } from './telephony/telephony-provider.types';
+import { encodePcm16ToMulaw } from './audio/mulaw-codec';
 
 interface VoiceWebSocket extends WebSocket {
   socketSessionId?: string;
@@ -39,6 +42,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly voiceRecordingService: VoiceRecordingService,
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
     private readonly callTiming: CallTimingDiagnosticsService,
+    private readonly telephonyProviderConfig: TelephonyProviderConfigService,
   ) {}
 
   handleConnection(client: VoiceWebSocket, request: IncomingMessage): void {
@@ -132,13 +136,21 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
-  sendMedia(streamSid: string, base64MulawPayload: string, chunk?: number): void {
+  sendMedia(
+    streamSid: string,
+    base64Payload: string,
+    chunk?: number,
+    encoding?: TelephonyMediaEncoding,
+  ): void {
+    const mediaEncoding =
+      encoding ?? this.telephonyProviderConfig.getOutboundMediaEncoding();
     const client = this.voiceSocketRegistry.getByStreamSid(streamSid);
     const wsReadyState = client?.readyState ?? WebSocket.CLOSED;
     const socketFound = Boolean(client && wsReadyState === WebSocket.OPEN);
 
     voiceDebugLog(this.logger, streamSid, 'outbound_ws_ready_state', {
       readyState: wsReadyState,
+      encoding: mediaEncoding,
     });
 
     if (!socketFound) {
@@ -149,20 +161,33 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
       this.logger.warn({
         streamSid,
-        payloadBase64Length: base64MulawPayload.length,
+        payloadBase64Length: base64Payload.length,
         socketFound: false,
         wsReadyState,
+        encoding: mediaEncoding,
         message: 'Cannot send media: no active WebSocket for streamSid',
       });
       return;
     }
 
-    const decodedLength = Buffer.from(base64MulawPayload, 'base64').length;
+    const decodedLength = Buffer.from(base64Payload, 'base64').length;
     voiceDebugLog(this.logger, streamSid, 'outbound_payload_bytes', {
       bytes: decodedLength,
+      encoding: mediaEncoding,
     });
 
-    if (decodedLength < MULAW_FRAME_BYTES || decodedLength % MULAW_FRAME_BYTES !== 0) {
+    if (mediaEncoding === 'pcm16') {
+      if (decodedLength % 2 !== 0) {
+        this.logger.warn({
+          streamSid,
+          decodedByteLength: decodedLength,
+          message: 'Outbound PCM media payload has odd byte length',
+        });
+      }
+    } else if (
+      decodedLength < MULAW_FRAME_BYTES ||
+      decodedLength % MULAW_FRAME_BYTES !== 0
+    ) {
       this.logger.warn({
         streamSid,
         decodedByteLength: decodedLength,
@@ -172,7 +197,10 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const chunkNumber =
       chunk ?? this.voiceSocketRegistry.nextOutboundChunk(streamSid);
-    const chunkDurationMs = this.voiceAudioConfigService.getOutboundChunkMs();
+    const chunkDurationMs =
+      mediaEncoding === 'pcm16'
+        ? (decodedLength / 2 / 8000) * 1000
+        : this.voiceAudioConfigService.getOutboundChunkMs();
     const timestamp = this.voiceSocketRegistry.nextOutboundTimestamp(
       streamSid,
       chunkDurationMs,
@@ -185,7 +213,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       streamSid,
       sequenceNumber,
       media: {
-        payload: base64MulawPayload,
+        payload: base64Payload,
         chunk: String(chunkNumber),
         timestamp: String(timestamp),
       },
@@ -196,11 +224,12 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       sequenceNumber,
       chunk: chunkNumber,
       timestamp,
-      payloadBase64Length: base64MulawPayload.length,
-      mulawBytes: decodedLength,
+      payloadBase64Length: base64Payload.length,
+      mediaBytes: decodedLength,
+      encoding: mediaEncoding,
       socketFound: true,
       wsReadyState,
-      message: 'Sending outbound media to Smartflo WebSocket',
+      message: 'Sending outbound media to telephony WebSocket',
     });
 
     try {
@@ -213,11 +242,13 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       voiceDebugLog(this.logger, streamSid, 'outbound_audio_chunk', {
         bytes: decodedLength,
         chunk: chunkNumber,
+        encoding: mediaEncoding,
       });
       this.logger.debug({
         streamSid,
         chunk: chunkNumber,
-        mulawBytes: decodedLength,
+        mediaBytes: decodedLength,
+        encoding: mediaEncoding,
         message: 'Outbound media WebSocket send succeeded',
       });
     } catch (error) {
@@ -234,12 +265,17 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    // Recording is off the live path — never block or prevent Smartflo playback.
     setImmediate(() => {
       try {
+        const recordingPayload =
+          mediaEncoding === 'pcm16'
+            ? encodePcm16ToMulaw(Buffer.from(base64Payload, 'base64')).toString(
+                'base64',
+              )
+            : base64Payload;
         this.voiceRecordingService.appendOutboundMulawBase64(
           streamSid,
-          base64MulawPayload,
+          recordingPayload,
         );
       } catch (error) {
         voiceDebugLog(this.logger, streamSid, 'recording_error', {

@@ -23,6 +23,7 @@ import {
   VoiceSessionService,
 } from './voice-session.service';
 import { VoiceTranscriptService } from './transcript/voice-transcript.service';
+import { PrismaService } from '../../database/prisma.service';
 
 @ApiTags('Voice')
 @Public()
@@ -37,17 +38,19 @@ export class VoiceController {
     private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
     private readonly voiceSharedStateService: VoiceSharedStateService,
     private readonly voiceTranscriptService: VoiceTranscriptService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Get('sessions')
   @ApiOperation({ summary: 'List active and recently ended voice sessions' })
   async listSessions() {
     const recentEnded = await this.voiceSessionService.getRecentEndedSessions();
+    const recentEndedWithS3 = await this.enrichWithS3Urls(recentEnded.map(toVoiceSessionResponse));
     return {
       active: this.voiceSessionService
         .getActiveSessions()
         .map(toVoiceSessionResponse),
-      recentEnded: recentEnded.map(toVoiceSessionResponse),
+      recentEnded: recentEndedWithS3,
     };
   }
 
@@ -63,7 +66,33 @@ export class VoiceController {
   @ApiOperation({ summary: 'List recently ended voice sessions' })
   async listRecentSessions() {
     const recentEnded = await this.voiceSessionService.getRecentEndedSessions();
-    return recentEnded.map(toVoiceSessionResponse);
+    return this.enrichWithS3Urls(recentEnded.map(toVoiceSessionResponse));
+  }
+
+  private async enrichWithS3Urls(
+    sessions: ReturnType<typeof toVoiceSessionResponse>[],
+  ): Promise<(ReturnType<typeof toVoiceSessionResponse> & { recordingS3Url?: string | null })[]> {
+    const callIds = sessions
+      .map((s) => s.callId)
+      .filter((id): id is string => Boolean(id));
+
+    if (callIds.length === 0) {
+      return sessions;
+    }
+
+    const calls = await this.prisma.call.findMany({
+      where: { id: { in: callIds }, recordingS3Url: { not: null } },
+      select: { id: true, recordingS3Url: true },
+    });
+
+    const s3UrlByCallId = new Map(calls.map((c) => [c.id, c.recordingS3Url]));
+
+    return sessions.map((s) => ({
+      ...s,
+      recordingS3Url:
+        s.recordingS3Url ??
+        (s.callId ? (s3UrlByCallId.get(s.callId) ?? null) : null),
+    }));
   }
 
   @Get('sessions/:streamSid/runtime-debug')
@@ -264,6 +293,15 @@ export class VoiceController {
     @Res() res: Response,
   ): Promise<void> {
     const recording = this.voiceRecordingService.getRecording(streamSid);
+    const s3Url =
+      recording?.recordingS3Url ??
+      this.voiceRecordingService.getRecordingS3Url(streamSid);
+
+    if (s3Url) {
+      res.redirect(302, s3Url);
+      return;
+    }
+
     if (!recording) {
       throw new NotFoundException(`Voice recording not found: ${streamSid}`);
     }
@@ -275,7 +313,7 @@ export class VoiceController {
       );
     }
 
-    const stream = this.voiceRecordingService.openRecordingReadStream(streamSid);
+    const stream = await this.voiceRecordingService.openRecordingReadStream(streamSid);
     if (!stream) {
       throw new NotFoundException(`Voice recording not found: ${streamSid}`);
     }
