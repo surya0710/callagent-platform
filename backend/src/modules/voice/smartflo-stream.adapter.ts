@@ -626,11 +626,13 @@ export class SmartfloStreamAdapter {
     callSid?: string,
   ): Promise<void> {
     try {
+      const callId = this.voiceSessionService.getByStreamSid(streamSid)?.callId;
       const metadata = await this.voiceRecordingService.finalize(
         streamSid,
         callSid,
         {
           includeSpeakerTracks: this.voiceTranscriptConfig.isPostCallEnabled(),
+          callId,
         },
       );
       if (!metadata) {
@@ -642,6 +644,7 @@ export class SmartfloStreamAdapter {
         durationMsEstimate: metadata.durationMsEstimate,
         mulawBytes: metadata.mulawBytes,
         wavBytes: metadata.wavBytes,
+        recordingS3Url: metadata.recordingS3Url,
         inboundTimelineStartMs: metadata.inboundTimelineStartMs,
         inboundTimelineEndMs: metadata.inboundTimelineEndMs,
         outboundTimelineStartMs: metadata.outboundTimelineStartMs,
@@ -664,8 +667,6 @@ export class SmartfloStreamAdapter {
         message: 'Voice recording generated',
       });
 
-      const session = this.voiceSessionService.getByStreamSid(streamSid);
-      const callId = session?.callId;
       if (callId) {
         void this.markCallCompleted(
           callId,

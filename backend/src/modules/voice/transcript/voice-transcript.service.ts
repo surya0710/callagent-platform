@@ -13,7 +13,10 @@ import { VoiceTranscriptConfigService } from './voice-transcript-config.service'
 import { VoiceTranscriptPostCallService } from './voice-transcript-postcall.service';
 import { VoiceTranscriptPostProcessService } from './voice-transcript-postprocess.service';
 import { detectTranscriptLanguage } from './voice-transcript-prompt.util';
-import { VoiceRecordingPathService } from './voice-recording-path.service';
+import { S3RecordingStorageService } from '../audio/s3-recording-storage.service';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
 import { IntegrationCallbackService } from '../../integrations/integration-callback.service';
 import { sortTranscriptSegments } from './voice-transcript-segment.util';
 import {
@@ -60,7 +63,7 @@ export class VoiceTranscriptService {
     private readonly transcriptConfig: VoiceTranscriptConfigService,
     private readonly postCallService: VoiceTranscriptPostCallService,
     private readonly postProcessService: VoiceTranscriptPostProcessService,
-    private readonly recordingPathService: VoiceRecordingPathService,
+    private readonly s3RecordingStorageService: S3RecordingStorageService,
     private readonly voiceSessionService: VoiceSessionService,
     private readonly transcriptEmailService: TranscriptEmailService,
     @Inject(forwardRef(() => IntegrationCallbackService))
@@ -225,22 +228,31 @@ export class VoiceTranscriptService {
         }
         cleanedSegments = sortTranscriptSegments(cleanedSegments);
       } else {
-        const mixedPath = this.recordingPathService.resolveStorageKey(
-          payload.mixedStorageKey,
-        );
-        const inboundPath = payload.inboundStorageKey
-          ? this.recordingPathService.resolveStorageKey(payload.inboundStorageKey)
-          : undefined;
-        const outboundPath = payload.outboundStorageKey
-          ? this.recordingPathService.resolveStorageKey(payload.outboundStorageKey)
-          : undefined;
+        const tempDirs: string[] = [];
+        let rawSegments: VoiceTranscriptSegmentDto[] = [];
+        try {
+          const mixedPath = await this.resolveS3KeyToTempPath(
+            payload.mixedStorageKey,
+            tempDirs,
+          );
+          const inboundPath = payload.inboundStorageKey
+            ? await this.resolveS3KeyToTempPath(payload.inboundStorageKey, tempDirs)
+            : undefined;
+          const outboundPath = payload.outboundStorageKey
+            ? await this.resolveS3KeyToTempPath(payload.outboundStorageKey, tempDirs)
+            : undefined;
 
-        const rawSegments = await this.postCallService.transcribeRecordingFiles({
-          mixedPath,
-          inboundPath,
-          outboundPath,
-          durationMsEstimate: payload.durationMsEstimate,
-        });
+          rawSegments = await this.postCallService.transcribeRecordingFiles({
+            mixedPath,
+            inboundPath,
+            outboundPath,
+            durationMsEstimate: payload.durationMsEstimate,
+          });
+        } finally {
+          await Promise.all(
+            tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+          );
+        }
 
         for (const segment of rawSegments) {
           const cleanedText = await this.postProcessService.cleanTranscript(
@@ -679,5 +691,17 @@ export class VoiceTranscriptService {
     }
 
     return languages[0] ?? 'unknown';
+  }
+
+  private async resolveS3KeyToTempPath(
+    s3Key: string,
+    tempDirs: string[],
+  ): Promise<string> {
+    const buffer = await this.s3RecordingStorageService.downloadObject(s3Key);
+    const dir = await mkdtemp(path.join(tmpdir(), 'voice-recording-'));
+    tempDirs.push(dir);
+    const filePath = path.join(dir, path.basename(s3Key));
+    await writeFile(filePath, buffer);
+    return filePath;
   }
 }

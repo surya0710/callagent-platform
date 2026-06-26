@@ -16,7 +16,7 @@ import {
   sessionDuration,
   statusBadgeClass,
 } from '../lib/voice-utils';
-import { VoiceSession, VoiceSessionStatus, voiceRecordingDownloadUrl } from '../types/voice';
+import { VoiceSession, VoiceSessionStatus } from '../types/voice';
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -72,15 +72,17 @@ function SessionActions({
           {copiedKey === copyKey ? 'Copied!' : 'Copy streamSid'}
         </Button>
       )}
-      {session.recordingAvailable && streamSid && (
+      {session.recordingS3Url ? (
         <a
-          href={voiceRecordingDownloadUrl(streamSid)}
+          href={session.recordingS3Url}
           className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+          target="_blank"
+          rel="noreferrer"
           download
         >
           Download WAV
         </a>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -317,10 +319,12 @@ export function VoiceSessionsPage() {
                 <td className="px-4 py-3">{session.packetsReceived}</td>
                 <td className="px-4 py-3">{safeValue(session.stopReason)}</td>
                 <td className="px-4 py-3">
-                  {session.recordingAvailable && session.streamSid ? (
+                  {session.recordingS3Url ? (
                     <a
-                      href={voiceRecordingDownloadUrl(session.streamSid)}
+                      href={session.recordingS3Url}
                       className="text-xs text-indigo-400 hover:text-indigo-300"
+                      target="_blank"
+                      rel="noreferrer"
                       download
                     >
                       Download WAV

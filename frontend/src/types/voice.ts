@@ -32,6 +32,7 @@ export interface VoiceSession {
   stopReason?: string | null;
   remoteAddress?: string;
   recordingAvailable?: boolean;
+  recordingS3Url?: string | null;
   recordingFileName?: string;
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
