@@ -341,7 +341,6 @@ export class TranscriptEmailService {
           include: {
             segments: {
               where: {
-                source: TranscriptSegmentSource.postcall,
                 status: TranscriptSegmentStatus.final,
               },
               orderBy: [{ startedAtMs: 'asc' }, { createdAt: 'asc' }],
@@ -438,9 +437,9 @@ export class TranscriptEmailService {
       include: {
         segments: {
           where: {
-            source: TranscriptSegmentSource.postcall,
             status: TranscriptSegmentStatus.final,
           },
+          orderBy: [{ startedAtMs: 'asc' }, { createdAt: 'asc' }],
         },
       },
     });

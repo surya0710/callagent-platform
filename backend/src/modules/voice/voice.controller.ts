@@ -208,6 +208,20 @@ export class VoiceController {
       throw new NotFoundException(`Voice session not found: ${streamSid}`);
     }
 
+    if (session.callId) {
+      const persisted = await this.voiceTranscriptService.getCallTranscript(
+        session.callId,
+      );
+      if (
+        persisted &&
+        (persisted.transcriptStatus === 'final' ||
+          persisted.transcriptStatus === 'processing' ||
+          persisted.transcriptStatus === 'failed')
+      ) {
+        return { ...persisted, streamSid };
+      }
+    }
+
     const live = this.voiceTranscriptService.getLiveTranscript(streamSid);
     if (live.transcript.length > 0) {
       return live;

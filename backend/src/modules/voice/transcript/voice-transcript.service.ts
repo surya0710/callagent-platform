@@ -15,6 +15,7 @@ import { VoiceTranscriptPostProcessService } from './voice-transcript-postproces
 import { detectTranscriptLanguage } from './voice-transcript-prompt.util';
 import { VoiceRecordingPathService } from './voice-recording-path.service';
 import { IntegrationCallbackService } from '../../integrations/integration-callback.service';
+import { sortTranscriptSegments } from './voice-transcript-segment.util';
 import {
   PostCallTranscriptJobPayload,
   RealtimeTranscriptCompletedInput,
@@ -35,7 +36,7 @@ interface LiveTranscriptState {
 }
 
 function formatFlatTranscript(segments: VoiceTranscriptSegmentDto[]): string {
-  return segments
+  return sortTranscriptSegments(segments)
     .map((segment) => {
       const label =
         segment.speaker === 'customer'
@@ -133,6 +134,7 @@ export class VoiceTranscriptService {
     };
 
     state.segments.push(segment);
+    state.segments = sortTranscriptSegments(state.segments);
     state.realtimeTranscriptCount += 1;
     state.transcriptLanguageDetected = this.mergeLanguage(
       state.transcriptLanguageDetected,
@@ -201,33 +203,56 @@ export class VoiceTranscriptService {
     }
 
     try {
-      const mixedPath = this.recordingPathService.resolveStorageKey(
-        payload.mixedStorageKey,
+      const timelineSegments = await this.loadRealtimeTimelineSegments(
+        payload.callId,
       );
-      const inboundPath = payload.inboundStorageKey
-        ? this.recordingPathService.resolveStorageKey(payload.inboundStorageKey)
-        : undefined;
-      const outboundPath = payload.outboundStorageKey
-        ? this.recordingPathService.resolveStorageKey(payload.outboundStorageKey)
-        : undefined;
 
-      const rawSegments = await this.postCallService.transcribeRecordingFiles({
-        mixedPath,
-        inboundPath,
-        outboundPath,
-        durationMsEstimate: payload.durationMsEstimate,
-      });
-
-      const cleanedSegments: VoiceTranscriptSegmentDto[] = [];
-      for (const segment of rawSegments) {
-        const cleanedText = await this.postProcessService.cleanTranscript(
-          segment.text,
+      let cleanedSegments: VoiceTranscriptSegmentDto[] = [];
+      if (timelineSegments.length > 0) {
+        for (const segment of timelineSegments) {
+          const cleanedText = await this.postProcessService.cleanTranscript(
+            segment.text,
+          );
+          if (!cleanedText.trim()) {
+            continue;
+          }
+          cleanedSegments.push({
+            ...segment,
+            text: cleanedText,
+            language: detectTranscriptLanguage(cleanedText),
+            status: 'final',
+          });
+        }
+        cleanedSegments = sortTranscriptSegments(cleanedSegments);
+      } else {
+        const mixedPath = this.recordingPathService.resolveStorageKey(
+          payload.mixedStorageKey,
         );
-        cleanedSegments.push({
-          ...segment,
-          text: cleanedText,
-          language: detectTranscriptLanguage(cleanedText),
+        const inboundPath = payload.inboundStorageKey
+          ? this.recordingPathService.resolveStorageKey(payload.inboundStorageKey)
+          : undefined;
+        const outboundPath = payload.outboundStorageKey
+          ? this.recordingPathService.resolveStorageKey(payload.outboundStorageKey)
+          : undefined;
+
+        const rawSegments = await this.postCallService.transcribeRecordingFiles({
+          mixedPath,
+          inboundPath,
+          outboundPath,
+          durationMsEstimate: payload.durationMsEstimate,
         });
+
+        for (const segment of rawSegments) {
+          const cleanedText = await this.postProcessService.cleanTranscript(
+            segment.text,
+          );
+          cleanedSegments.push({
+            ...segment,
+            text: cleanedText,
+            language: detectTranscriptLanguage(cleanedText),
+          });
+        }
+        cleanedSegments = sortTranscriptSegments(cleanedSegments);
       }
 
       await this.persistFinalSegments(payload.callId, cleanedSegments);
@@ -294,8 +319,10 @@ export class VoiceTranscriptService {
       transcriptError: state?.transcriptError ?? session?.transcriptError,
       realtimeTranscriptCount:
         state?.realtimeTranscriptCount ?? session?.realtimeTranscriptCount ?? 0,
-      transcript: state?.segments ?? [],
-      content: state?.segments.length ? formatFlatTranscript(state.segments) : undefined,
+      transcript: sortTranscriptSegments(state?.segments ?? []),
+      content: state?.segments.length
+        ? formatFlatTranscript(state.segments)
+        : undefined,
     };
   }
 
@@ -303,13 +330,27 @@ export class VoiceTranscriptService {
     const transcript = await this.prisma.callTranscript.findUnique({
       where: { callId },
       include: {
-        segments: { orderBy: { createdAt: 'asc' } },
+        segments: {
+          orderBy: [{ startedAtMs: 'asc' }, { createdAt: 'asc' }],
+        },
       },
     });
 
     if (!transcript) {
       return null;
     }
+
+    const mappedSegments = transcript.segments.map((segment) => ({
+      speaker: segment.speaker,
+      text: segment.text,
+      startedAtMs: segment.startedAtMs ?? undefined,
+      endedAtMs: segment.endedAtMs ?? undefined,
+      source: segment.source,
+      status: segment.status,
+      language: (segment.language as TranscriptLanguage | null) ?? undefined,
+      confidence: segment.confidence ?? undefined,
+      createdAtMs: segment.createdAt.getTime(),
+    }));
 
     return {
       callId,
@@ -319,16 +360,7 @@ export class VoiceTranscriptService {
         (transcript.transcriptLanguageDetected as TranscriptLanguage | null) ?? undefined,
       transcriptError: transcript.transcriptError ?? undefined,
       realtimeTranscriptCount: transcript.realtimeTranscriptCount,
-      transcript: transcript.segments.map((segment) => ({
-        speaker: segment.speaker,
-        text: segment.text,
-        startedAtMs: segment.startedAtMs ?? undefined,
-        endedAtMs: segment.endedAtMs ?? undefined,
-        source: segment.source,
-        status: segment.status,
-        language: (segment.language as TranscriptLanguage | null) ?? undefined,
-        confidence: segment.confidence ?? undefined,
-      })),
+      transcript: sortTranscriptSegments(mappedSegments),
       content: transcript.content,
     };
   }
@@ -449,22 +481,61 @@ export class VoiceTranscriptService {
 
     const allSegments = await this.prisma.callTranscriptSegment.findMany({
       where: { callTranscriptId: transcript.id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ startedAtMs: 'asc' }, { createdAt: 'asc' }],
     });
 
     await this.prisma.callTranscript.update({
       where: { id: transcript.id },
       data: {
         content: formatFlatTranscript(
-          allSegments.map((item) => ({
-            speaker: item.speaker,
-            text: item.text,
-            source: item.source,
-            status: item.status,
-          })) as VoiceTranscriptSegmentDto[],
+          sortTranscriptSegments(
+            allSegments.map((item) => ({
+              speaker: item.speaker,
+              text: item.text,
+              source: item.source,
+              status: item.status,
+              startedAtMs: item.startedAtMs ?? undefined,
+              endedAtMs: item.endedAtMs ?? undefined,
+              createdAtMs: item.createdAt.getTime(),
+            })) as VoiceTranscriptSegmentDto[],
+          ),
         ),
       },
     });
+  }
+
+  private async loadRealtimeTimelineSegments(
+    callId: string,
+  ): Promise<VoiceTranscriptSegmentDto[]> {
+    const transcript = await this.prisma.callTranscript.findUnique({
+      where: { callId },
+      include: {
+        segments: {
+          where: { source: TranscriptSegmentSource.realtime },
+          orderBy: [{ startedAtMs: 'asc' }, { createdAt: 'asc' }],
+        },
+      },
+    });
+
+    if (!transcript) {
+      return [];
+    }
+
+    return sortTranscriptSegments(
+      transcript.segments
+        .filter((segment) => segment.text.trim().length > 0)
+        .map((segment) => ({
+          speaker: segment.speaker,
+          text: segment.text,
+          startedAtMs: segment.startedAtMs ?? undefined,
+          endedAtMs: segment.endedAtMs ?? undefined,
+          source: 'realtime',
+          status: 'draft',
+          language: (segment.language as TranscriptLanguage | null) ?? undefined,
+          confidence: segment.confidence ?? undefined,
+          createdAtMs: segment.createdAt.getTime(),
+        })),
+    );
   }
 
   private async markProcessing(callId: string): Promise<void> {
@@ -487,8 +558,9 @@ export class VoiceTranscriptService {
     callId: string,
     segments: VoiceTranscriptSegmentDto[],
   ): Promise<void> {
-    const flatContent = formatFlatTranscript(segments);
-    const languageDetected = this.detectOverallLanguage(segments);
+    const sortedSegments = sortTranscriptSegments(segments);
+    const flatContent = formatFlatTranscript(sortedSegments);
+    const languageDetected = this.detectOverallLanguage(sortedSegments);
 
     const transcript = await this.prisma.callTranscript.upsert({
       where: { callId },
@@ -509,18 +581,18 @@ export class VoiceTranscriptService {
     });
 
     await this.prisma.callTranscriptSegment.deleteMany({
-      where: {
-        callTranscriptId: transcript.id,
-        source: TranscriptSegmentSource.postcall,
-      },
+      where: { callTranscriptId: transcript.id },
     });
 
-    if (segments.length > 0) {
+    if (sortedSegments.length > 0) {
       await this.prisma.callTranscriptSegment.createMany({
-        data: segments.map((segment) => ({
+        data: sortedSegments.map((segment) => ({
           callTranscriptId: transcript.id,
           speaker: segment.speaker as TranscriptSpeaker,
-          source: TranscriptSegmentSource.postcall,
+          source:
+            segment.source === 'postcall'
+              ? TranscriptSegmentSource.postcall
+              : TranscriptSegmentSource.realtime,
           status: TranscriptSegmentStatus.final,
           language: segment.language,
           text: segment.text,

@@ -3487,10 +3487,33 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         return;
       }
 
+      const endedAtMs = this.resolveTranscriptOffsetMs(session);
+      const startedAtMs = session.lastCustomerSpeechAt
+        ? this.resolveTranscriptOffsetMs(session, session.lastCustomerSpeechAt)
+        : Math.max(0, endedAtMs - 1000);
+
+      void this.voiceTranscriptService
+        .handleRealtimeCompleted({
+          streamSid,
+          callId: this.resolveCallId(streamSid),
+          speaker: 'customer',
+          text,
+          itemId: extractEventItemId(event),
+          startedAtMs,
+          endedAtMs,
+        })
+        .catch((error) => {
+          this.logger.warn({
+            streamSid,
+            message: 'transcript_error',
+            err: error instanceof Error ? error.message : String(error),
+          });
+        });
+
       if (this.isAiTurnActive(session) && !session.bargeInConfirmed) {
         this.logTurnTaking(session, 'voice_input_transcript_ignored', {
           role: transcriptRole,
-          reason: 'ai_speaking_without_barge_in',
+          reason: 'ai_speaking_without_barge_in_turn_only',
           text,
           textLength: text.length,
         });
@@ -3500,7 +3523,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       if (isLikelyAssistantEcho(text, session.lastAssistantTranscript)) {
         this.logTurnTaking(session, 'voice_input_transcript_ignored', {
           role: transcriptRole,
-          reason: 'assistant_echo',
+          reason: 'assistant_echo_turn_only',
           text,
           textLength: text.length,
           lastAssistantTranscript: session.lastAssistantTranscript,
@@ -3546,21 +3569,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         session.openingAvailabilityResponseHandled = true;
         this.markCustomerCallEndDetected(session, callEndIntent, text);
       }
-      void this.voiceTranscriptService
-        .handleRealtimeCompleted({
-          streamSid,
-          callId: this.resolveCallId(streamSid),
-          speaker: 'customer',
-          text,
-          itemId: extractEventItemId(event),
-        })
-        .catch((error) => {
-          this.logger.warn({
-            streamSid,
-            message: 'transcript_error',
-            err: error instanceof Error ? error.message : String(error),
-          });
-        });
       return;
     }
 
@@ -3591,6 +3599,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       if (text) {
         session.lastAssistantTranscript = text;
         session.lastAssistantText = text;
+        const endedAtMs = this.resolveTranscriptOffsetMs(session);
+        const startedAtMs = session.aiSpeakingStartedAt
+          ? this.resolveTranscriptOffsetMs(session, session.aiSpeakingStartedAt)
+          : Math.max(0, endedAtMs - 2000);
         this.logTurnTaking(session, 'voice_output_transcript_completed', {
           role: 'assistant',
           text,
@@ -3603,6 +3615,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
             speaker: 'assistant',
             text,
             itemId: session.assistantTranscriptItemId,
+            startedAtMs,
+            endedAtMs,
           })
           .catch((error) => {
             this.logger.warn({
@@ -4066,6 +4080,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
   private resolveCallId(streamSid: string): string | undefined {
     return this.voiceSessionService.getByStreamSid(streamSid)?.callId;
+  }
+
+  private resolveTranscriptOffsetMs(
+    session: OpenAiRealtimeSession,
+    at: Date = new Date(),
+  ): number {
+    if (!session.connectedAt) {
+      return 0;
+    }
+
+    return Math.max(0, at.getTime() - session.connectedAt.getTime());
   }
 
   private updateRuntimeState(
