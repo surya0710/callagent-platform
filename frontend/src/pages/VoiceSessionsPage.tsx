@@ -72,7 +72,17 @@ function SessionActions({
           {copiedKey === copyKey ? 'Copied!' : 'Copy streamSid'}
         </Button>
       )}
-      {session.recordingAvailable && streamSid && (
+      {session.recordingS3Url ? (
+        <a
+          href={session.recordingS3Url}
+          className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+          target="_blank"
+          rel="noreferrer"
+          download
+        >
+          Download WAV
+        </a>
+      ) : session.recordingAvailable && streamSid ? (
         <a
           href={voiceRecordingDownloadUrl(streamSid)}
           className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
@@ -80,7 +90,7 @@ function SessionActions({
         >
           Download WAV
         </a>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -317,7 +327,17 @@ export function VoiceSessionsPage() {
                 <td className="px-4 py-3">{session.packetsReceived}</td>
                 <td className="px-4 py-3">{safeValue(session.stopReason)}</td>
                 <td className="px-4 py-3">
-                  {session.recordingAvailable && session.streamSid ? (
+                  {session.recordingS3Url ? (
+                    <a
+                      href={session.recordingS3Url}
+                      className="text-xs text-indigo-400 hover:text-indigo-300"
+                      target="_blank"
+                      rel="noreferrer"
+                      download
+                    >
+                      Download WAV
+                    </a>
+                  ) : session.recordingAvailable && session.streamSid ? (
                     <a
                       href={voiceRecordingDownloadUrl(session.streamSid)}
                       className="text-xs text-indigo-400 hover:text-indigo-300"

@@ -250,11 +250,12 @@ export function SessionDetailPanel({
                   : 'AI may be misaligned — check WAV';
               })()}
             />
-            {session.recordingAvailable && session.streamSid && (
+            {(session.recordingS3Url || (session.recordingAvailable && session.streamSid)) && (
               <div className="sm:col-span-2">
                 <a
-                  href={voiceRecordingDownloadUrl(session.streamSid)}
+                  href={session.recordingS3Url ?? voiceRecordingDownloadUrl(session.streamSid!)}
                   className="inline-flex items-center rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-sm text-indigo-300 hover:bg-indigo-500/20"
+                  {...(session.recordingS3Url ? { target: '_blank', rel: 'noreferrer' } : {})}
                   download
                 >
                   Download WAV

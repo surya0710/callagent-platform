@@ -17,6 +17,8 @@ import {
 import { VoiceRecordingStorageFactory } from './storage/voice-recording-storage.factory';
 import { S3RecordingStorageService } from './s3-recording-storage.service';
 import { createWavBuffer } from './wav-writer';
+import { PrismaService } from '../../../database/prisma.service';
+import { ConfigService } from '@nestjs/config';
 
 export interface VoiceRecordingMetadata {
   streamSid: string;
@@ -85,6 +87,8 @@ export class VoiceRecordingService {
     private readonly storageFactory: VoiceRecordingStorageFactory,
     private readonly voiceSessionService: VoiceSessionService,
     private readonly s3RecordingStorageService: S3RecordingStorageService,
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
   ) {}
 
   start(streamSid: string, callSid?: string): void {
@@ -208,7 +212,7 @@ export class VoiceRecordingService {
   async finalize(
     streamSid: string,
     callSid?: string,
-    options?: { includeSpeakerTracks?: boolean },
+    options?: { includeSpeakerTracks?: boolean; callId?: string },
   ): Promise<VoiceRecordingMetadata | null> {
     if (!streamSid) {
       return null;
@@ -342,6 +346,7 @@ export class VoiceRecordingService {
         streamSid,
         wavBuffer,
         callSid ?? active.callSid,
+        options?.callId,
       );
 
       this.logger.log({
@@ -429,6 +434,7 @@ export class VoiceRecordingService {
     streamSid: string,
     wavBuffer: Buffer,
     callSid?: string,
+    callId?: string,
   ): void {
     if (!this.s3RecordingStorageService.isEnabled()) {
       return;
@@ -436,19 +442,22 @@ export class VoiceRecordingService {
 
     void this.s3RecordingStorageService
       .uploadRecording(wavBuffer, streamSid, callSid)
-      .then((uploadResult) => {
+      .then(async (uploadResult) => {
         if (uploadResult === null) {
           return;
         }
 
         const existing = this.finalizedByStreamSid.get(streamSid);
-        if (!existing) {
-          return;
+        if (existing) {
+          const s3Metadata = this.buildS3Metadata(uploadResult);
+          if (s3Metadata) {
+            Object.assign(existing, s3Metadata);
+          }
         }
 
-        const s3Metadata = this.buildS3Metadata(uploadResult);
-        if (s3Metadata) {
-          Object.assign(existing, s3Metadata);
+        if (callId && uploadResult && !('error' in uploadResult)) {
+          const s3Url = this.buildS3HttpUrl(uploadResult.bucket, uploadResult.key);
+          await this.saveS3UrlToDb(callId, s3Url, streamSid);
         }
       })
       .catch((error) => {
@@ -467,6 +476,33 @@ export class VoiceRecordingService {
         existing.s3UploadError =
           error instanceof Error ? error.message : String(error);
       });
+  }
+
+  private buildS3HttpUrl(bucket: string, key: string): string {
+    const region =
+      this.configService.get<string>('AWS_REGION')?.trim() || 'ap-south-1';
+    return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+  }
+
+  private async saveS3UrlToDb(
+    callId: string,
+    s3Url: string,
+    streamSid: string,
+  ): Promise<void> {
+    try {
+      await this.prisma.call.update({
+        where: { id: callId },
+        data: { recordingS3Url: s3Url },
+      });
+      this.logger.log({ streamSid, callId, s3Url, message: 'Recording S3 URL saved to DB' });
+    } catch (error) {
+      this.logger.error({
+        streamSid,
+        callId,
+        err: error,
+        message: 'Failed to save recording S3 URL to DB',
+      });
+    }
   }
 
   private buildS3Metadata(

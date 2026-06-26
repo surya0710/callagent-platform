@@ -626,11 +626,13 @@ export class SmartfloStreamAdapter {
     callSid?: string,
   ): Promise<void> {
     try {
+      const callId = this.voiceSessionService.getByStreamSid(streamSid)?.callId;
       const metadata = await this.voiceRecordingService.finalize(
         streamSid,
         callSid,
         {
           includeSpeakerTracks: this.voiceTranscriptConfig.isPostCallEnabled(),
+          callId,
         },
       );
       if (!metadata) {
