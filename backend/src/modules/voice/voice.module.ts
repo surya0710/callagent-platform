@@ -14,6 +14,8 @@ import { OpenAIRealtimeProvider } from './runtime/openai-realtime.provider';
 import { VoiceRuntimeFactory } from './runtime/voice-runtime.factory';
 import { VoiceOpeningConfigService } from './voice-opening-config.service';
 import { SmartfloClickToCallService } from './smartflo-click-to-call.service';
+import { TelephonyOutboundCallService } from './telephony/telephony-outbound-call.service';
+import { TelephonyProviderConfigService } from './telephony/telephony-provider.config';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
 import { CallTimingDiagnosticsService } from './call-timing-diagnostics.service';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
@@ -44,6 +46,8 @@ import { VoiceTranscriptEmailController } from './voice-transcript-email.control
     S3RecordingStorageService,
     VoiceRecordingService,
     VoiceAudioConfigService,
+    TelephonyProviderConfigService,
+    TelephonyOutboundCallService,
     SmartfloClickToCallService,
     SmartfloStreamAdapter,
     VoiceCallAuthorizationService,
@@ -65,6 +69,7 @@ import { VoiceTranscriptEmailController } from './voice-transcript-email.control
     VoiceTranscriptService,
     TranscriptEmailService,
     SmartfloClickToCallService,
+    TelephonyOutboundCallService,
   ],
 })
 export class VoiceModule {}

@@ -75,10 +75,13 @@ import {
   shouldCancelResponseOnInterrupt,
   shouldIgnoreCustomerInterrupt,
 } from '../voice-interruption.util';
+import { TelephonyProviderConfigService } from '../telephony/telephony-provider.config';
+import { TelephonyMediaEncoding } from '../telephony/telephony-provider.types';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
 const OPENAI_SAMPLE_RATE = OPENAI_REALTIME_SAMPLE_RATE;
 const MULAW_SILENCE_BYTE = 0xff;
+const PCM16_SILENCE_BYTE = 0x00;
 const INPUT_COMMIT_DELAY_MS = 600;
 const MANUAL_FALLBACK_SILENCE_MS = 800;
 const RESPONSE_WAIT_MS = 15000;
@@ -112,6 +115,7 @@ interface OpenAiRealtimeSession {
   outboundMulawBuffer: Buffer;
   outboundPcmDownsampler: Pcm16StreamDownsampler;
   outboundChunkBytes: number;
+  telephonyMediaEncoding: TelephonyMediaEncoding;
   outputAudioFormat: OpenAiOutputAudioFormat;
   pendingPcm8: Buffer[];
   closing: boolean;
@@ -489,6 +493,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     private readonly voiceOpeningConfigService: VoiceOpeningConfigService,
     private readonly voiceSocketRegistry: VoiceSocketRegistry,
     private readonly callTiming: CallTimingDiagnosticsService,
+    private readonly telephonyProviderConfig: TelephonyProviderConfigService,
   ) {}
 
   private getTurnDetectionMode(): OpenAiTurnDetectionMode {
@@ -901,7 +906,12 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     const useServerVad = this.getTurnDetectionMode() === 'server_vad';
-    const outboundChunkBytes = this.voiceAudioConfigService.getOutboundChunkBytes();
+    const telephonyMediaEncoding =
+      this.telephonyProviderConfig.getOutboundMediaEncoding();
+    const outboundChunkBytes =
+      this.voiceAudioConfigService.getOutboundChunkBytesForEncoding(
+        telephonyMediaEncoding,
+      );
 
     const aiSpeakFirstEnabled = context.aiSpeakFirstEnabled === true;
     const openingContext = aiSpeakFirstEnabled ? context.openingContext : undefined;
@@ -919,6 +929,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         SMARTFLO_SAMPLE_RATE,
       ),
       outboundChunkBytes,
+      telephonyMediaEncoding,
       outputAudioFormat: 'pcm',
       pendingPcm8: [],
       closing: false,
@@ -3935,6 +3946,18 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     const mulaw = encodePcm16ToMulaw(pcm8Prepared);
+    if (session.telephonyMediaEncoding === 'pcm16') {
+      this.appendOutboundPcm(session, pcm8Prepared, {
+        sourceBytes: decoded.length,
+        pcm8Bytes: pcm8.length,
+        openAiPeak: openAiStats.peak,
+        openAiRms: Number(openAiStats.rms.toFixed(2)),
+        outboundPeak: encodeInputStats.peak,
+        outboundRms: Number(encodeInputStats.rms.toFixed(2)),
+      });
+      return;
+    }
+
     this.appendOutboundMulaw(session, mulaw, {
       sourceBytes: decoded.length,
       pcm8Bytes: pcm8.length,
@@ -3943,6 +3966,35 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       outboundPeak: encodeInputStats.peak,
       outboundRms: Number(encodeInputStats.rms.toFixed(2)),
     });
+  }
+
+  private appendOutboundPcm(
+    session: OpenAiRealtimeSession,
+    pcm8: Buffer,
+    logFields: Record<string, number | boolean | undefined>,
+  ): void {
+    session.outboundMulawBuffer = Buffer.concat([
+      session.outboundMulawBuffer,
+      pcm8,
+    ]);
+
+    this.logger.log({
+      streamSid: session.streamSid,
+      pcm8Bytes: pcm8.length,
+      bufferedPcmBytes: session.outboundMulawBuffer.length,
+      outputAudioFormat: session.outputAudioFormat,
+      telephonyMediaEncoding: session.telephonyMediaEncoding,
+      ...logFields,
+      message: 'response.output_audio.delta received (PCM outbound)',
+    });
+
+    this.updateRuntimeState(session.streamSid, {
+      lastOpenAiAudioAt: new Date(),
+      isAiSpeaking: true,
+      incrementOpenAiEvent: 'response.output_audio.delta',
+    });
+
+    this.flushOutboundPcm(session);
   }
 
   private appendOutboundMulaw(
@@ -3980,6 +4032,20 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     const pcm8Prepared = prepareOutboundPcm16(pcm8, LIVE_OUTBOUND_PCM_OPTIONS);
+    if (session.telephonyMediaEncoding === 'pcm16') {
+      session.outboundMulawBuffer = Buffer.concat([
+        session.outboundMulawBuffer,
+        pcm8Prepared,
+      ]);
+      this.logger.log({
+        streamSid: session.streamSid,
+        pcm8Bytes: pcm8.length,
+        bufferedPcmBytes: session.outboundMulawBuffer.length,
+        message: 'Flushed remaining OpenAI PCM through downsampler',
+      });
+      return;
+    }
+
     const mulaw = encodePcm16ToMulaw(pcm8Prepared);
     session.outboundMulawBuffer = Buffer.concat([
       session.outboundMulawBuffer,
@@ -3991,6 +4057,29 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       mulawBytes: mulaw.length,
       message: 'Flushed remaining OpenAI PCM through downsampler',
     });
+  }
+
+  private flushOutboundPcm(session: OpenAiRealtimeSession): void {
+    const chunkBytes = session.outboundChunkBytes;
+    while (session.outboundMulawBuffer.length >= chunkBytes) {
+      const frame = session.outboundMulawBuffer.subarray(0, chunkBytes);
+      session.outboundMulawBuffer = session.outboundMulawBuffer.subarray(
+        chunkBytes,
+      );
+      const payload = frame.toString('base64');
+      session.totalOutputMulawSent += frame.length;
+      session.outboundMediaCount += 1;
+      this.sendOutboundMedia(
+        session.streamSid,
+        payload,
+        frame.length,
+        session.outboundMediaCount,
+        'pcm16',
+      );
+      this.updateRuntimeState(session.streamSid, {
+        outboundMediaCount: session.outboundMediaCount,
+      });
+    }
   }
 
   private flushOutboundMulaw(session: OpenAiRealtimeSession): void {
@@ -4008,6 +4097,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         payload,
         frame.length,
         session.outboundMediaCount,
+        'mulaw',
       );
       this.updateRuntimeState(session.streamSid, {
         outboundMediaCount: session.outboundMediaCount,
@@ -4025,14 +4115,22 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     const partial = remainder % chunkBytes;
     if (partial !== 0) {
       const paddingLength = chunkBytes - partial;
+      const silenceByte =
+        session.telephonyMediaEncoding === 'pcm16'
+          ? PCM16_SILENCE_BYTE
+          : MULAW_SILENCE_BYTE;
       session.outboundMulawBuffer = Buffer.concat([
         session.outboundMulawBuffer,
-        Buffer.alloc(paddingLength, MULAW_SILENCE_BYTE),
+        Buffer.alloc(paddingLength, silenceByte),
       ]);
     }
 
     const beforeFlushBytes = session.outboundMulawBuffer.length;
-    this.flushOutboundMulaw(session);
+    if (session.telephonyMediaEncoding === 'pcm16') {
+      this.flushOutboundPcm(session);
+    } else {
+      this.flushOutboundMulaw(session);
+    }
     this.logger.log({
       streamSid: session.streamSid,
       remainderBytes: remainder,
@@ -4044,38 +4142,43 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
   private sendOutboundMedia(
     streamSid: string,
-    base64MulawPayload: string,
-    mulawBytes: number,
+    base64Payload: string,
+    mediaBytes: number,
     outboundMediaCount?: number,
+    encoding: TelephonyMediaEncoding = 'mulaw',
   ): void {
     voiceDebugLog(this.logger, streamSid, 'outbound_audio_chunk', {
-      bytes: mulawBytes,
+      bytes: mediaBytes,
       outboundMediaCount,
+      encoding,
     });
     voiceDebugLog(this.logger, streamSid, 'smartflo_send_media', {
-      bytes: mulawBytes,
+      bytes: mediaBytes,
       outboundMediaCount,
+      encoding,
     });
     voiceDebugLog(this.logger, streamSid, 'outbound_chunk_bytes', {
-      bytes: mulawBytes,
+      bytes: mediaBytes,
+      encoding,
     });
 
     this.logger.log({
       streamSid,
-      mulawBytes,
-      base64Length: base64MulawPayload.length,
+      mediaBytes,
+      encoding,
+      base64Length: base64Payload.length,
       outboundMediaCount,
-      message: 'Sending outbound media to Smartflo via AudioGateway',
+      message: 'Sending outbound media to telephony via AudioGateway',
     });
 
     this.callTiming.markByStreamSid(
       streamSid,
       CallTimingEvent.FIRST_SMARTFLO_OUTBOUND_CHUNK,
-      { mulawBytes, outboundMediaCount },
+      { mediaBytes, outboundMediaCount, encoding },
       { once: true },
     );
 
-    this.audioGateway.sendMedia(streamSid, base64MulawPayload);
+    this.audioGateway.sendMedia(streamSid, base64Payload, undefined, encoding);
   }
 
   private resolveCallId(streamSid: string): string | undefined {

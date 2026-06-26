@@ -12,11 +12,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent",
-        ]
+      test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent" ]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -29,7 +25,7 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -63,6 +59,19 @@ services:
       BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://52.66.68.49}
       SEED_DEV_INTEGRATION_API_KEY: ${SEED_DEV_INTEGRATION_API_KEY:-false}
+      TELEPHONY_PROVIDER: ${TELEPHONY_PROVIDER:-exotel}
+      EXOTEL_API_BASE_URL: ${EXOTEL_API_BASE_URL:-https://api.exotel.com}
+      EXOTEL_ACCOUNT_SID: ${EXOTEL_ACCOUNT_SID:-}
+      EXOTEL_API_KEY: ${EXOTEL_API_KEY:-}
+      EXOTEL_API_TOKEN: ${EXOTEL_API_TOKEN:-}
+      EXOTEL_CALLER_ID: ${EXOTEL_CALLER_ID:-}
+      EXOTEL_CONNECT_TO: ${EXOTEL_CONNECT_TO:-}
+      EXOTEL_VOICE_FLOW_URL: ${EXOTEL_VOICE_FLOW_URL:-}
+      VOICE_WSS_BASE_URL: ${VOICE_WSS_BASE_URL:-}
+      SMARTFLO_CLICK_TO_CALL_API_KEY: ${SMARTFLO_CLICK_TO_CALL_API_KEY:-}
+      SMARTFLO_BASE_URL: ${SMARTFLO_BASE_URL:-https://api-smartflo.tatateleservices.com}
+      SMARTFLO_CALLER_ID: ${SMARTFLO_CALLER_ID:-918065908308}
+      VOICE_EXOTEL_OUTBOUND_CHUNK_BYTES: ${VOICE_EXOTEL_OUTBOUND_CHUNK_BYTES:-320}
     command: sh -c "npx prisma migrate deploy && npx prisma db seed"
 
   api:
@@ -97,6 +106,19 @@ services:
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
       SENTRY_TEST_ENABLED: ${SENTRY_TEST_ENABLED:-false}
+      TELEPHONY_PROVIDER: ${TELEPHONY_PROVIDER:-exotel}
+      EXOTEL_API_BASE_URL: ${EXOTEL_API_BASE_URL:-https://api.exotel.com}
+      EXOTEL_ACCOUNT_SID: ${EXOTEL_ACCOUNT_SID:-}
+      EXOTEL_API_KEY: ${EXOTEL_API_KEY:-}
+      EXOTEL_API_TOKEN: ${EXOTEL_API_TOKEN:-}
+      EXOTEL_CALLER_ID: ${EXOTEL_CALLER_ID:-}
+      EXOTEL_CONNECT_TO: ${EXOTEL_CONNECT_TO:-}
+      EXOTEL_VOICE_FLOW_URL: ${EXOTEL_VOICE_FLOW_URL:-}
+      VOICE_WSS_BASE_URL: ${VOICE_WSS_BASE_URL:-}
+      SMARTFLO_CLICK_TO_CALL_API_KEY: ${SMARTFLO_CLICK_TO_CALL_API_KEY:-}
+      SMARTFLO_BASE_URL: ${SMARTFLO_BASE_URL:-https://api-smartflo.tatateleservices.com}
+      SMARTFLO_CALLER_ID: ${SMARTFLO_CALLER_ID:-918065908308}
+      VOICE_EXOTEL_OUTBOUND_CHUNK_BYTES: ${VOICE_EXOTEL_OUTBOUND_CHUNK_BYTES:-320}
     ports:
       - "3000:3000"
 
@@ -130,7 +152,20 @@ services:
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.1}
-    command: ["node", "dist/worker.js"]
+      TELEPHONY_PROVIDER: ${TELEPHONY_PROVIDER:-exotel}
+      EXOTEL_API_BASE_URL: ${EXOTEL_API_BASE_URL:-https://api.exotel.com}
+      EXOTEL_ACCOUNT_SID: ${EXOTEL_ACCOUNT_SID:-}
+      EXOTEL_API_KEY: ${EXOTEL_API_KEY:-}
+      EXOTEL_API_TOKEN: ${EXOTEL_API_TOKEN:-}
+      EXOTEL_CALLER_ID: ${EXOTEL_CALLER_ID:-}
+      EXOTEL_CONNECT_TO: ${EXOTEL_CONNECT_TO:-}
+      EXOTEL_VOICE_FLOW_URL: ${EXOTEL_VOICE_FLOW_URL:-}
+      VOICE_WSS_BASE_URL: ${VOICE_WSS_BASE_URL:-}
+      SMARTFLO_CLICK_TO_CALL_API_KEY: ${SMARTFLO_CLICK_TO_CALL_API_KEY:-}
+      SMARTFLO_BASE_URL: ${SMARTFLO_BASE_URL:-https://api-smartflo.tatateleservices.com}
+      SMARTFLO_CALLER_ID: ${SMARTFLO_CALLER_ID:-918065908308}
+      VOICE_EXOTEL_OUTBOUND_CHUNK_BYTES: ${VOICE_EXOTEL_OUTBOUND_CHUNK_BYTES:-320}
+    command: [ "node", "dist/worker.js" ]
 
   frontend:
     build:
