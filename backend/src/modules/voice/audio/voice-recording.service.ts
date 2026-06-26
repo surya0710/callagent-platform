@@ -262,12 +262,6 @@ export class VoiceRecordingService {
         contentType: 'audio/wav',
       });
 
-      const s3UploadResult = await this.s3RecordingStorageService.uploadRecording(
-        wavBuffer,
-        streamSid,
-        callSid ?? active.callSid,
-      );
-
       let inboundStorageKey: string | undefined;
       let outboundStorageKey: string | undefined;
 
@@ -340,11 +334,15 @@ export class VoiceRecordingService {
         outboundTimelineEndMs: outboundTimeline.endMs,
         inboundChunkCount: inboundTimeline.chunkCount,
         outboundChunkCount: outboundTimeline.chunkCount,
-        ...(this.buildS3Metadata(s3UploadResult) ?? {}),
       };
 
       this.finalizedByStreamSid.set(streamSid, metadata);
       this.trimMetadataEntries();
+      this.scheduleBackgroundS3Upload(
+        streamSid,
+        wavBuffer,
+        callSid ?? active.callSid,
+      );
 
       this.logger.log({
         streamSid,
@@ -425,6 +423,50 @@ export class VoiceRecordingService {
 
   private trimMetadataEntries(): void {
     this.clearOldRecordings(MAX_METADATA_ENTRIES);
+  }
+
+  private scheduleBackgroundS3Upload(
+    streamSid: string,
+    wavBuffer: Buffer,
+    callSid?: string,
+  ): void {
+    if (!this.s3RecordingStorageService.isEnabled()) {
+      return;
+    }
+
+    void this.s3RecordingStorageService
+      .uploadRecording(wavBuffer, streamSid, callSid)
+      .then((uploadResult) => {
+        if (uploadResult === null) {
+          return;
+        }
+
+        const existing = this.finalizedByStreamSid.get(streamSid);
+        if (!existing) {
+          return;
+        }
+
+        const s3Metadata = this.buildS3Metadata(uploadResult);
+        if (s3Metadata) {
+          Object.assign(existing, s3Metadata);
+        }
+      })
+      .catch((error) => {
+        this.logger.error({
+          streamSid,
+          err: error,
+          message: 'Unexpected background S3 recording upload failure',
+        });
+
+        const existing = this.finalizedByStreamSid.get(streamSid);
+        if (!existing) {
+          return;
+        }
+
+        existing.s3Enabled = true;
+        existing.s3UploadError =
+          error instanceof Error ? error.message : String(error);
+      });
   }
 
   private buildS3Metadata(

@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+
+type S3Module = typeof import('@aws-sdk/client-s3');
+type S3ClientInstance = InstanceType<S3Module['S3Client']>;
 
 export interface S3RecordingUploadSuccess {
   key: string;
@@ -20,7 +22,8 @@ export type S3RecordingUploadResult =
 @Injectable()
 export class S3RecordingStorageService {
   private readonly logger = new Logger(S3RecordingStorageService.name);
-  private s3Client: S3Client | null = null;
+  private s3Client: S3ClientInstance | null = null;
+  private s3Module: S3Module | null = null;
 
   constructor(private readonly configService: ConfigService) {
     if (!this.isEnabled()) {
@@ -74,7 +77,9 @@ export class S3RecordingStorageService {
     });
 
     try {
-      await this.getClient().send(
+      const { PutObjectCommand } = await this.loadS3Module();
+      const client = await this.getClient();
+      await client.send(
         new PutObjectCommand({
           Bucket: bucket,
           Key: key,
@@ -110,8 +115,17 @@ export class S3RecordingStorageService {
     }
   }
 
-  private getClient(): S3Client {
+  private async loadS3Module(): Promise<S3Module> {
+    if (!this.s3Module) {
+      this.s3Module = await import('@aws-sdk/client-s3');
+    }
+
+    return this.s3Module;
+  }
+
+  private async getClient(): Promise<S3ClientInstance> {
     if (!this.s3Client) {
+      const { S3Client } = await this.loadS3Module();
       const region =
         this.configService.get<string>('AWS_REGION')?.trim() || 'ap-south-1';
       const accessKeyId =
