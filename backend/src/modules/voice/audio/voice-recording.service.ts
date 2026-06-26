@@ -10,21 +10,17 @@ import {
   summarizeRecordingTimeline,
 } from './pcm-recording-mix.util';
 import { VoiceSessionService } from '../voice-session.service';
-import {
-  buildVoiceRecordingStorageKey,
-  toSafeRecordingFileName,
-} from './storage/voice-recording-storage.interface';
-import { VoiceRecordingStorageFactory } from './storage/voice-recording-storage.factory';
+import { toSafeRecordingFileName } from './storage/voice-recording-storage.interface';
 import { S3RecordingStorageService } from './s3-recording-storage.service';
 import { createWavBuffer } from './wav-writer';
 import { PrismaService } from '../../../database/prisma.service';
-import { ConfigService } from '@nestjs/config';
 
 export interface VoiceRecordingMetadata {
   streamSid: string;
   callSid?: string;
   fileName: string;
   storageKey: string;
+  recordingS3Url: string;
   inboundStorageKey?: string;
   outboundStorageKey?: string;
   sampleRate: number;
@@ -84,11 +80,9 @@ export class VoiceRecordingService {
   >();
 
   constructor(
-    private readonly storageFactory: VoiceRecordingStorageFactory,
     private readonly voiceSessionService: VoiceSessionService,
     private readonly s3RecordingStorageService: S3RecordingStorageService,
     private readonly prisma: PrismaService,
-    private readonly configService: ConfigService,
   ) {}
 
   start(streamSid: string, callSid?: string): void {
@@ -258,13 +252,22 @@ export class VoiceRecordingService {
         bitsPerSample: BITS_PER_SAMPLE,
       });
 
-      const fileName = toSafeRecordingFileName(streamSid);
-      const storageKey = buildVoiceRecordingStorageKey(fileName);
-      const storage = this.storageFactory.getStorage();
+      const resolvedCallSid = callSid ?? active.callSid;
+      const mixedUpload = await this.s3RecordingStorageService.uploadRecording(
+        wavBuffer,
+        streamSid,
+        resolvedCallSid,
+        'mixed',
+      );
 
-      await storage.write(storageKey, wavBuffer, {
-        contentType: 'audio/wav',
-      });
+      if (!mixedUpload || 'error' in mixedUpload) {
+        this.logger.error({
+          streamSid,
+          err: mixedUpload && 'error' in mixedUpload ? mixedUpload.error : 'unknown',
+          message: 'Failed to upload mixed recording to S3',
+        });
+        return null;
+      }
 
       let inboundStorageKey: string | undefined;
       let outboundStorageKey: string | undefined;
@@ -277,18 +280,20 @@ export class VoiceRecordingService {
             'inbound',
           );
           if (inboundPcm.length > 0) {
-            inboundStorageKey = buildVoiceRecordingStorageKey(
-              `${toSafeRecordingFileName(streamSid).replace(/\.wav$/, '')}_inbound.wav`,
-            );
-            await storage.write(
-              inboundStorageKey,
-              createWavBuffer(inboundPcm, {
-                sampleRate: SAMPLE_RATE,
-                channels: CHANNELS,
-                bitsPerSample: BITS_PER_SAMPLE,
-              }),
-              { contentType: 'audio/wav' },
-            );
+            const inboundUpload =
+              await this.s3RecordingStorageService.uploadRecording(
+                createWavBuffer(inboundPcm, {
+                  sampleRate: SAMPLE_RATE,
+                  channels: CHANNELS,
+                  bitsPerSample: BITS_PER_SAMPLE,
+                }),
+                streamSid,
+                resolvedCallSid,
+                'inbound',
+              );
+            if (inboundUpload && !('error' in inboundUpload)) {
+              inboundStorageKey = inboundUpload.key;
+            }
           }
         }
 
@@ -299,27 +304,40 @@ export class VoiceRecordingService {
             'outbound',
           );
           if (outboundPcm.length > 0) {
-            outboundStorageKey = buildVoiceRecordingStorageKey(
-              `${toSafeRecordingFileName(streamSid).replace(/\.wav$/, '')}_outbound.wav`,
-            );
-            await storage.write(
-              outboundStorageKey,
-              createWavBuffer(outboundPcm, {
-                sampleRate: SAMPLE_RATE,
-                channels: CHANNELS,
-                bitsPerSample: BITS_PER_SAMPLE,
-              }),
-              { contentType: 'audio/wav' },
-            );
+            const outboundUpload =
+              await this.s3RecordingStorageService.uploadRecording(
+                createWavBuffer(outboundPcm, {
+                  sampleRate: SAMPLE_RATE,
+                  channels: CHANNELS,
+                  bitsPerSample: BITS_PER_SAMPLE,
+                }),
+                streamSid,
+                resolvedCallSid,
+                'outbound',
+              );
+            if (outboundUpload && !('error' in outboundUpload)) {
+              outboundStorageKey = outboundUpload.key;
+            }
           }
         }
       }
 
+      const fileName = toSafeRecordingFileName(streamSid);
+
+      if (options?.callId) {
+        await this.saveS3UrlToDb(
+          options.callId,
+          mixedUpload.url,
+          streamSid,
+        );
+      }
+
       const metadata: VoiceRecordingMetadata = {
         streamSid,
-        callSid: callSid ?? active.callSid,
+        callSid: resolvedCallSid,
         fileName,
-        storageKey,
+        storageKey: mixedUpload.key,
+        recordingS3Url: mixedUpload.url,
         inboundStorageKey,
         outboundStorageKey,
         sampleRate: SAMPLE_RATE,
@@ -338,21 +356,20 @@ export class VoiceRecordingService {
         outboundTimelineEndMs: outboundTimeline.endMs,
         inboundChunkCount: inboundTimeline.chunkCount,
         outboundChunkCount: outboundTimeline.chunkCount,
+        s3Enabled: true,
+        s3Bucket: mixedUpload.bucket,
+        s3Key: mixedUpload.key,
+        s3UploadedAt: mixedUpload.uploadedAt,
       };
 
       this.finalizedByStreamSid.set(streamSid, metadata);
       this.trimMetadataEntries();
-      this.scheduleBackgroundS3Upload(
-        streamSid,
-        wavBuffer,
-        callSid ?? active.callSid,
-        options?.callId,
-      );
 
       this.logger.log({
         streamSid,
         fileName,
-        storageKey,
+        storageKey: mixedUpload.key,
+        recordingS3Url: mixedUpload.url,
         mulawBytes: metadata.mulawBytes,
         wavBytes: metadata.wavBytes,
         inboundChunks: active.inboundChunks.length,
@@ -362,7 +379,7 @@ export class VoiceRecordingService {
         chunks: metadata.chunks,
         pcmStats: formatPcm16Stats(pcmStats),
         mixStrategy: 'live_call_wall_clock_additive',
-        message: 'Voice recording finalized',
+        message: 'Voice recording finalized and uploaded to S3',
       });
 
       return metadata;
@@ -389,6 +406,10 @@ export class VoiceRecordingService {
     return this.finalizedByStreamSid.get(streamSid)?.storageKey;
   }
 
+  getRecordingS3Url(streamSid: string): string | undefined {
+    return this.finalizedByStreamSid.get(streamSid)?.recordingS3Url;
+  }
+
   clearOldRecordings(maxCount = MAX_METADATA_ENTRIES): void {
     const recordings = this.listRecordings();
     if (recordings.length <= maxCount) {
@@ -409,79 +430,35 @@ export class VoiceRecordingService {
   }
 
   async recordingExists(streamSid: string): Promise<boolean> {
-    const storageKey = this.getRecordingStorageKey(streamSid);
-    if (!storageKey) {
+    const recording = this.finalizedByStreamSid.get(streamSid);
+    if (!recording?.storageKey) {
       return false;
     }
 
-    return this.storageFactory.getStorage().exists(storageKey);
+    return this.s3RecordingStorageService.objectExists(recording.storageKey);
   }
 
-  openRecordingReadStream(streamSid: string): Readable | null {
+  async openRecordingReadStream(streamSid: string): Promise<Readable | null> {
     const storageKey = this.getRecordingStorageKey(streamSid);
     if (!storageKey) {
       return null;
     }
 
-    return this.storageFactory.getStorage().createReadStream(storageKey);
+    try {
+      return await this.s3RecordingStorageService.createReadStream(storageKey);
+    } catch (error) {
+      this.logger.error({
+        streamSid,
+        storageKey,
+        err: error,
+        message: 'Failed to open S3 recording read stream',
+      });
+      return null;
+    }
   }
 
   private trimMetadataEntries(): void {
     this.clearOldRecordings(MAX_METADATA_ENTRIES);
-  }
-
-  private scheduleBackgroundS3Upload(
-    streamSid: string,
-    wavBuffer: Buffer,
-    callSid?: string,
-    callId?: string,
-  ): void {
-    if (!this.s3RecordingStorageService.isEnabled()) {
-      return;
-    }
-
-    void this.s3RecordingStorageService
-      .uploadRecording(wavBuffer, streamSid, callSid)
-      .then(async (uploadResult) => {
-        if (uploadResult === null) {
-          return;
-        }
-
-        const existing = this.finalizedByStreamSid.get(streamSid);
-        if (existing) {
-          const s3Metadata = this.buildS3Metadata(uploadResult);
-          if (s3Metadata) {
-            Object.assign(existing, s3Metadata);
-          }
-        }
-
-        if (callId && uploadResult && !('error' in uploadResult)) {
-          const s3Url = this.buildS3HttpUrl(uploadResult.bucket, uploadResult.key);
-          await this.saveS3UrlToDb(callId, s3Url, streamSid);
-        }
-      })
-      .catch((error) => {
-        this.logger.error({
-          streamSid,
-          err: error,
-          message: 'Unexpected background S3 recording upload failure',
-        });
-
-        const existing = this.finalizedByStreamSid.get(streamSid);
-        if (!existing) {
-          return;
-        }
-
-        existing.s3Enabled = true;
-        existing.s3UploadError =
-          error instanceof Error ? error.message : String(error);
-      });
-  }
-
-  private buildS3HttpUrl(bucket: string, key: string): string {
-    const region =
-      this.configService.get<string>('AWS_REGION')?.trim() || 'ap-south-1';
-    return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
   }
 
   private async saveS3UrlToDb(
@@ -503,34 +480,5 @@ export class VoiceRecordingService {
         message: 'Failed to save recording S3 URL to DB',
       });
     }
-  }
-
-  private buildS3Metadata(
-    uploadResult: Awaited<
-      ReturnType<S3RecordingStorageService['uploadRecording']>
-    >,
-  ):
-    | Pick<
-        VoiceRecordingMetadata,
-        's3Enabled' | 's3Bucket' | 's3Key' | 's3UploadedAt' | 's3UploadError'
-      >
-    | undefined {
-    if (uploadResult === null) {
-      return undefined;
-    }
-
-    if ('error' in uploadResult) {
-      return {
-        s3Enabled: true,
-        s3UploadError: uploadResult.error,
-      };
-    }
-
-    return {
-      s3Enabled: true,
-      s3Bucket: uploadResult.bucket,
-      s3Key: uploadResult.key,
-      s3UploadedAt: uploadResult.uploadedAt,
-    };
   }
 }

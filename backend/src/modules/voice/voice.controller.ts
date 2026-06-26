@@ -89,7 +89,9 @@ export class VoiceController {
 
     return sessions.map((s) => ({
       ...s,
-      recordingS3Url: s.callId ? (s3UrlByCallId.get(s.callId) ?? null) : null,
+      recordingS3Url:
+        s.recordingS3Url ??
+        (s.callId ? (s3UrlByCallId.get(s.callId) ?? null) : null),
     }));
   }
 
@@ -285,6 +287,15 @@ export class VoiceController {
     @Res() res: Response,
   ): Promise<void> {
     const recording = this.voiceRecordingService.getRecording(streamSid);
+    const s3Url =
+      recording?.recordingS3Url ??
+      this.voiceRecordingService.getRecordingS3Url(streamSid);
+
+    if (s3Url) {
+      res.redirect(302, s3Url);
+      return;
+    }
+
     if (!recording) {
       throw new NotFoundException(`Voice recording not found: ${streamSid}`);
     }
@@ -296,7 +307,7 @@ export class VoiceController {
       );
     }
 
-    const stream = this.voiceRecordingService.openRecordingReadStream(streamSid);
+    const stream = await this.voiceRecordingService.openRecordingReadStream(streamSid);
     if (!stream) {
       throw new NotFoundException(`Voice recording not found: ${streamSid}`);
     }

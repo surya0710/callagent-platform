@@ -16,7 +16,7 @@ import {
   sessionDuration,
   statusBadgeClass,
 } from '../lib/voice-utils';
-import { VoiceSession, VoiceSessionStatus, voiceRecordingDownloadUrl } from '../types/voice';
+import { VoiceSession, VoiceSessionStatus } from '../types/voice';
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -78,14 +78,6 @@ function SessionActions({
           className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
           target="_blank"
           rel="noreferrer"
-          download
-        >
-          Download WAV
-        </a>
-      ) : session.recordingAvailable && streamSid ? (
-        <a
-          href={voiceRecordingDownloadUrl(streamSid)}
-          className="inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
           download
         >
           Download WAV
@@ -333,14 +325,6 @@ export function VoiceSessionsPage() {
                       className="text-xs text-indigo-400 hover:text-indigo-300"
                       target="_blank"
                       rel="noreferrer"
-                      download
-                    >
-                      Download WAV
-                    </a>
-                  ) : session.recordingAvailable && session.streamSid ? (
-                    <a
-                      href={voiceRecordingDownloadUrl(session.streamSid)}
-                      className="text-xs text-indigo-400 hover:text-indigo-300"
                       download
                     >
                       Download WAV
