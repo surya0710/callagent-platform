@@ -19,6 +19,18 @@ export type S3RecordingUploadResult =
   | S3RecordingUploadFailure
   | null;
 
+export interface GetSignedRecordingUrlParams {
+  s3Key: string;
+  expiresInSeconds?: number;
+}
+
+export interface SignedRecordingUrlResult {
+  url: string;
+  expiresInSeconds: number;
+  s3Key: string;
+  bucket: string;
+}
+
 @Injectable()
 export class S3RecordingStorageService {
   private readonly logger = new Logger(S3RecordingStorageService.name);
@@ -112,6 +124,72 @@ export class S3RecordingStorageService {
         message: 'S3 recording upload failed',
       });
       return { error: errorMessage };
+    }
+  }
+
+  async getSignedRecordingUrl(
+    params: GetSignedRecordingUrlParams,
+  ): Promise<SignedRecordingUrlResult> {
+    if (!this.isEnabled()) {
+      this.logger.warn({
+        message: 'S3 recording signed URL requested while S3 upload is disabled',
+      });
+      throw new Error('S3 recordings are disabled');
+    }
+
+    const s3Key = params.s3Key?.trim();
+    if (!s3Key) {
+      this.logger.error({
+        message: 'S3 recording signed URL requested without s3Key',
+      });
+      throw new Error('S3 recording key is missing');
+    }
+
+    const bucket = this.configService.get<string>('S3_RECORDINGS_BUCKET')?.trim();
+    if (!bucket) {
+      this.logger.error({
+        s3Key,
+        message: 'S3_RECORDINGS_BUCKET is not configured',
+      });
+      throw new Error('S3 recordings bucket is not configured');
+    }
+
+    const expiresInSeconds = params.expiresInSeconds ?? 900;
+
+    try {
+      const { GetObjectCommand } = await this.loadS3Module();
+      const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
+      const client = await this.getClient();
+      const url = await getSignedUrl(
+        client,
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: s3Key,
+        }),
+        { expiresIn: expiresInSeconds },
+      );
+
+      this.logger.log({
+        s3Key,
+        bucket,
+        expiresInSeconds,
+        message: 'Generated S3 recording signed URL',
+      });
+
+      return {
+        url,
+        expiresInSeconds,
+        s3Key,
+        bucket,
+      };
+    } catch (error) {
+      this.logger.error({
+        s3Key,
+        bucket,
+        err: error,
+        message: 'Failed to generate S3 recording signed URL',
+      });
+      throw error;
     }
   }
 

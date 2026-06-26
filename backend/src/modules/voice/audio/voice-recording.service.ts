@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Readable } from 'node:stream';
 import {
   analyzePcm16,
@@ -419,6 +419,54 @@ export class VoiceRecordingService {
     }
 
     return this.storageFactory.getStorage().createReadStream(storageKey);
+  }
+
+  async getSignedRecordingUrl(
+    streamSid: string,
+    expiresInSeconds = 900,
+  ): Promise<{
+    streamSid: string;
+    s3Key: string;
+    expiresInSeconds: number;
+    url: string;
+  }> {
+    const recording = this.getRecording(streamSid);
+    const s3Key = recording?.s3Key?.trim();
+
+    if (
+      !recording ||
+      !s3Key ||
+      !this.s3RecordingStorageService.isEnabled() ||
+      recording.s3UploadError
+    ) {
+      throw new NotFoundException(
+        'S3 recording is not available for this streamSid',
+      );
+    }
+
+    try {
+      const signed = await this.s3RecordingStorageService.getSignedRecordingUrl({
+        s3Key,
+        expiresInSeconds,
+      });
+
+      return {
+        streamSid,
+        s3Key: signed.s3Key,
+        expiresInSeconds: signed.expiresInSeconds,
+        url: signed.url,
+      };
+    } catch (error) {
+      this.logger.error({
+        streamSid,
+        s3Key,
+        err: error,
+        message: 'Failed to resolve signed S3 recording URL',
+      });
+      throw new NotFoundException(
+        'S3 recording is not available for this streamSid',
+      );
+    }
   }
 
   private trimMetadataEntries(): void {

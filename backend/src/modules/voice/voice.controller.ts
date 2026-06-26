@@ -251,6 +251,12 @@ export class VoiceController {
     };
   }
 
+  @Get('recordings/:streamSid/signed-url')
+  @ApiOperation({ summary: 'Get a pre-signed S3 URL for a voice recording' })
+  getSignedRecordingUrl(@Param('streamSid') streamSid: string) {
+    return this.voiceRecordingService.getSignedRecordingUrl(streamSid);
+  }
+
   @Get('recordings/:streamSid/download')
   @ApiOperation({ summary: 'Download a voice recording WAV file' })
   async downloadRecording(
