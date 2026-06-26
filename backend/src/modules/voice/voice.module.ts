@@ -6,6 +6,7 @@ import { AudioGateway } from './audio.gateway';
 import { LocalVoiceRecordingStorage } from './audio/storage/local-voice-recording-storage.provider';
 import { S3VoiceRecordingStorage } from './audio/storage/s3-voice-recording-storage.provider';
 import { VoiceRecordingStorageFactory } from './audio/storage/voice-recording-storage.factory';
+import { S3RecordingStorageService } from './audio/s3-recording-storage.service';
 import { VoiceRecordingService } from './audio/voice-recording.service';
 import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
 import { MockVoiceRuntimeProvider } from './runtime/mock-voice-runtime.provider';
@@ -40,6 +41,7 @@ import { VoiceTranscriptEmailController } from './voice-transcript-email.control
     LocalVoiceRecordingStorage,
     S3VoiceRecordingStorage,
     VoiceRecordingStorageFactory,
+    S3RecordingStorageService,
     VoiceRecordingService,
     VoiceAudioConfigService,
     SmartfloClickToCallService,

@@ -15,6 +15,7 @@ import {
   toSafeRecordingFileName,
 } from './storage/voice-recording-storage.interface';
 import { VoiceRecordingStorageFactory } from './storage/voice-recording-storage.factory';
+import { S3RecordingStorageService } from './s3-recording-storage.service';
 import { createWavBuffer } from './wav-writer';
 
 export interface VoiceRecordingMetadata {
@@ -39,6 +40,11 @@ export interface VoiceRecordingMetadata {
   outboundTimelineEndMs?: number | null;
   inboundChunkCount?: number;
   outboundChunkCount?: number;
+  s3Enabled?: boolean;
+  s3Bucket?: string;
+  s3Key?: string;
+  s3UploadedAt?: string;
+  s3UploadError?: string;
 }
 
 export type VoiceRecordingPublicMetadata = Omit<
@@ -78,6 +84,7 @@ export class VoiceRecordingService {
   constructor(
     private readonly storageFactory: VoiceRecordingStorageFactory,
     private readonly voiceSessionService: VoiceSessionService,
+    private readonly s3RecordingStorageService: S3RecordingStorageService,
   ) {}
 
   start(streamSid: string, callSid?: string): void {
@@ -255,6 +262,12 @@ export class VoiceRecordingService {
         contentType: 'audio/wav',
       });
 
+      const s3UploadResult = await this.s3RecordingStorageService.uploadRecording(
+        wavBuffer,
+        streamSid,
+        callSid ?? active.callSid,
+      );
+
       let inboundStorageKey: string | undefined;
       let outboundStorageKey: string | undefined;
 
@@ -327,6 +340,7 @@ export class VoiceRecordingService {
         outboundTimelineEndMs: outboundTimeline.endMs,
         inboundChunkCount: inboundTimeline.chunkCount,
         outboundChunkCount: outboundTimeline.chunkCount,
+        ...(this.buildS3Metadata(s3UploadResult) ?? {}),
       };
 
       this.finalizedByStreamSid.set(streamSid, metadata);
@@ -411,5 +425,34 @@ export class VoiceRecordingService {
 
   private trimMetadataEntries(): void {
     this.clearOldRecordings(MAX_METADATA_ENTRIES);
+  }
+
+  private buildS3Metadata(
+    uploadResult: Awaited<
+      ReturnType<S3RecordingStorageService['uploadRecording']>
+    >,
+  ):
+    | Pick<
+        VoiceRecordingMetadata,
+        's3Enabled' | 's3Bucket' | 's3Key' | 's3UploadedAt' | 's3UploadError'
+      >
+    | undefined {
+    if (uploadResult === null) {
+      return undefined;
+    }
+
+    if ('error' in uploadResult) {
+      return {
+        s3Enabled: true,
+        s3UploadError: uploadResult.error,
+      };
+    }
+
+    return {
+      s3Enabled: true,
+      s3Bucket: uploadResult.bucket,
+      s3Key: uploadResult.key,
+      s3UploadedAt: uploadResult.uploadedAt,
+    };
   }
 }

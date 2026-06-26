@@ -102,6 +102,26 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  AWS_ACCESS_KEY_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  AWS_SECRET_ACCESS_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_RECORDINGS_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_RECORDINGS_BUCKET?: string;
+
+  @IsOptional()
+  @IsString()
+  S3_RECORDINGS_PREFIX?: string;
+
+  @IsOptional()
+  @IsString()
   BEDROCK_MODEL_ID?: string;
 
   @IsString()
