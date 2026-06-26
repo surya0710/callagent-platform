@@ -27,6 +27,11 @@ export enum VoiceRecordingStorageDriver {
   S3 = 's3',
 }
 
+export enum TelephonyProviderType {
+  SMARTFLO = 'smartflo',
+  EXOTEL = 'exotel',
+}
+
 export class EnvironmentVariables {
   @IsEnum(['development', 'production', 'test'])
   NODE_ENV!: 'development' | 'production' | 'test';
@@ -211,6 +216,42 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SMARTFLO_CALLER_ID?: string;
+
+  @IsOptional()
+  @IsEnum(TelephonyProviderType)
+  TELEPHONY_PROVIDER?: TelephonyProviderType;
+
+  @IsOptional()
+  @IsUrl({ require_tld: true })
+  EXOTEL_API_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  EXOTEL_ACCOUNT_SID?: string;
+
+  @IsOptional()
+  @IsString()
+  EXOTEL_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  EXOTEL_API_TOKEN?: string;
+
+  @IsOptional()
+  @IsString()
+  EXOTEL_CALLER_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  EXOTEL_CONNECT_TO?: string;
+
+  @IsOptional()
+  @IsString()
+  EXOTEL_VOICE_FLOW_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  VOICE_EXOTEL_OUTBOUND_CHUNK_BYTES?: string;
 
   @IsOptional()
   @IsString()

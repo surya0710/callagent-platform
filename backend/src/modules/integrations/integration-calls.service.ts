@@ -8,7 +8,7 @@ import { CallSource } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { sanitizeCallContext } from '../voice/voice-call-context.util';
 import { CallContext } from '../voice/voice-call-context.types';
-import { SmartfloClickToCallService } from '../voice/smartflo-click-to-call.service';
+import { TelephonyOutboundCallService } from '../voice/telephony/telephony-outbound-call.service';
 import { IntegrationApiKeyContext } from './interfaces/integration-context.interface';
 import { OnDemandCallDto } from './dto/on-demand-call.dto';
 import { IntegrationCallbackService } from './integration-callback.service';
@@ -17,7 +17,7 @@ import { IntegrationCallbackService } from './integration-callback.service';
 export class IntegrationCallsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly smartfloClickToCallService: SmartfloClickToCallService,
+    private readonly telephonyOutboundCallService: TelephonyOutboundCallService,
     private readonly callbackService: IntegrationCallbackService,
   ) {}
 
@@ -39,7 +39,7 @@ export class IntegrationCallsService {
 
     let result;
     try {
-      result = await this.smartfloClickToCallService.initiateCall({
+      result = await this.telephonyOutboundCallService.initiateCall({
         customerNumber: dto.customerNumber,
         callContext,
         source: 'integration',
