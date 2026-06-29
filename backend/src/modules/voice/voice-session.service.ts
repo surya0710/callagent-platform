@@ -8,7 +8,6 @@ import { VoiceSharedStateService } from './voice-shared-state.service';
 import { VoiceOpeningContext, OpeningState } from './voice-opening.types';
 import { CallContext } from './voice-call-context.types';
 import { extractCallContextDebugInfo } from './voice-call-context.util';
-import { TelephonyMediaEncoding } from './telephony/telephony-provider.types';
 
 export type VoiceSessionStatus = 'PENDING' | 'ACTIVE' | 'ENDED';
 
@@ -29,7 +28,6 @@ export interface VoiceSession {
   direction?: string;
   mediaFormat?: unknown;
   customParameters?: unknown;
-  telephonyMediaEncoding?: TelephonyMediaEncoding;
   status: VoiceSessionStatus;
   isAppInitiated?: boolean;
   authorizationSource?: string;
@@ -50,7 +48,6 @@ export interface VoiceSession {
   stopReason?: string | null;
   remoteAddress?: string;
   recordingAvailable?: boolean;
-  recordingS3Url?: string | null;
   recordingFileName?: string;
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
@@ -179,7 +176,6 @@ export interface VoiceSessionStartData {
   direction?: string;
   mediaFormat?: unknown;
   customParameters?: unknown;
-  telephonyMediaEncoding?: TelephonyMediaEncoding;
 }
 
 export interface VoiceSessionResponse {
@@ -192,7 +188,6 @@ export interface VoiceSessionResponse {
   direction?: string;
   mediaFormat?: unknown;
   customParameters?: unknown;
-  telephonyMediaEncoding?: TelephonyMediaEncoding;
   status: VoiceSessionStatus;
   isAppInitiated?: boolean;
   authorizationSource?: string;
@@ -213,7 +208,6 @@ export interface VoiceSessionResponse {
   stopReason?: string | null;
   remoteAddress?: string;
   recordingAvailable?: boolean;
-  recordingS3Url?: string | null;
   recordingFileName?: string;
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
@@ -332,9 +326,6 @@ export interface VoiceSessionResponse {
 }
 
 const MAX_RECENT_ENDED_SESSIONS = 100;
-const ACTIVE_SETUP_VISIBILITY_MS = 90_000;
-const STALE_SOCKET_WITHOUT_STREAM_MS = 45_000;
-const STALE_UNAUTHORIZED_SESSION_MS = 120_000;
 
 function toIso(date: Date | undefined): string | null | undefined {
   if (date === undefined) {
@@ -356,7 +347,6 @@ export function toVoiceSessionResponse(
     direction: session.direction,
     mediaFormat: session.mediaFormat,
     customParameters: session.customParameters,
-    telephonyMediaEncoding: session.telephonyMediaEncoding,
     status: session.status,
     isAppInitiated: session.isAppInitiated,
     authorizationSource: session.authorizationSource,
@@ -376,7 +366,6 @@ export function toVoiceSessionResponse(
     stopReason: session.stopReason ?? null,
     remoteAddress: session.remoteAddress,
     recordingAvailable: session.recordingAvailable ?? false,
-    recordingS3Url: null,
     recordingFileName: session.recordingFileName,
     recordingDurationMsEstimate: session.recordingDurationMsEstimate,
     recordingMulawBytes: session.recordingMulawBytes,
@@ -659,65 +648,14 @@ export class VoiceSessionService {
   }
 
   getActiveSessions(): VoiceSession[] {
-    this.pruneStaleActiveSessions();
-
-    const now = Date.now();
-    return Array.from(this.activeBySocketSessionId.values()).filter((session) =>
-      this.isVisibleActiveSession(session, now),
+    return Array.from(this.activeBySocketSessionId.values()).filter(
+      (session) => session.isAppInitiated === true,
     );
   }
 
-  private isVisibleActiveSession(session: VoiceSession, nowMs: number): boolean {
-    if (session.isAppInitiated === true) {
-      return true;
-    }
-
-    const ageMs = nowMs - session.connectedAt.getTime();
-    if (ageMs > ACTIVE_SETUP_VISIBILITY_MS) {
-      return false;
-    }
-
-    if (
-      session.streamSid &&
-      this.authorizationPending.has(session.streamSid)
-    ) {
-      return true;
-    }
-
-    if (session.status === 'PENDING' && !session.streamSid) {
-      return ageMs <= STALE_SOCKET_WITHOUT_STREAM_MS;
-    }
-
-    return false;
-  }
-
-  private pruneStaleActiveSessions(): void {
-    const now = Date.now();
-
-    for (const session of this.activeBySocketSessionId.values()) {
-      if (session.isAppInitiated === true) {
-        continue;
-      }
-
-      const ageMs = now - session.connectedAt.getTime();
-      const stalePendingSocket =
-        !session.streamSid && ageMs > STALE_SOCKET_WITHOUT_STREAM_MS;
-      const staleUnauthorized = ageMs > STALE_UNAUTHORIZED_SESSION_MS;
-
-      if (stalePendingSocket || staleUnauthorized) {
-        this.discardSession(session, 'stale_session_timeout', 'timeout');
-      }
-    }
-  }
-
   async getRecentEndedSessions(): Promise<VoiceSession[]> {
-    this.pruneStaleActiveSessions();
-
     const local = this.recentEndedSessions.filter(
-      (session) =>
-        session.isAppInitiated === true ||
-        Boolean(session.rejectionReason) ||
-        Boolean(session.streamSid),
+      (session) => session.isAppInitiated === true,
     );
     const shared = await this.voiceSharedStateService.listRecentEndedSessions();
 
@@ -977,7 +915,6 @@ export class VoiceSessionService {
     session.direction = data.direction;
     session.mediaFormat = data.mediaFormat;
     session.customParameters = data.customParameters;
-    session.telephonyMediaEncoding = data.telephonyMediaEncoding;
     session.status = 'ACTIVE';
     session.startedAt = now;
     session.lastEvent = 'start';
@@ -1502,7 +1439,6 @@ export class VoiceSessionService {
       durationMsEstimate: number;
       mulawBytes: number;
       wavBytes: number;
-      recordingS3Url?: string;
       inboundTimelineStartMs?: number | null;
       inboundTimelineEndMs?: number | null;
       outboundTimelineStartMs?: number | null;
@@ -1517,7 +1453,6 @@ export class VoiceSessionService {
     }
 
     session.recordingAvailable = true;
-    session.recordingS3Url = metadata.recordingS3Url ?? null;
     session.recordingFileName = metadata.fileName;
     session.recordingDurationMsEstimate = metadata.durationMsEstimate;
     session.recordingMulawBytes = metadata.mulawBytes;
@@ -1576,22 +1511,6 @@ export class VoiceSessionService {
       this.inboundStatsByStreamSid.delete(session.streamSid);
       this.outboundStatsByStreamSid.delete(session.streamSid);
     }
-
-    this.recentEndedSessions.push(session);
-    if (session.streamSid) {
-      this.recentEndedByStreamSid.set(session.streamSid, session);
-    }
-
-    while (this.recentEndedSessions.length > MAX_RECENT_ENDED_SESSIONS) {
-      const oldest = this.recentEndedSessions.shift();
-      if (oldest?.streamSid) {
-        this.recentEndedByStreamSid.delete(oldest.streamSid);
-      }
-    }
-
-    void this.voiceSharedStateService.saveEndedSession(
-      toVoiceSessionResponse(session),
-    );
   }
 
   private endSession(
