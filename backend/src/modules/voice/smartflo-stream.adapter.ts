@@ -647,17 +647,16 @@ export class SmartfloStreamAdapter {
       const session = this.voiceSessionService.getByStreamSid(streamSid);
       const callId = session?.callId;
       if (callId) {
-        void this.markCallCompleted(
-          callId,
-          metadata.durationMsEstimate,
-        ).catch((error) => {
+        try {
+          await this.markCallCompleted(callId, metadata.durationMsEstimate);
+        } catch (error) {
           this.logger.warn({
             streamSid,
             callId,
             err: error instanceof Error ? error.message : String(error),
             message: 'Failed to mark voice call completed',
           });
-        });
+        }
       }
       if (callId && this.voiceTranscriptConfig.isPostCallEnabled()) {
         void this.voiceTranscriptService

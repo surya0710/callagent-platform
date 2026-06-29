@@ -5,6 +5,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUrl,
   ValidateNested,
 } from 'class-validator';
 import { VoiceCallContextDto } from '../../voice/dto/voice-call-context.dto';
@@ -44,6 +45,24 @@ export class OnDemandCallDto {
   @ValidateNested()
   @Type(() => VoiceCallContextDto)
   callContext?: VoiceCallContextDto;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional per-call webhook URL override for this API key. When omitted, the API key webhookUrl from Settings is used.',
+    example: 'https://your-driver-app.com/webhooks/voice-status',
+  })
+  @IsOptional()
+  @IsUrl()
+  webhookUrl?: string;
+
+  @ApiPropertyOptional({
+    deprecated: true,
+    description: 'Deprecated alias for webhookUrl.',
+    example: 'https://your-driver-app.com/webhooks/voice-status',
+  })
+  @IsOptional()
+  @IsUrl()
+  callbackUrl?: string;
 
   @ApiPropertyOptional({
     description: 'Optional opaque metadata stored on the call record',

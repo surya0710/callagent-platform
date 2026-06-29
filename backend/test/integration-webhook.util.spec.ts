@@ -33,12 +33,24 @@ describe('integration-webhook.util', () => {
   });
 
   describe('resolveIntegrationWebhookUrl', () => {
-    it('uses only the initiating API key webhook URL', () => {
+    it('uses the initiating API key webhook URL first', () => {
       expect(
         resolveIntegrationWebhookUrl({
           webhookUrl: 'https://www.tatd.in/tatd-ai/ai-tatd-data-received-api.php',
         }),
       ).toBe('https://www.tatd.in/tatd-ai/ai-tatd-data-received-api.php');
+    });
+
+    it('falls back to the call webhook snapshot from the initiating key', () => {
+      expect(
+        resolveIntegrationWebhookUrl(
+          { webhookUrl: null },
+          'https://www.tatd.in/tatd-ai/ai-tatd-data-received-api.php',
+        ),
+      ).toBe('https://www.tatd.in/tatd-ai/ai-tatd-data-received-api.php');
+    });
+
+    it('returns null when no webhook URL is configured', () => {
       expect(resolveIntegrationWebhookUrl({ webhookUrl: '   ' })).toBeNull();
       expect(resolveIntegrationWebhookUrl(null)).toBeNull();
     });

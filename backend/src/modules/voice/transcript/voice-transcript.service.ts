@@ -197,9 +197,11 @@ export class VoiceTranscriptService {
 
     // Integration calls must deliver webhooks reliably without depending on a worker process.
     if (call?.source === 'integration') {
-      void this.processPostCallJob(payload).catch((error) => {
+      try {
+        await this.processPostCallJob(payload);
+      } catch (error) {
         this.recordTranscriptError(payload.streamSid, payload.callId, error);
-      });
+      }
       return;
     }
 
@@ -308,20 +310,32 @@ export class VoiceTranscriptService {
           });
         });
 
-      void this.integrationCallbackService
-        .notifyCallResultReady(
-          payload.callId,
-          payload.streamSid,
-          payload.durationMsEstimate,
-        )
-        .catch((error) => {
-          this.logger.error({
+      await this.integrationCallbackService.notifyCallResultReady(
+        payload.callId,
+        payload.streamSid,
+        payload.durationMsEstimate,
+      ).then((result) => {
+        if (!result.sent) {
+          this.logger.warn({
             callId: payload.callId,
             streamSid: payload.streamSid,
-            message: 'integration_result_webhook_failed',
-            err: error instanceof Error ? error.message : String(error),
+            reason:
+              'reason' in result && result.reason
+                ? result.reason
+                : 'status' in result && result.status !== undefined
+                  ? `HTTP ${result.status}`
+                  : 'unknown',
+            message: 'integration_result_webhook_not_sent',
           });
+        }
+      }).catch((error) => {
+        this.logger.error({
+          callId: payload.callId,
+          streamSid: payload.streamSid,
+          message: 'integration_result_webhook_failed',
+          err: error instanceof Error ? error.message : String(error),
         });
+      });
     } catch (error) {
       this.recordTranscriptError(payload.streamSid, payload.callId, error);
       throw error;

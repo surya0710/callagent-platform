@@ -45,13 +45,13 @@ export class IntegrationCallbackService {
     private readonly configService: ConfigService,
   ) {}
 
-  async resolveWebhookUrl(call: Pick<Call, 'apiKeyId'>): Promise<string | null> {
+  async resolveWebhookUrl(call: Pick<Call, 'apiKeyId' | 'callbackUrl'>): Promise<string | null> {
     const delivery = await this.resolveWebhookDelivery(call);
     return delivery?.url ?? null;
   }
 
   private async resolveWebhookDelivery(
-    call: Pick<Call, 'apiKeyId'>,
+    call: Pick<Call, 'apiKeyId' | 'callbackUrl'>,
   ): Promise<{ url: string; authHeaders: Record<string, string>; apiKeyId: string } | null> {
     if (!call.apiKeyId) {
       return null;
@@ -68,8 +68,15 @@ export class IntegrationCallbackService {
       },
     });
 
-    const url = resolveIntegrationWebhookUrl(apiKey);
-    if (!url || !apiKey) {
+    if (!apiKey) {
+      this.logger.warn(
+        `Webhook skipped: initiating API key ${call.apiKeyId} was not found`,
+      );
+      return null;
+    }
+
+    const url = resolveIntegrationWebhookUrl(apiKey, call.callbackUrl);
+    if (!url) {
       return null;
     }
 
@@ -190,6 +197,10 @@ export class IntegrationCallbackService {
           },
         },
       });
+    } else {
+      this.logger.warn(
+        `call.result_ready not delivered for call ${callId}: ${describeWebhookResult(result)}`,
+      );
     }
 
     return result;
@@ -283,6 +294,20 @@ export class IntegrationCallbackService {
       return { sent: false };
     }
   }
+}
+
+function describeWebhookResult(result: {
+  sent: boolean;
+  reason?: string;
+  status?: number;
+}): string {
+  if ('reason' in result && result.reason) {
+    return result.reason;
+  }
+  if ('status' in result && result.status !== undefined) {
+    return `HTTP ${result.status}`;
+  }
+  return 'unknown';
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -9,14 +9,15 @@ export function canDeliverIntegrationWebhook(call: {
   source: string;
   apiKeyId?: string | null;
 }): boolean {
-  return call.source === 'integration' && Boolean(call.apiKeyId?.trim());
+  return call.source === 'integration' && Boolean(call.apiKeyId);
 }
 
-/** Webhook destination comes only from the initiating API key record. */
+/** Webhook destination comes from the initiating API key, with call snapshot fallback. */
 export function resolveIntegrationWebhookUrl(
   apiKey: Pick<IntegrationWebhookApiKey, 'webhookUrl'> | null | undefined,
+  callWebhookSnapshot?: string | null,
 ): string | null {
-  const url = apiKey?.webhookUrl?.trim();
+  const url = apiKey?.webhookUrl?.trim() || callWebhookSnapshot?.trim();
   return url || null;
 }
 
@@ -46,9 +47,16 @@ export function appendWebhookTimeParam(
   webhookUrl: string,
   at: Date = new Date(),
 ): string {
-  const url = new URL(webhookUrl);
-  url.searchParams.set('time', formatWebhookTimeParam(at));
-  return url.toString();
+  const time = formatWebhookTimeParam(at);
+
+  try {
+    const url = new URL(webhookUrl);
+    url.searchParams.set('time', time);
+    return url.toString();
+  } catch {
+    const separator = webhookUrl.includes('?') ? '&' : '?';
+    return `${webhookUrl}${separator}time=${time}`;
+  }
 }
 
 export function formatWebhookTimeParam(at: Date): string {
