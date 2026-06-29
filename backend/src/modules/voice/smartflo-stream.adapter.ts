@@ -23,7 +23,8 @@ import {
 } from './call-timing-diagnostics.service';
 import { normalizeVoicePhoneNumber } from './voice-phone.util';
 import { IntegrationCallbackService } from '../integrations/integration-callback.service';
-import { TelephonyProvider } from './telephony/telephony-provider.types';
+import { TelephonyMediaEncoding } from './telephony/telephony-provider.types';
+import { resolveTelephonyMediaEncoding } from './telephony/telephony-media-format.util';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
@@ -140,6 +141,15 @@ export class SmartfloStreamAdapter {
       return;
     }
 
+    const streamProvider = this.voiceSocketRegistry.resolveStreamProvider(
+      streamSid,
+      socketSessionId,
+    );
+    const telephonyMediaEncoding = resolveTelephonyMediaEncoding(
+      start.mediaFormat,
+      streamProvider,
+    );
+
     const startData = {
       streamSid,
       callSid: typeof start.callSid === 'string' ? start.callSid : undefined,
@@ -151,7 +161,17 @@ export class SmartfloStreamAdapter {
         typeof start.direction === 'string' ? start.direction : undefined,
       mediaFormat: start.mediaFormat,
       customParameters: start.customParameters,
+      telephonyMediaEncoding,
     };
+
+    this.logger.log({
+      socketSessionId,
+      streamSid,
+      streamProvider,
+      telephonyMediaEncoding,
+      mediaFormat: start.mediaFormat,
+      message: 'Voice stream start — resolved telephony media encoding',
+    });
 
     this.voiceSessionService.bindStreamSid(socketSessionId, startData);
     this.voiceSocketRegistry.bindStreamSid(socketSessionId, streamSid);
@@ -194,6 +214,7 @@ export class SmartfloStreamAdapter {
       direction?: string;
       mediaFormat?: unknown;
       customParameters?: unknown;
+      telephonyMediaEncoding?: TelephonyMediaEncoding;
     },
   ): Promise<void> {
     const authorization = await this.voiceCallAuthorizationService.authorizeStart({
@@ -378,11 +399,8 @@ export class SmartfloStreamAdapter {
 
     if (payloadStr) {
       try {
-        const usePcm16 =
-          this.voiceSocketRegistry.resolveStreamProvider(
-            streamSid,
-            socketSessionId,
-          ) === TelephonyProvider.EXOTEL;
+        const voiceSession = this.voiceSessionService.getByStreamSid(streamSid);
+        const usePcm16 = voiceSession?.telephonyMediaEncoding === 'pcm16';
         const mulawBuffer = usePcm16
           ? null
           : Buffer.from(payloadStr, 'base64');
@@ -448,11 +466,8 @@ export class SmartfloStreamAdapter {
       }
 
       try {
-        const usePcm16 =
-          this.voiceSocketRegistry.resolveStreamProvider(
-            streamSid,
-            socketSessionId,
-          ) === TelephonyProvider.EXOTEL;
+        const voiceSession = this.voiceSessionService.getByStreamSid(streamSid);
+        const usePcm16 = voiceSession?.telephonyMediaEncoding === 'pcm16';
         const recordingPayload = usePcm16
           ? encodePcm16ToMulaw(Buffer.from(payloadStr, 'base64')).toString('base64')
           : payloadStr;

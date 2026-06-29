@@ -8,6 +8,7 @@ import { VoiceSharedStateService } from './voice-shared-state.service';
 import { VoiceOpeningContext, OpeningState } from './voice-opening.types';
 import { CallContext } from './voice-call-context.types';
 import { extractCallContextDebugInfo } from './voice-call-context.util';
+import { TelephonyMediaEncoding } from './telephony/telephony-provider.types';
 
 export type VoiceSessionStatus = 'PENDING' | 'ACTIVE' | 'ENDED';
 
@@ -28,6 +29,7 @@ export interface VoiceSession {
   direction?: string;
   mediaFormat?: unknown;
   customParameters?: unknown;
+  telephonyMediaEncoding?: TelephonyMediaEncoding;
   status: VoiceSessionStatus;
   isAppInitiated?: boolean;
   authorizationSource?: string;
@@ -177,6 +179,7 @@ export interface VoiceSessionStartData {
   direction?: string;
   mediaFormat?: unknown;
   customParameters?: unknown;
+  telephonyMediaEncoding?: TelephonyMediaEncoding;
 }
 
 export interface VoiceSessionResponse {
@@ -189,6 +192,7 @@ export interface VoiceSessionResponse {
   direction?: string;
   mediaFormat?: unknown;
   customParameters?: unknown;
+  telephonyMediaEncoding?: TelephonyMediaEncoding;
   status: VoiceSessionStatus;
   isAppInitiated?: boolean;
   authorizationSource?: string;
@@ -352,6 +356,7 @@ export function toVoiceSessionResponse(
     direction: session.direction,
     mediaFormat: session.mediaFormat,
     customParameters: session.customParameters,
+    telephonyMediaEncoding: session.telephonyMediaEncoding,
     status: session.status,
     isAppInitiated: session.isAppInitiated,
     authorizationSource: session.authorizationSource,
@@ -972,6 +977,7 @@ export class VoiceSessionService {
     session.direction = data.direction;
     session.mediaFormat = data.mediaFormat;
     session.customParameters = data.customParameters;
+    session.telephonyMediaEncoding = data.telephonyMediaEncoding;
     session.status = 'ACTIVE';
     session.startedAt = now;
     session.lastEvent = 'start';

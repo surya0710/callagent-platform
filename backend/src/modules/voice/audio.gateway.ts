@@ -202,8 +202,11 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const streamProvider =
       this.voiceSocketRegistry.resolveStreamProvider(streamSid);
     const isExotel = streamProvider === TelephonyProvider.EXOTEL;
+    const sessionEncoding =
+      this.voiceSessionService.getByStreamSid(streamSid)?.telephonyMediaEncoding;
     const mediaEncoding =
       encoding ??
+      sessionEncoding ??
       (isExotel
         ? 'pcm16'
         : this.telephonyProviderConfig.getOutboundMediaEncoding());

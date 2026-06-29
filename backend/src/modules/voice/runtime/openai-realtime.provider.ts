@@ -906,11 +906,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     const useServerVad = this.getTurnDetectionMode() === 'server_vad';
+    const voiceSession = this.voiceSessionService.getByStreamSid(streamSid);
     const telephonyMediaEncoding: TelephonyMediaEncoding =
-      this.voiceSocketRegistry.resolveStreamProvider(streamSid) ===
-      TelephonyProvider.EXOTEL
-        ? 'pcm16'
-        : this.telephonyProviderConfig.getOutboundMediaEncoding();
+      voiceSession?.telephonyMediaEncoding ??
+      this.telephonyProviderConfig.getOutboundMediaEncoding();
     const outboundChunkBytes =
       this.voiceAudioConfigService.getOutboundChunkBytesForEncoding(
         telephonyMediaEncoding,
