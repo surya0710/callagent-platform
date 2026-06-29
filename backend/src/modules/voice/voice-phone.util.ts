@@ -5,9 +5,14 @@ export function normalizeVoicePhoneNumber(
     return undefined;
   }
 
-  const digits = input.replace(/\D/g, '');
+  let digits = input.replace(/\D/g, '');
   if (digits.length === 0) {
     return undefined;
+  }
+
+  // Exotel often sends Indian mobiles as 0XXXXXXXXXX (11 digits).
+  if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
   }
 
   if (digits.length === 10) {
