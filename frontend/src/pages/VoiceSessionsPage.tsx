@@ -158,7 +158,7 @@ export function VoiceSessionsPage() {
   const healthError = healthQuery.isError;
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 max-w-full space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Voice Sessions</h1>
@@ -312,12 +312,24 @@ export function VoiceSessionsPage() {
                 <td className="px-4 py-3">
                   <StatusBadge status={session.status} />
                 </td>
-                <td className="px-4 py-3 font-mono text-xs">{safeValue(session.streamSid)}</td>
-                <td className="px-4 py-3 font-mono text-xs">{safeValue(session.callSid)}</td>
-                <td className="px-4 py-3">{safeValue(session.from)}</td>
-                <td className="px-4 py-3">{safeValue(session.to)}</td>
-                <td className="px-4 py-3">{session.packetsReceived}</td>
-                <td className="px-4 py-3">{safeValue(session.stopReason)}</td>
+                <td
+                  className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
+                  title={session.streamSid ?? undefined}
+                >
+                  {safeValue(session.streamSid)}
+                </td>
+                <td
+                  className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
+                  title={session.callSid ?? undefined}
+                >
+                  {safeValue(session.callSid)}
+                </td>
+                <td className="whitespace-nowrap px-4 py-3">{safeValue(session.from)}</td>
+                <td className="whitespace-nowrap px-4 py-3">{safeValue(session.to)}</td>
+                <td className="whitespace-nowrap px-4 py-3">{session.packetsReceived}</td>
+                <td className="max-w-[12rem] truncate px-4 py-3" title={session.stopReason ?? undefined}>
+                  {safeValue(session.stopReason)}
+                </td>
                 <td className="px-4 py-3">
                   {session.recordingAvailable && session.streamSid ? (
                     <a
@@ -377,13 +389,25 @@ export function VoiceSessionsPage() {
                 <td className="px-4 py-3">
                   <StatusBadge status={session.status} />
                 </td>
-                <td className="px-4 py-3 font-mono text-xs">{safeValue(session.streamSid)}</td>
-                <td className="px-4 py-3 font-mono text-xs">{safeValue(session.callSid)}</td>
-                <td className="px-4 py-3">{safeValue(session.from)}</td>
-                <td className="px-4 py-3">{safeValue(session.to)}</td>
-                <td className="px-4 py-3 capitalize">{safeValue(session.direction)}</td>
-                <td className="px-4 py-3">{session.packetsReceived}</td>
-                <td className="px-4 py-3">{safeValue(session.lastEvent)}</td>
+                <td
+                  className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
+                  title={session.streamSid ?? undefined}
+                >
+                  {safeValue(session.streamSid)}
+                </td>
+                <td
+                  className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
+                  title={session.callSid ?? undefined}
+                >
+                  {safeValue(session.callSid)}
+                </td>
+                <td className="whitespace-nowrap px-4 py-3">{safeValue(session.from)}</td>
+                <td className="whitespace-nowrap px-4 py-3">{safeValue(session.to)}</td>
+                <td className="whitespace-nowrap px-4 py-3 capitalize">{safeValue(session.direction)}</td>
+                <td className="whitespace-nowrap px-4 py-3">{session.packetsReceived}</td>
+                <td className="max-w-[12rem] truncate px-4 py-3" title={session.lastEvent ?? undefined}>
+                  {safeValue(session.lastEvent)}
+                </td>
                 <td className="px-4 py-3">{formatDateTime(session.lastEventAt)}</td>
                 <td className="px-4 py-3">{sessionDuration(session, now)}</td>
                 <td className="px-4 py-3">

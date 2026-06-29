@@ -10,8 +10,8 @@ export function Table({ headers, children, empty }: { headers: string[]; childre
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-800">
-      <table className="min-w-full text-left text-sm">
+    <div className="max-w-full overflow-x-auto rounded-lg border border-slate-800">
+      <table className="w-full min-w-[960px] text-left text-sm">
         <thead className="bg-slate-900 text-slate-400">
           <tr>
             {headers.map((h) => (
