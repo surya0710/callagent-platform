@@ -75,8 +75,7 @@ import {
   shouldCancelResponseOnInterrupt,
   shouldIgnoreCustomerInterrupt,
 } from '../voice-interruption.util';
-import { TelephonyProviderConfigService } from '../telephony/telephony-provider.config';
-import { TelephonyMediaEncoding, TelephonyProvider } from '../telephony/telephony-provider.types';
+import { TelephonyMediaEncoding } from '../telephony/telephony-provider.types';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
 const OPENAI_SAMPLE_RATE = OPENAI_REALTIME_SAMPLE_RATE;
@@ -493,7 +492,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     private readonly voiceOpeningConfigService: VoiceOpeningConfigService,
     private readonly voiceSocketRegistry: VoiceSocketRegistry,
     private readonly callTiming: CallTimingDiagnosticsService,
-    private readonly telephonyProviderConfig: TelephonyProviderConfigService,
   ) {}
 
   private getTurnDetectionMode(): OpenAiTurnDetectionMode {
@@ -908,8 +906,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     const useServerVad = this.getTurnDetectionMode() === 'server_vad';
     const voiceSession = this.voiceSessionService.getByStreamSid(streamSid);
     const telephonyMediaEncoding: TelephonyMediaEncoding =
-      voiceSession?.telephonyMediaEncoding ??
-      this.telephonyProviderConfig.getOutboundMediaEncoding();
+      voiceSession?.telephonyMediaEncoding ?? 'mulaw';
     const outboundChunkBytes =
       this.voiceAudioConfigService.getOutboundChunkBytesForEncoding(
         telephonyMediaEncoding,

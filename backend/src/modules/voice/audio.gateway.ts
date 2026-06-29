@@ -22,7 +22,6 @@ import {
   CallTimingDiagnosticsService,
   CallTimingEvent,
 } from './call-timing-diagnostics.service';
-import { TelephonyProviderConfigService } from './telephony/telephony-provider.config';
 import { TelephonyMediaEncoding, TelephonyProvider } from './telephony/telephony-provider.types';
 import { encodePcm16ToMulaw } from './audio/mulaw-codec';
 import { parseVoiceStreamProviderFromRequest } from './voice-stream-provider.util';
@@ -46,7 +45,6 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly voiceRecordingService: VoiceRecordingService,
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
     private readonly callTiming: CallTimingDiagnosticsService,
-    private readonly telephonyProviderConfig: TelephonyProviderConfigService,
   ) {}
 
   private resolveConnectionStreamProvider(
@@ -57,9 +55,8 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return fromQuery;
     }
 
-    return this.telephonyProviderConfig.isExotel()
-      ? TelephonyProvider.EXOTEL
-      : TelephonyProvider.SMARTFLO;
+    // Smartflo connects without a query param — never infer Exotel from dial env.
+    return TelephonyProvider.SMARTFLO;
   }
 
   handleConnection(client: VoiceWebSocket, request: IncomingMessage): void {
@@ -205,11 +202,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const sessionEncoding =
       this.voiceSessionService.getByStreamSid(streamSid)?.telephonyMediaEncoding;
     const mediaEncoding =
-      encoding ??
-      sessionEncoding ??
-      (isExotel
-        ? 'pcm16'
-        : this.telephonyProviderConfig.getOutboundMediaEncoding());
+      encoding ?? sessionEncoding ?? 'mulaw';
     const client = this.voiceSocketRegistry.getByStreamSid(streamSid);
     const wsReadyState = client?.readyState ?? WebSocket.CLOSED;
     const socketFound = Boolean(client && wsReadyState === WebSocket.OPEN);
@@ -297,10 +290,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } else {
       const chunkNumber =
         chunk ?? this.voiceSocketRegistry.nextOutboundChunk(streamSid);
-      const chunkDurationMs =
-        mediaEncoding === 'pcm16'
-          ? (decodedLength / 2 / 8000) * 1000
-          : this.voiceAudioConfigService.getOutboundChunkMs();
+      const chunkDurationMs = this.voiceAudioConfigService.getOutboundChunkMs('mulaw');
       const timestamp = this.voiceSocketRegistry.nextOutboundTimestamp(
         streamSid,
         chunkDurationMs,

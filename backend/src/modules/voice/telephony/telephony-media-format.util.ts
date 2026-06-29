@@ -58,7 +58,7 @@ export function resolveTelephonyMediaEncoding(
   }
 
   if (provider === TelephonyProvider.EXOTEL) {
-    return 'pcm16';
+    return 'mulaw';
   }
 
   return 'mulaw';
