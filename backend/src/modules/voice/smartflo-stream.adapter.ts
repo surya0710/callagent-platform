@@ -23,7 +23,7 @@ import {
 } from './call-timing-diagnostics.service';
 import { normalizeVoicePhoneNumber } from './voice-phone.util';
 import { IntegrationCallbackService } from '../integrations/integration-callback.service';
-import { TelephonyMediaEncoding } from './telephony/telephony-provider.types';
+import { TelephonyMediaEncoding, TelephonyProvider } from './telephony/telephony-provider.types';
 import { resolveTelephonyMediaEncoding } from './telephony/telephony-media-format.util';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -141,14 +141,13 @@ export class SmartfloStreamAdapter {
       return;
     }
 
-    const streamProvider = this.voiceSocketRegistry.resolveStreamProvider(
-      streamSid,
-      socketSessionId,
-    );
-    const telephonyMediaEncoding = resolveTelephonyMediaEncoding(
-      start.mediaFormat,
-      streamProvider,
-    );
+    const streamProvider =
+      this.voiceSocketRegistry.getStreamProviderForSocket(socketSessionId) ??
+      TelephonyProvider.SMARTFLO;
+    const telephonyMediaEncoding =
+      streamProvider === TelephonyProvider.SMARTFLO
+        ? 'mulaw'
+        : resolveTelephonyMediaEncoding(start.mediaFormat, streamProvider);
 
     const startData = {
       streamSid,
@@ -399,8 +398,14 @@ export class SmartfloStreamAdapter {
 
     if (payloadStr) {
       try {
+        const streamProvider = this.voiceSocketRegistry.resolveStreamProvider(
+          streamSid,
+          socketSessionId,
+        );
         const voiceSession = this.voiceSessionService.getByStreamSid(streamSid);
-        const usePcm16 = voiceSession?.telephonyMediaEncoding === 'pcm16';
+        const usePcm16 =
+          streamProvider === TelephonyProvider.EXOTEL &&
+          voiceSession?.telephonyMediaEncoding === 'pcm16';
         const mulawBuffer = usePcm16
           ? null
           : Buffer.from(payloadStr, 'base64');
@@ -466,8 +471,14 @@ export class SmartfloStreamAdapter {
       }
 
       try {
+        const streamProvider = this.voiceSocketRegistry.resolveStreamProvider(
+          streamSid,
+          socketSessionId,
+        );
         const voiceSession = this.voiceSessionService.getByStreamSid(streamSid);
-        const usePcm16 = voiceSession?.telephonyMediaEncoding === 'pcm16';
+        const usePcm16 =
+          streamProvider === TelephonyProvider.EXOTEL &&
+          voiceSession?.telephonyMediaEncoding === 'pcm16';
         const recordingPayload = usePcm16
           ? encodePcm16ToMulaw(Buffer.from(payloadStr, 'base64')).toString('base64')
           : payloadStr;
