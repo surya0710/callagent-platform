@@ -1,3 +1,5 @@
+import { exotelInboundBase64ToSmartfloMulawBase64 } from './telephony/exotel-media.util';
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
     ? (value as Record<string, unknown>)
@@ -26,13 +28,20 @@ function readString(
   return undefined;
 }
 
-/** Normalize Exotel AgentStream snake_case fields to Smartflo camelCase shape. */
+function readStreamSid(payload: Record<string, unknown>): string | undefined {
+  return readString(payload, 'stream_sid', 'streamSid');
+}
+
+/**
+ * Normalize Exotel AgentStream snake_case fields to Smartflo camelCase shape and
+ * transcode inbound PCM16 audio to μ-law for the unchanged Smartflo runtime path.
+ */
 export function normalizeExotelStreamPayload(
   payload: Record<string, unknown>,
 ): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...payload };
+  const topLevelStreamSid = readStreamSid(payload);
 
-  const topLevelStreamSid = readString(payload, 'stream_sid', 'streamSid');
   if (topLevelStreamSid) {
     normalized.streamSid = topLevelStreamSid;
   }
@@ -53,6 +62,30 @@ export function normalizeExotelStreamPayload(
     };
   }
 
+  if (payload.event === 'media') {
+    const media = asRecord(payload.media) ?? {};
+    const rawPayload =
+      typeof media.payload === 'string' && media.payload.length > 0
+        ? media.payload
+        : undefined;
+
+    normalized.streamSid = topLevelStreamSid ?? normalized.streamSid;
+    normalized.media = {
+      ...media,
+      ...(rawPayload
+        ? { payload: exotelInboundBase64ToSmartfloMulawBase64(rawPayload) }
+        : {}),
+      chunk:
+        media.chunk !== undefined && media.chunk !== null
+          ? String(media.chunk)
+          : undefined,
+      timestamp:
+        media.timestamp !== undefined && media.timestamp !== null
+          ? String(media.timestamp)
+          : undefined,
+    };
+  }
+
   if (payload.event === 'stop') {
     const stop = asRecord(payload.stop) ?? {};
     normalized.stop = {
@@ -60,6 +93,15 @@ export function normalizeExotelStreamPayload(
       callSid: readString(stop, 'call_sid', 'callSid'),
       reason: typeof stop.reason === 'string' ? stop.reason : undefined,
     };
+    if (topLevelStreamSid) {
+      normalized.streamSid = topLevelStreamSid;
+    }
+  }
+
+  if (payload.event === 'mark' || payload.event === 'clear' || payload.event === 'dtmf') {
+    if (topLevelStreamSid) {
+      normalized.streamSid = topLevelStreamSid;
+    }
   }
 
   return normalized;
