@@ -48,7 +48,16 @@ export class OnDemandCallDto {
 
   @ApiPropertyOptional({
     description:
-      'Optional per-call webhook override. When omitted, the API key default webhookUrl is used for status and result delivery.',
+      'Optional per-call webhook URL override. When omitted, the API key default webhookUrl is used for status and result delivery.',
+    example: 'https://your-driver-app.com/webhooks/voice-status',
+  })
+  @IsOptional()
+  @IsUrl()
+  webhookUrl?: string;
+
+  @ApiPropertyOptional({
+    deprecated: true,
+    description: 'Deprecated alias for webhookUrl.',
     example: 'https://your-driver-app.com/webhooks/voice-status',
   })
   @IsOptional()

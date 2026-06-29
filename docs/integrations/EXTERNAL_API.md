@@ -28,7 +28,7 @@ Content-Type: application/json
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Application/client name these credentials are for |
-| `webhookUrl` | No | Callback URL for status updates and post-call recording + transcript |
+| `webhookUrl` | No | Webhook URL for status updates and post-call recording + transcript |
 | `webhookAuthType` | No | `none` (default), `bearer`, or `header` |
 | `webhookAuthHeaderName` | No | Header name when `webhookAuthType` is `header` (default: `X-API-Key`) |
 | `webhookAuthToken` | No | Bearer token or header value sent to your callback URL |
@@ -92,7 +92,7 @@ Content-Type: application/json
 | `externalRef` | Yes | Your unique booking/reference ID (idempotency key) |
 | `customerNumber` | Yes | 10-digit Indian mobile or `91XXXXXXXXXX` |
 | `callContext` | No | Booking/customer details injected into AI runtime |
-| `callbackUrl` | No | Per-call webhook override (falls back to API key `webhookUrl`) |
+| `webhookUrl` | No | Per-call webhook URL override (falls back to API key `webhookUrl`) |
 | `metadata` | No | Opaque JSON stored on the call record |
 
 ### Example — driver service feedback call
@@ -117,7 +117,7 @@ Content-Type: application/json
 }
 ```
 
-If you omit `callbackUrl`, webhooks are sent to the `webhookUrl` configured on the API key.
+If you omit `webhookUrl`, webhooks are sent to the `webhookUrl` configured on the API key.
 
 ### `callContext` fields (all optional)
 
@@ -151,7 +151,7 @@ If `callContext.bookingNumber` is omitted, `externalRef` is used as the booking 
     "callPurpose": null,
     "phone": "919876543210",
     "priority": "normal",
-    "callbackUrl": "https://your-driver-app.com/webhooks/voice",
+    "webhookUrl": "https://your-driver-app.com/webhooks/voice",
     "providerRef": "CAxxxxxxxx",
     "metadata": {
       "callContext": { "...": "..." },
@@ -207,7 +207,7 @@ X-API-Key: avp_...
 
 ## Webhooks
 
-Webhooks are POST requests to your `webhookUrl` (API key default) or per-call `callbackUrl` override.
+Webhooks are POST requests to your `webhookUrl` (API key default) or per-call `webhookUrl` override.
 
 Every webhook includes:
 
@@ -215,6 +215,8 @@ Every webhook includes:
 Content-Type: application/json
 X-AI-Voice-Event: <event name>
 ```
+
+The request URL also includes a UTC timestamp query parameter, for example `?time=20260629143052`.
 
 If configured on the API key, outbound auth is also sent:
 
@@ -309,4 +311,4 @@ Look under the **Integrations** tag → `POST /integrations/v1/calls`.
 - `callContext` is passed to OpenAI prewarm and live runtime instructions
 - Calls require app authorization (`VOICE_REQUIRE_APP_AUTHORIZATION`) — the integration endpoint registers authorization automatically after Smartflo accepts the call
 - Indian mobile numbers only: 10 digits or `91` + 10 digits
-- Configure `webhookUrl` when creating the API key in **Settings → Integration API Keys** to receive webhooks without passing `callbackUrl` on every call
+- Configure `webhookUrl` when creating the API key in **Settings → Integration API Keys** to receive webhooks without passing `webhookUrl` on every call

@@ -2,6 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiKey, Call, CallStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import {
+  appendWebhookTimeParam,
+  buildRecordingDownloadUrl,
+  resolvePublicAppUrl,
+} from './integration-webhook.util';
 
 export interface CallStatusCallbackPayload {
   callId: string;
@@ -16,7 +21,7 @@ export interface CallStatusCallbackPayload {
   timestamp: string;
 }
 
-/** Flat payload POSTed to the integration callback URL on `call.result_ready`. */
+/** Flat payload POSTed to the integration webhook URL on `call.result_ready`. */
 export interface IntegrationCallResultWebhookPayload {
   booking_number: string;
   customer_name: string;
@@ -161,12 +166,17 @@ export class IntegrationCallbackService {
 
     const delivery = await this.resolveWebhookDelivery(call);
     if (!delivery) {
+      this.logger.warn(
+        `call.result_ready skipped for call ${callId}: no webhook URL configured`,
+      );
       return { sent: false, reason: 'no_webhook' };
     }
 
     const downloadUrl = this.buildRecordingDownloadUrl(streamSid);
     if (!downloadUrl) {
-      return { sent: false, reason: 'no_recording_url' };
+      this.logger.warn(
+        `call.result_ready for call ${callId}: recording URL unavailable (set FRONTEND_APP_URL or VOICE_WSS_BASE_URL)`,
+      );
     }
 
     const callContext =
@@ -246,13 +256,13 @@ export class IntegrationCallbackService {
     return '0';
   }
 
-  private buildRecordingDownloadUrl(streamSid: string): string | null {
-    const frontendUrl = this.configService.get<string>('FRONTEND_APP_URL')?.trim();
-    if (!frontendUrl) {
-      return null;
-    }
+  private buildRecordingDownloadUrl(streamSid: string): string {
+    const publicAppUrl = resolvePublicAppUrl({
+      frontendAppUrl: this.configService.get<string>('FRONTEND_APP_URL'),
+      voiceWssBaseUrl: this.configService.get<string>('VOICE_WSS_BASE_URL'),
+    });
 
-    return `${frontendUrl.replace(/\/+$/, '')}/api/voice/recordings/${encodeURIComponent(streamSid)}/download`;
+    return buildRecordingDownloadUrl(publicAppUrl, streamSid);
   }
 
   private async postWebhook(
@@ -262,8 +272,10 @@ export class IntegrationCallbackService {
     callId: string,
     authHeaders: Record<string, string> = {},
   ) {
+    const requestUrl = appendWebhookTimeParam(webhookUrl);
+
     try {
-      const response = await fetch(webhookUrl, {
+      const response = await fetch(requestUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -280,7 +292,7 @@ export class IntegrationCallbackService {
         return { sent: false, status: response.status };
       }
 
-      this.logger.log(`${event} webhook sent for call ${callId} → ${webhookUrl}`);
+      this.logger.log(`${event} webhook sent for call ${callId} → ${requestUrl}`);
       return { sent: true, status: response.status };
     } catch (error) {
       this.logger.error(

@@ -148,7 +148,7 @@ function ApiKeyFormModal({
           placeholder="Driver Service Production"
         />
         <Input
-          label="Callback URL"
+          label="Webhook URL"
           name="webhookUrl"
           type="url"
           defaultValue={initial.webhookUrl}
@@ -267,7 +267,7 @@ export function SettingsPage() {
         action={<Button onClick={() => setShowCreate(true)}>Create API Key</Button>}
       >
         <p className="mb-4 text-sm text-slate-400">
-          Create credentials for external apps. Each key includes a callback URL and optional outbound
+          Create credentials for external apps. Each key includes a webhook URL and optional outbound
           auth (Bearer or custom header) used when we deliver call status, recordings, and transcripts.
           Partners call <code className="text-indigo-300">POST /api/integrations/v1/calls</code> with{' '}
           <code className="text-indigo-300">X-API-Key</code>.
@@ -286,7 +286,7 @@ export function SettingsPage() {
           <ErrorState message="Failed to load API keys" />
         ) : (
           <Table
-            headers={['Application', 'Prefix', 'Callback URL', 'Webhook auth', 'Calls', 'Status', '']}
+            headers={['Application', 'Prefix', 'Webhook URL', 'Webhook auth', 'Calls', 'Status', '']}
             empty={!data?.length}
           >
             {data?.map((k) => (

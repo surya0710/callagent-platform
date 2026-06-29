@@ -190,6 +190,19 @@ export class VoiceTranscriptService {
 
     await this.markProcessing(payload.callId);
 
+    const call = await this.prisma.call.findUnique({
+      where: { id: payload.callId },
+      select: { source: true },
+    });
+
+    // Integration calls must deliver webhooks reliably without depending on a worker process.
+    if (call?.source === 'integration') {
+      void this.processPostCallJob(payload).catch((error) => {
+        this.recordTranscriptError(payload.streamSid, payload.callId, error);
+      });
+      return;
+    }
+
     const queueResult = await this.queueService.enqueueTranscript(
       payload as unknown as Record<string, unknown>,
     );
