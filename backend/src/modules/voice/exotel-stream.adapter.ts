@@ -4,12 +4,22 @@ import {
   readExotelMediaPayloadBytes,
 } from './exotel-stream-payload.util';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
+import { VoiceSocketRegistry } from './voice-socket.registry';
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
 
 @Injectable()
 export class ExotelStreamAdapter {
   private readonly logger = new Logger(ExotelStreamAdapter.name);
 
-  constructor(private readonly smartfloStreamAdapter: SmartfloStreamAdapter) {}
+  constructor(
+    private readonly smartfloStreamAdapter: SmartfloStreamAdapter,
+    private readonly voiceSocketRegistry: VoiceSocketRegistry,
+  ) {}
 
   handleMessage(socketSessionId: string, raw: string): void {
     let payload: Record<string, unknown>;
@@ -78,6 +88,16 @@ export class ExotelStreamAdapter {
     }
 
     const normalized = normalizeExotelStreamPayload(payload);
+    if (event === 'start') {
+      const start = asRecord(normalized.start) ?? {};
+      const streamSid =
+        (typeof start.streamSid === 'string' ? start.streamSid : undefined) ??
+        (typeof normalized.streamSid === 'string' ? normalized.streamSid : undefined);
+      if (streamSid) {
+        this.voiceSocketRegistry.markExotelStream(streamSid, socketSessionId);
+      }
+    }
+
     this.smartfloStreamAdapter.handleMessage(
       socketSessionId,
       JSON.stringify(normalized),
