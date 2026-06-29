@@ -1,17 +1,62 @@
 import { Injectable } from '@nestjs/common';
 import { WebSocket } from 'ws';
+import { TelephonyProvider } from './telephony/telephony-provider.types';
 
 @Injectable()
 export class VoiceSocketRegistry {
   private readonly bySocketSessionId = new Map<string, WebSocket>();
   private readonly byStreamSid = new Map<string, WebSocket>();
   private readonly socketToStreamSid = new Map<string, string>();
+  private readonly streamProviderBySocketSessionId = new Map<
+    string,
+    TelephonyProvider
+  >();
+  private readonly streamProviderByStreamSid = new Map<
+    string,
+    TelephonyProvider
+  >();
   private readonly outboundChunkByStreamSid = new Map<string, number>();
   private readonly outboundSequenceByStreamSid = new Map<string, number>();
   private readonly outboundTimestampByStreamSid = new Map<string, number>();
 
   registerSocket(socketSessionId: string, client: WebSocket): void {
     this.bySocketSessionId.set(socketSessionId, client);
+  }
+
+  setStreamProvider(
+    socketSessionId: string,
+    provider: TelephonyProvider,
+  ): void {
+    this.streamProviderBySocketSessionId.set(socketSessionId, provider);
+  }
+
+  bindStreamProvider(streamSid: string, provider: TelephonyProvider): void {
+    this.streamProviderByStreamSid.set(streamSid, provider);
+  }
+
+  getStreamProviderForSocket(
+    socketSessionId: string,
+  ): TelephonyProvider | undefined {
+    return this.streamProviderBySocketSessionId.get(socketSessionId);
+  }
+
+  getStreamProviderForStreamSid(
+    streamSid: string,
+  ): TelephonyProvider | undefined {
+    return this.streamProviderByStreamSid.get(streamSid);
+  }
+
+  resolveStreamProvider(
+    streamSid: string,
+    socketSessionId?: string,
+  ): TelephonyProvider {
+    return (
+      this.streamProviderByStreamSid.get(streamSid) ??
+      (socketSessionId
+        ? this.streamProviderBySocketSessionId.get(socketSessionId)
+        : undefined) ??
+      TelephonyProvider.SMARTFLO
+    );
   }
 
   bindStreamSid(socketSessionId: string, streamSid: string): void {
@@ -22,6 +67,10 @@ export class VoiceSocketRegistry {
 
     this.byStreamSid.set(streamSid, client);
     this.socketToStreamSid.set(socketSessionId, streamSid);
+    const provider = this.streamProviderBySocketSessionId.get(socketSessionId);
+    if (provider) {
+      this.streamProviderByStreamSid.set(streamSid, provider);
+    }
     if (!this.outboundChunkByStreamSid.has(streamSid)) {
       this.outboundChunkByStreamSid.set(streamSid, 1);
       this.outboundSequenceByStreamSid.set(streamSid, 1);
@@ -65,14 +114,18 @@ export class VoiceSocketRegistry {
     if (streamSid) {
       this.byStreamSid.delete(streamSid);
       this.socketToStreamSid.delete(socketSessionId);
+      this.streamProviderByStreamSid.delete(streamSid);
       this.outboundChunkByStreamSid.delete(streamSid);
       this.outboundSequenceByStreamSid.delete(streamSid);
       this.outboundTimestampByStreamSid.delete(streamSid);
     }
+
+    this.streamProviderBySocketSessionId.delete(socketSessionId);
   }
 
   removeByStreamSid(streamSid: string): void {
     this.byStreamSid.delete(streamSid);
+    this.streamProviderByStreamSid.delete(streamSid);
     this.outboundChunkByStreamSid.delete(streamSid);
     this.outboundSequenceByStreamSid.delete(streamSid);
     this.outboundTimestampByStreamSid.delete(streamSid);

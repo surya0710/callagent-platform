@@ -23,7 +23,7 @@ import {
 } from './call-timing-diagnostics.service';
 import { normalizeVoicePhoneNumber } from './voice-phone.util';
 import { IntegrationCallbackService } from '../integrations/integration-callback.service';
-import { TelephonyProviderConfigService } from './telephony/telephony-provider.config';
+import { TelephonyProvider } from './telephony/telephony-provider.types';
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
@@ -52,7 +52,6 @@ export class SmartfloStreamAdapter {
     private readonly callTiming: CallTimingDiagnosticsService,
     @Inject(forwardRef(() => IntegrationCallbackService))
     private readonly integrationCallbackService: IntegrationCallbackService,
-    private readonly telephonyProviderConfig: TelephonyProviderConfigService,
   ) {}
 
   private get voiceRuntime() {
@@ -379,11 +378,15 @@ export class SmartfloStreamAdapter {
 
     if (payloadStr) {
       try {
-        const useExotelPcm = this.telephonyProviderConfig.isExotel();
-        const mulawBuffer = useExotelPcm
+        const usePcm16 =
+          this.voiceSocketRegistry.resolveStreamProvider(
+            streamSid,
+            socketSessionId,
+          ) === TelephonyProvider.EXOTEL;
+        const mulawBuffer = usePcm16
           ? null
           : Buffer.from(payloadStr, 'base64');
-        const pcm16Audio = useExotelPcm
+        const pcm16Audio = usePcm16
           ? Buffer.from(payloadStr, 'base64')
           : mulawBuffer && mulawBuffer.length > 0
             ? decodeMulawBuffer(mulawBuffer)
@@ -395,26 +398,26 @@ export class SmartfloStreamAdapter {
           const speechLike = isSpeechLikePcm16(pcm16Audio);
 
           voiceDebugLog(this.logger, streamSid, 'smartflo_media', {
-            payloadBytes: useExotelPcm
+            payloadBytes: usePcm16
               ? pcm16Audio.length
               : (mulawBuffer?.length ?? 0),
             decodedSamples: Math.floor(pcm16Audio.length / 2),
             rms: Number(pcmStats.rms.toFixed(2)),
             silence: speechLike ? 0 : 1,
             track: parsed.track,
-            encoding: useExotelPcm ? 'pcm16' : 'mulaw',
+            encoding: usePcm16 ? 'pcm16' : 'mulaw',
           });
 
           if (!this.loggedInboundDecodeByStreamSid.has(streamSid)) {
             this.loggedInboundDecodeByStreamSid.add(streamSid);
             this.logger.log({
               streamSid,
-              encoding: useExotelPcm ? 'pcm16' : 'mulaw',
+              encoding: usePcm16 ? 'pcm16' : 'mulaw',
               mulawBytes: mulawBuffer?.length,
               pcmBytes: pcm16Audio.length,
               pcmStats: formatPcm16Stats(pcmStats),
               track: parsed.track,
-              message: useExotelPcm
+              message: usePcm16
                 ? 'Inbound Exotel PCM stats (first chunk)'
                 : 'Inbound μ-law decode stats (first chunk)',
             });
@@ -445,7 +448,12 @@ export class SmartfloStreamAdapter {
       }
 
       try {
-        const recordingPayload = this.telephonyProviderConfig.isExotel()
+        const usePcm16 =
+          this.voiceSocketRegistry.resolveStreamProvider(
+            streamSid,
+            socketSessionId,
+          ) === TelephonyProvider.EXOTEL;
+        const recordingPayload = usePcm16
           ? encodePcm16ToMulaw(Buffer.from(payloadStr, 'base64')).toString('base64')
           : payloadStr;
         this.voiceRecordingService.appendInboundMulawBase64(streamSid, recordingPayload);

@@ -1,5 +1,6 @@
 import { hostname } from 'node:os';
 import { TelephonyProvider } from '../modules/voice/telephony/telephony-provider.types';
+import { appendVoiceStreamProviderQuery } from '../modules/voice/voice-stream-provider.util';
 
 const DEFAULT_SMARTFLO_BASE_URL = 'https://api-smartflo.tatateleservices.com';
 const DEFAULT_EXOTEL_BASE_URL = 'https://api.exotel.com';
@@ -46,8 +47,10 @@ export function buildServerOriginInfo(config: {
     smartfloApiBaseUrl:
       config.smartfloBaseUrl?.trim() || DEFAULT_SMARTFLO_BASE_URL,
     exotelApiBaseUrl: config.exotelBaseUrl?.trim() || DEFAULT_EXOTEL_BASE_URL,
-    voiceWssBaseUrl:
+    voiceWssBaseUrl: appendVoiceStreamProviderQuery(
       config.voiceWssBaseUrl?.trim() || DEFAULT_VOICE_WSS_BASE_URL,
+      telephonyProvider,
+    ),
   };
 }
 

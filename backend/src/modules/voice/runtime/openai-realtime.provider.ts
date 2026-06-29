@@ -76,7 +76,7 @@ import {
   shouldIgnoreCustomerInterrupt,
 } from '../voice-interruption.util';
 import { TelephonyProviderConfigService } from '../telephony/telephony-provider.config';
-import { TelephonyMediaEncoding } from '../telephony/telephony-provider.types';
+import { TelephonyMediaEncoding, TelephonyProvider } from '../telephony/telephony-provider.types';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
 const OPENAI_SAMPLE_RATE = OPENAI_REALTIME_SAMPLE_RATE;
@@ -906,8 +906,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     const useServerVad = this.getTurnDetectionMode() === 'server_vad';
-    const telephonyMediaEncoding =
-      this.telephonyProviderConfig.getOutboundMediaEncoding();
+    const telephonyMediaEncoding: TelephonyMediaEncoding =
+      this.voiceSocketRegistry.resolveStreamProvider(streamSid) ===
+      TelephonyProvider.EXOTEL
+        ? 'pcm16'
+        : this.telephonyProviderConfig.getOutboundMediaEncoding();
     const outboundChunkBytes =
       this.voiceAudioConfigService.getOutboundChunkBytesForEncoding(
         telephonyMediaEncoding,
