@@ -48,6 +48,7 @@ export interface VoiceSession {
   stopReason?: string | null;
   remoteAddress?: string;
   recordingAvailable?: boolean;
+  recordingS3Url?: string | null;
   recordingFileName?: string;
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
@@ -208,6 +209,7 @@ export interface VoiceSessionResponse {
   stopReason?: string | null;
   remoteAddress?: string;
   recordingAvailable?: boolean;
+  recordingS3Url?: string | null;
   recordingFileName?: string;
   recordingDurationMsEstimate?: number;
   recordingMulawBytes?: number;
@@ -366,6 +368,7 @@ export function toVoiceSessionResponse(
     stopReason: session.stopReason ?? null,
     remoteAddress: session.remoteAddress,
     recordingAvailable: session.recordingAvailable ?? false,
+    recordingS3Url: session.recordingS3Url ?? null,
     recordingFileName: session.recordingFileName,
     recordingDurationMsEstimate: session.recordingDurationMsEstimate,
     recordingMulawBytes: session.recordingMulawBytes,
@@ -1439,6 +1442,7 @@ export class VoiceSessionService {
       durationMsEstimate: number;
       mulawBytes: number;
       wavBytes: number;
+      recordingS3Url?: string;
       inboundTimelineStartMs?: number | null;
       inboundTimelineEndMs?: number | null;
       outboundTimelineStartMs?: number | null;
@@ -1453,6 +1457,7 @@ export class VoiceSessionService {
     }
 
     session.recordingAvailable = true;
+    session.recordingS3Url = metadata.recordingS3Url ?? null;
     session.recordingFileName = metadata.fileName;
     session.recordingDurationMsEstimate = metadata.durationMsEstimate;
     session.recordingMulawBytes = metadata.mulawBytes;
