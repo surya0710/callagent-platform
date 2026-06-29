@@ -328,6 +328,9 @@ export interface VoiceSessionResponse {
 }
 
 const MAX_RECENT_ENDED_SESSIONS = 100;
+const ACTIVE_SETUP_VISIBILITY_MS = 90_000;
+const STALE_SOCKET_WITHOUT_STREAM_MS = 45_000;
+const STALE_UNAUTHORIZED_SESSION_MS = 120_000;
 
 function toIso(date: Date | undefined): string | null | undefined {
   if (date === undefined) {
@@ -651,11 +654,66 @@ export class VoiceSessionService {
   }
 
   getActiveSessions(): VoiceSession[] {
-    return Array.from(this.activeBySocketSessionId.values());
+    this.pruneStaleActiveSessions();
+
+    const now = Date.now();
+    return Array.from(this.activeBySocketSessionId.values()).filter((session) =>
+      this.isVisibleActiveSession(session, now),
+    );
+  }
+
+  private isVisibleActiveSession(session: VoiceSession, nowMs: number): boolean {
+    if (session.isAppInitiated === true) {
+      return true;
+    }
+
+    const ageMs = nowMs - session.connectedAt.getTime();
+    if (ageMs > ACTIVE_SETUP_VISIBILITY_MS) {
+      return false;
+    }
+
+    if (
+      session.streamSid &&
+      this.authorizationPending.has(session.streamSid)
+    ) {
+      return true;
+    }
+
+    if (session.status === 'PENDING' && !session.streamSid) {
+      return ageMs <= STALE_SOCKET_WITHOUT_STREAM_MS;
+    }
+
+    return false;
+  }
+
+  private pruneStaleActiveSessions(): void {
+    const now = Date.now();
+
+    for (const session of this.activeBySocketSessionId.values()) {
+      if (session.isAppInitiated === true) {
+        continue;
+      }
+
+      const ageMs = now - session.connectedAt.getTime();
+      const stalePendingSocket =
+        !session.streamSid && ageMs > STALE_SOCKET_WITHOUT_STREAM_MS;
+      const staleUnauthorized = ageMs > STALE_UNAUTHORIZED_SESSION_MS;
+
+      if (stalePendingSocket || staleUnauthorized) {
+        this.discardSession(session, 'stale_session_timeout', 'timeout');
+      }
+    }
   }
 
   async getRecentEndedSessions(): Promise<VoiceSession[]> {
-    const local = this.recentEndedSessions;
+    this.pruneStaleActiveSessions();
+
+    const local = this.recentEndedSessions.filter(
+      (session) =>
+        session.isAppInitiated === true ||
+        Boolean(session.rejectionReason) ||
+        Boolean(session.streamSid),
+    );
     const shared = await this.voiceSharedStateService.listRecentEndedSessions();
 
     const merged = new Map<string, VoiceSession>();
