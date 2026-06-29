@@ -15,6 +15,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 @Injectable()
 export class ExotelStreamAdapter {
   private readonly logger = new Logger(ExotelStreamAdapter.name);
+  private readonly loggedFirstMediaBySocket = new Set<string>();
 
   constructor(
     private readonly smartfloStreamAdapter: SmartfloStreamAdapter,
@@ -68,12 +69,15 @@ export class ExotelStreamAdapter {
         break;
       }
       case 'media': {
-        const bytes = readExotelMediaPayloadBytes(payload);
-        this.logger.log({
-          socketSessionId,
-          streamSid: payload.stream_sid ?? payload.streamSid ?? null,
-          message: `EXOTEL_MEDIA_RECEIVED bytes=${bytes}`,
-        });
+        if (!this.loggedFirstMediaBySocket.has(socketSessionId)) {
+          this.loggedFirstMediaBySocket.add(socketSessionId);
+          const bytes = readExotelMediaPayloadBytes(payload);
+          this.logger.log({
+            socketSessionId,
+            streamSid: payload.stream_sid ?? payload.streamSid ?? null,
+            message: `EXOTEL_MEDIA_RECEIVED bytes=${bytes}`,
+          });
+        }
         break;
       }
       case 'stop':
@@ -88,6 +92,7 @@ export class ExotelStreamAdapter {
     }
 
     const normalized = normalizeExotelStreamPayload(payload);
+
     if (event === 'start') {
       const start = asRecord(normalized.start) ?? {};
       const streamSid =

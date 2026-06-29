@@ -24,6 +24,7 @@ import {
 } from './call-timing-diagnostics.service';
 import { parseVoiceStreamProviderFromRequest } from './voice-stream-provider.util';
 import { TelephonyProvider } from './telephony/telephony-provider.types';
+import { smartfloMulawBase64ToExotelPcm16Base64 } from './telephony/exotel-media.util';
 
 interface VoiceWebSocket extends WebSocket {
   socketSessionId?: string;
@@ -83,6 +84,16 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
           'WebSocket client error',
         );
       });
+
+      if (isExotel) {
+        this.logger.log({
+          socketSessionId: session.socketSessionId,
+          remoteAddress,
+          connectedAt: session.connectedAt,
+          message: 'Exotel WebSocket connected',
+        });
+        return;
+      }
 
       this.logger.log({
         socketSessionId: session.socketSessionId,
@@ -197,12 +208,15 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.voiceSocketRegistry.nextOutboundSequenceNumber(streamSid);
 
     const isExotel = this.voiceSocketRegistry.isExotelStream(streamSid);
+    const exotelPayload = isExotel
+      ? smartfloMulawBase64ToExotelPcm16Base64(base64MulawPayload)
+      : base64MulawPayload;
     const outboundMessage = isExotel
       ? JSON.stringify({
           event: 'media',
           stream_sid: streamSid,
           media: {
-            payload: base64MulawPayload,
+            payload: exotelPayload,
           },
         })
       : JSON.stringify({
