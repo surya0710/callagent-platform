@@ -1,12 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  ApiKey,
-  Call,
-  CallStatus,
-  CallTranscriptLifecycleStatus,
-  CallTranscriptSegment,
-} from '@prisma/client';
+import { ApiKey, Call, CallStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 
 export interface CallStatusCallbackPayload {
@@ -22,37 +16,16 @@ export interface CallStatusCallbackPayload {
   timestamp: string;
 }
 
-export interface CallResultReadyPayload {
-  callId: string;
-  externalRef: string | null;
-  status: CallStatus;
-  phone: string;
-  startedAt: string | null;
-  endedAt: string | null;
-  durationSec: number | null;
-  callContext: unknown;
-  metadata: unknown;
-  recording: {
-    streamSid: string;
-    downloadUrl: string;
-    durationMsEstimate: number | null;
-  };
-  transcript: {
-    status: CallTranscriptLifecycleStatus | 'none';
-    content: string | null;
-    language: string | null;
-    error: string | null;
-    segments: Array<{
-      speaker: string;
-      text: string;
-      startedAtMs: number | null;
-      endedAtMs: number | null;
-      source: string;
-      status: string;
-      language: string | null;
-    }>;
-  };
-  timestamp: string;
+/** Flat payload POSTed to the integration callback URL on `call.result_ready`. */
+export interface IntegrationCallResultWebhookPayload {
+  booking_number: string;
+  customer_name: string;
+  customer_mobile_number: string;
+  driver_name: string;
+  driver_mobile_number: string;
+  recording_url: string;
+  transcripts: string;
+  call_connected: '0' | '1';
 }
 
 @Injectable()
@@ -200,25 +173,12 @@ export class IntegrationCallbackService {
       asRecord(metadata.callContext) ??
       asRecord(asRecord(metadata.integration)?.callContext);
 
-    const payload: CallResultReadyPayload = {
-      callId: call.id,
-      externalRef: call.externalRef,
-      status: call.status,
-      phone: call.phone,
-      startedAt: call.startedAt?.toISOString() ?? null,
-      endedAt: call.endedAt?.toISOString() ?? null,
-      durationSec: call.durationSec,
-      callContext: callContext ?? null,
-      metadata,
-      recording: {
-        streamSid,
-        downloadUrl,
-        durationMsEstimate:
-          typeof durationMsEstimate === 'number' ? durationMsEstimate : null,
-      },
-      transcript: this.formatTranscriptPayload(call.transcript),
-      timestamp: new Date().toISOString(),
-    };
+    const payload = this.buildIntegrationCallResultPayload(
+      call,
+      callContext,
+      downloadUrl,
+      call.transcript?.content ?? null,
+    );
 
     const result = await this.postWebhook(
       delivery.url,
@@ -246,43 +206,44 @@ export class IntegrationCallbackService {
     return result;
   }
 
-  private formatTranscriptPayload(
-    transcript:
-      | {
-          lifecycleStatus: CallTranscriptLifecycleStatus;
-          content: string | null;
-          transcriptLanguageDetected: string | null;
-          transcriptError: string | null;
-          segments: CallTranscriptSegment[];
-        }
-      | null
-      | undefined,
-  ): CallResultReadyPayload['transcript'] {
-    if (!transcript) {
-      return {
-        status: 'none',
-        content: null,
-        language: null,
-        error: null,
-        segments: [],
-      };
-    }
+  private buildIntegrationCallResultPayload(
+    call: Call,
+    callContext: Record<string, unknown> | undefined,
+    recordingUrl: string,
+    transcriptContent: string | null,
+  ): IntegrationCallResultWebhookPayload {
+    const ctx = callContext ?? {};
 
     return {
-      status: transcript.lifecycleStatus,
-      content: transcript.content,
-      language: transcript.transcriptLanguageDetected,
-      error: transcript.transcriptError,
-      segments: transcript.segments.map((segment) => ({
-        speaker: segment.speaker,
-        text: segment.text,
-        startedAtMs: segment.startedAtMs,
-        endedAtMs: segment.endedAtMs,
-        source: segment.source,
-        status: segment.status,
-        language: segment.language,
-      })),
+      booking_number:
+        readContextString(ctx, 'bookingNumber') ?? call.externalRef ?? '',
+      customer_name: readContextString(ctx, 'customerName') ?? '',
+      customer_mobile_number:
+        readContextString(ctx, 'customerNumber') ?? toTenDigitMobile(call.phone),
+      driver_name: readContextString(ctx, 'driverName') ?? '',
+      driver_mobile_number: readContextString(ctx, 'driverMobileNumber') ?? '',
+      recording_url: recordingUrl,
+      transcripts: transcriptContent ?? '',
+      call_connected: this.resolveCallConnected(call),
     };
+  }
+
+  private resolveCallConnected(call: Call): '0' | '1' {
+    const connectedStatuses: CallStatus[] = [
+      CallStatus.completed,
+      CallStatus.answered,
+      CallStatus.in_progress,
+    ];
+
+    if (connectedStatuses.includes(call.status)) {
+      return '1';
+    }
+
+    if (call.durationSec != null && call.durationSec > 0) {
+      return '1';
+    }
+
+    return '0';
   }
 
   private buildRecordingDownloadUrl(streamSid: string): string | null {
@@ -297,7 +258,7 @@ export class IntegrationCallbackService {
   private async postWebhook(
     webhookUrl: string,
     event: 'call.status_changed' | 'call.result_ready',
-    payload: CallStatusCallbackPayload | CallResultReadyPayload,
+    payload: CallStatusCallbackPayload | IntegrationCallResultWebhookPayload,
     callId: string,
     authHeaders: Record<string, string> = {},
   ) {
@@ -334,4 +295,31 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object'
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function readContextString(
+  ctx: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = ctx[key];
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function toTenDigitMobile(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+
+  if (digits.length === 12 && digits.startsWith('91')) {
+    return digits.slice(2);
+  }
+
+  if (digits.length === 10) {
+    return digits;
+  }
+
+  return phone;
 }

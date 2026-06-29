@@ -245,52 +245,35 @@ Sent when call status changes (e.g. `initiated`, `in_progress`, `completed`).
 
 ### Event: `call.result_ready`
 
-Sent once after the call ends, when the recording is available and the transcript is finalized (or marked failed). Includes a downloadable recording URL and full transcript.
+Sent once after the call ends, when the recording is available and the transcript is finalized (or marked failed). Payload uses snake_case field names for direct use in external booking systems.
 
 ```json
 {
-  "callId": "uuid",
-  "externalRef": "OD482917",
-  "status": "completed",
-  "phone": "919876543210",
-  "startedAt": "2026-06-25T10:00:00.000Z",
-  "endedAt": "2026-06-25T10:05:12.000Z",
-  "durationSec": 312,
-  "callContext": {
-    "bookingNumber": "OD482917",
-    "customerName": "Rahul Sharma",
-    "driverName": "Rajesh Kumar"
-  },
-  "metadata": {},
-  "recording": {
-    "streamSid": "MZxxxxxxxx",
-    "downloadUrl": "https://tatdai.in/api/voice/recordings/MZxxxxxxxx/download",
-    "durationMsEstimate": 312000
-  },
-  "transcript": {
-    "status": "final",
-    "content": "Assistant: Namaste...\nCustomer: Haan...",
-    "language": "hi",
-    "error": null,
-    "segments": [
-      {
-        "speaker": "assistant",
-        "text": "Namaste...",
-        "startedAtMs": 0,
-        "endedAtMs": 4200,
-        "source": "postcall",
-        "status": "final",
-        "language": "hi"
-      }
-    ]
-  },
-  "timestamp": "2026-06-25T10:05:30.000Z"
+  "booking_number": "100002",
+  "customer_name": "Rahul Sharma",
+  "customer_mobile_number": "9876543210",
+  "driver_name": "Rajesh Kumar",
+  "driver_mobile_number": "9999999999",
+  "recording_url": "https://your-app.com/api/voice/recordings/MZxxxxxxxx/download",
+  "transcripts": "Customer was satisfied with the ride and appreciated the driver's behavior.",
+  "call_connected": "1"
 }
 ```
 
-**Recording download:** `GET` the `recording.downloadUrl` to fetch the mixed call audio (WAV). The endpoint is public; no API key is required for download.
+| Field | Source |
+|-------|--------|
+| `booking_number` | `callContext.bookingNumber`, or `externalRef` if omitted |
+| `customer_name` | `callContext.customerName` |
+| `customer_mobile_number` | `callContext.customerNumber`, or the dialed call phone (10-digit) |
+| `driver_name` | `callContext.driverName` |
+| `driver_mobile_number` | `callContext.driverMobileNumber` |
+| `recording_url` | Public download URL for the mixed call audio (WAV) |
+| `transcripts` | Full flat transcript text |
+| `call_connected` | `"1"` when the call connected and completed; `"0"` otherwise |
 
-**Transcript timing:** When post-call transcription is enabled on the platform, `call.result_ready` is sent after transcription completes. If transcription fails, `transcript.status` is `failed` and `transcript.error` describes the issue; the recording is still included.
+**Recording download:** `GET` the `recording_url` to fetch the mixed call audio (WAV). The endpoint is public; no API key is required for download.
+
+**Transcript timing:** When post-call transcription is enabled on the platform, `call.result_ready` is sent after transcription completes. If transcription fails, `transcripts` may be empty; the recording is still included.
 
 **Idempotency:** `call.result_ready` is delivered at most once per call.
 
