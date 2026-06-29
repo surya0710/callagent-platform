@@ -242,44 +242,10 @@ export class VoiceTranscriptService {
           });
         }
         cleanedSegments = sortTranscriptSegments(cleanedSegments);
-      } else {
-        const tempDirs: string[] = [];
-        let rawSegments: VoiceTranscriptSegmentDto[] = [];
-        try {
-          const mixedPath = await this.resolveS3KeyToTempPath(
-            payload.mixedStorageKey,
-            tempDirs,
-          );
-          const inboundPath = payload.inboundStorageKey
-            ? await this.resolveS3KeyToTempPath(payload.inboundStorageKey, tempDirs)
-            : undefined;
-          const outboundPath = payload.outboundStorageKey
-            ? await this.resolveS3KeyToTempPath(payload.outboundStorageKey, tempDirs)
-            : undefined;
+      }
 
-          rawSegments = await this.postCallService.transcribeRecordingFiles({
-            mixedPath,
-            inboundPath,
-            outboundPath,
-            durationMsEstimate: payload.durationMsEstimate,
-          });
-        } finally {
-          await Promise.all(
-            tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
-          );
-        }
-
-        for (const segment of rawSegments) {
-          const cleanedText = await this.postProcessService.cleanTranscript(
-            segment.text,
-          );
-          cleanedSegments.push({
-            ...segment,
-            text: cleanedText,
-            language: detectTranscriptLanguage(cleanedText),
-          });
-        }
-        cleanedSegments = sortTranscriptSegments(cleanedSegments);
+      if (cleanedSegments.length === 0) {
+        cleanedSegments = await this.transcribeRecordingSegments(payload);
       }
 
       await this.persistFinalSegments(payload.callId, cleanedSegments);
@@ -667,25 +633,96 @@ export class VoiceTranscriptService {
       return;
     }
 
-    void this.prisma.callTranscript
-      .upsert({
-        where: { callId },
-        create: {
-          callId,
-          content: '',
-          lifecycleStatus: CallTranscriptLifecycleStatus.failed,
-          transcriptError: message,
-          transcriptMode: this.transcriptConfig.getMode(),
+    void this.trySalvageTranscriptAndNotify(callId, streamSid).catch(() =>
+      this.markTranscriptFailedAndNotify(callId, streamSid, message),
+    );
+  }
+
+  private async trySalvageTranscriptAndNotify(
+    callId: string,
+    streamSid: string,
+  ): Promise<void> {
+    const liveState = this.liveByStreamSid.get(streamSid);
+    if (liveState?.segments.some((segment) => segment.text.trim())) {
+      await this.persistFinalSegments(
+        callId,
+        liveState.segments.map((segment) => ({
+          ...segment,
+          status: 'final',
+        })),
+      );
+      await this.integrationCallbackService.notifyCallResultReady(
+        callId,
+        streamSid,
+      );
+      return;
+    }
+
+    const transcript = await this.prisma.callTranscript.findUnique({
+      where: { callId },
+      include: {
+        segments: {
+          orderBy: [{ startedAtMs: 'asc' }, { createdAt: 'asc' }],
         },
-        update: {
-          lifecycleStatus: CallTranscriptLifecycleStatus.failed,
-          transcriptError: message,
-        },
-      })
-      .then(() =>
-        this.integrationCallbackService.notifyCallResultReady(callId, streamSid),
-      )
-      .catch(() => undefined);
+      },
+    });
+
+    const draftSegments = transcript?.segments.filter((segment) =>
+      segment.text.trim(),
+    );
+    if (draftSegments && draftSegments.length > 0) {
+      await this.persistFinalSegments(
+        callId,
+        sortTranscriptSegments(
+          draftSegments.map((segment) => ({
+            speaker: segment.speaker,
+            text: segment.text,
+            startedAtMs: segment.startedAtMs ?? undefined,
+            endedAtMs: segment.endedAtMs ?? undefined,
+            source:
+              segment.source === 'postcall' ? ('postcall' as const) : ('realtime' as const),
+            status: 'final' as const,
+            language: (segment.language as TranscriptLanguage | null) ?? undefined,
+            confidence: segment.confidence ?? undefined,
+            createdAtMs: segment.createdAt.getTime(),
+          })),
+        ),
+      );
+      await this.integrationCallbackService.notifyCallResultReady(
+        callId,
+        streamSid,
+      );
+      return;
+    }
+
+    await this.markTranscriptFailedAndNotify(
+      callId,
+      streamSid,
+      'Transcript unavailable',
+    );
+  }
+
+  private async markTranscriptFailedAndNotify(
+    callId: string,
+    streamSid: string,
+    message: string,
+  ): Promise<void> {
+    await this.prisma.callTranscript.upsert({
+      where: { callId },
+      create: {
+        callId,
+        content: '',
+        lifecycleStatus: CallTranscriptLifecycleStatus.failed,
+        transcriptError: message,
+        transcriptMode: this.transcriptConfig.getMode(),
+      },
+      update: {
+        lifecycleStatus: CallTranscriptLifecycleStatus.failed,
+        transcriptError: message,
+      },
+    });
+
+    await this.integrationCallbackService.notifyCallResultReady(callId, streamSid);
   }
 
   private mergeLanguage(
@@ -718,6 +755,54 @@ export class VoiceTranscriptService {
     }
 
     return languages[0] ?? 'unknown';
+  }
+
+  private async transcribeRecordingSegments(
+    payload: PostCallTranscriptJobPayload,
+  ): Promise<VoiceTranscriptSegmentDto[]> {
+    const tempDirs: string[] = [];
+    let rawSegments: VoiceTranscriptSegmentDto[] = [];
+
+    try {
+      const mixedPath = await this.resolveS3KeyToTempPath(
+        payload.mixedStorageKey,
+        tempDirs,
+      );
+      const inboundPath = payload.inboundStorageKey
+        ? await this.resolveS3KeyToTempPath(payload.inboundStorageKey, tempDirs)
+        : undefined;
+      const outboundPath = payload.outboundStorageKey
+        ? await this.resolveS3KeyToTempPath(payload.outboundStorageKey, tempDirs)
+        : undefined;
+
+      rawSegments = await this.postCallService.transcribeRecordingFiles({
+        mixedPath,
+        inboundPath,
+        outboundPath,
+        durationMsEstimate: payload.durationMsEstimate,
+      });
+    } finally {
+      await Promise.all(
+        tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+      );
+    }
+
+    const cleanedSegments: VoiceTranscriptSegmentDto[] = [];
+    for (const segment of rawSegments) {
+      const cleanedText = await this.postProcessService.cleanTranscript(
+        segment.text,
+      );
+      if (!cleanedText.trim()) {
+        continue;
+      }
+      cleanedSegments.push({
+        ...segment,
+        text: cleanedText,
+        language: detectTranscriptLanguage(cleanedText),
+      });
+    }
+
+    return sortTranscriptSegments(cleanedSegments);
   }
 
   private async resolveS3KeyToTempPath(

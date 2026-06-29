@@ -7,6 +7,7 @@ import {
   buildIntegrationWebhookAuthHeaders,
   buildRecordingDownloadUrl,
   canDeliverIntegrationWebhook,
+  resolveIntegrationTranscriptContent,
   resolveIntegrationWebhookUrl,
   resolvePublicAppUrl,
 } from './integration-webhook.util';
@@ -32,6 +33,9 @@ export interface IntegrationCallResultWebhookPayload {
   driver_name: string;
   driver_mobile_number: string;
   recording_url: string;
+  /** Primary field expected by partner webhook receivers (e.g. tatd PHP). */
+  transcript: string;
+  /** Backward-compatible alias for `transcript`. */
   transcripts: string;
   call_connected: '0' | '1';
 }
@@ -168,11 +172,13 @@ export class IntegrationCallbackService {
       asRecord(metadata.callContext) ??
       asRecord(asRecord(metadata.integration)?.callContext);
 
+    const transcriptContent = resolveIntegrationTranscriptContent(call.transcript);
+
     const payload = this.buildIntegrationCallResultPayload(
       call,
       callContext,
       downloadUrl,
-      call.transcript?.content ?? null,
+      transcriptContent,
     );
 
     const result = await this.postWebhook(
@@ -210,9 +216,10 @@ export class IntegrationCallbackService {
     call: Call,
     callContext: Record<string, unknown> | undefined,
     recordingUrl: string,
-    transcriptContent: string | null,
+    transcriptContent: string,
   ): IntegrationCallResultWebhookPayload {
     const ctx = callContext ?? {};
+    const transcript = transcriptContent.trim();
 
     return {
       booking_number:
@@ -223,7 +230,8 @@ export class IntegrationCallbackService {
       driver_name: readContextString(ctx, 'driverName') ?? '',
       driver_mobile_number: readContextString(ctx, 'driverMobileNumber') ?? '',
       recording_url: recordingUrl,
-      transcripts: transcriptContent ?? '',
+      transcript,
+      transcripts: transcript,
       call_connected: this.resolveCallConnected(call),
     };
   }

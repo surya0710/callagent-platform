@@ -108,3 +108,76 @@ export function buildRecordingDownloadUrl(
 
   return `${publicAppUrl}/api/voice/recordings/${encodeURIComponent(streamSid)}/download`;
 }
+
+export interface IntegrationTranscriptSegment {
+  speaker: string;
+  text: string;
+  startedAtMs?: number | null;
+  endedAtMs?: number | null;
+  createdAt?: Date;
+}
+
+function integrationTranscriptSortKey(
+  segment: IntegrationTranscriptSegment,
+  fallbackIndex: number,
+): number {
+  if (typeof segment.startedAtMs === 'number') {
+    return segment.startedAtMs;
+  }
+  if (typeof segment.endedAtMs === 'number') {
+    return segment.endedAtMs;
+  }
+  if (segment.createdAt instanceof Date) {
+    return segment.createdAt.getTime();
+  }
+  return fallbackIndex;
+}
+
+function formatIntegrationTranscriptSpeakerLabel(speaker: string): string {
+  switch (speaker) {
+    case 'customer':
+      return 'Customer';
+    case 'assistant':
+      return 'Assistant';
+    default:
+      return 'Unknown';
+  }
+}
+
+/** Resolve flat transcript text for partner webhooks from stored content or segments. */
+export function resolveIntegrationTranscriptContent(
+  transcript:
+    | {
+        content: string;
+        segments: IntegrationTranscriptSegment[];
+      }
+    | null
+    | undefined,
+): string {
+  const content = transcript?.content?.trim();
+  if (content) {
+    return content;
+  }
+
+  const segments = transcript?.segments ?? [];
+  if (segments.length === 0) {
+    return '';
+  }
+
+  return segments
+    .map((segment, index) => ({ segment, index }))
+    .filter(({ segment }) => segment.text.trim().length > 0)
+    .sort((left, right) => {
+      const leftKey = integrationTranscriptSortKey(left.segment, left.index);
+      const rightKey = integrationTranscriptSortKey(right.segment, right.index);
+      if (leftKey !== rightKey) {
+        return leftKey - rightKey;
+      }
+      return left.index - right.index;
+    })
+    .map(
+      ({ segment }) =>
+        `${formatIntegrationTranscriptSpeakerLabel(segment.speaker)}: ${segment.text.trim()}`,
+    )
+    .join('\n');
+}

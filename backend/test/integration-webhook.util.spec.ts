@@ -4,6 +4,7 @@ import {
   buildRecordingDownloadUrl,
   canDeliverIntegrationWebhook,
   formatWebhookTimeParam,
+  resolveIntegrationTranscriptContent,
   resolveIntegrationWebhookUrl,
   resolvePublicAppUrl,
 } from '../src/modules/integrations/integration-webhook.util';
@@ -116,5 +117,37 @@ describe('integration-webhook.util', () => {
     expect(
       buildRecordingDownloadUrl('https://tatdai.in', 'MZ123'),
     ).toBe('https://tatdai.in/api/voice/recordings/MZ123/download');
+  });
+
+  describe('resolveIntegrationTranscriptContent', () => {
+    it('prefers stored flat content', () => {
+      expect(
+        resolveIntegrationTranscriptContent({
+          content: 'Customer: Hello\nAssistant: Hi',
+          segments: [{ speaker: 'customer', text: 'Ignored when content exists' }],
+        }),
+      ).toBe('Customer: Hello\nAssistant: Hi');
+    });
+
+    it('builds flat transcript from segments when content is empty', () => {
+      expect(
+        resolveIntegrationTranscriptContent({
+          content: '',
+          segments: [
+            { speaker: 'assistant', text: 'Namaste, kaise hain aap?', startedAtMs: 2000 },
+            { speaker: 'customer', text: 'Theek hoon.', startedAtMs: 1000 },
+          ],
+        }),
+      ).toBe(
+        'Customer: Theek hoon.\nAssistant: Namaste, kaise hain aap?',
+      );
+    });
+
+    it('returns empty string when no transcript exists', () => {
+      expect(resolveIntegrationTranscriptContent(null)).toBe('');
+      expect(
+        resolveIntegrationTranscriptContent({ content: '   ', segments: [] }),
+      ).toBe('');
+    });
   });
 });
