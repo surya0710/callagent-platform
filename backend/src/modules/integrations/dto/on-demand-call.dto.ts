@@ -5,7 +5,6 @@ import {
   IsObject,
   IsOptional,
   IsString,
-  IsUrl,
   ValidateNested,
 } from 'class-validator';
 import { VoiceCallContextDto } from '../../voice/dto/voice-call-context.dto';
@@ -52,7 +51,7 @@ export class OnDemandCallDto {
     example: 'https://your-driver-app.com/webhooks/voice-status',
   })
   @IsOptional()
-  @IsUrl()
+  @IsString()
   webhookUrl?: string;
 
   @ApiPropertyOptional({
@@ -61,7 +60,7 @@ export class OnDemandCallDto {
     example: 'https://your-driver-app.com/webhooks/voice-status',
   })
   @IsOptional()
-  @IsUrl()
+  @IsString()
   callbackUrl?: string;
 
   @ApiPropertyOptional({

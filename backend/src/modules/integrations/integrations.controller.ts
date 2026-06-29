@@ -5,6 +5,7 @@ import {
   Param,
   Post,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiHeader,
@@ -18,6 +19,7 @@ import { IntegrationApiKey } from '../../common/decorators/integration-api-key.d
 import { IntegrationApiKeyContext } from './interfaces/integration-context.interface';
 import { IntegrationCallsService } from './integration-calls.service';
 import { OnDemandCallDto } from './dto/on-demand-call.dto';
+import { NormalizeIntegrationCallInterceptor } from './normalize-integration-call.interceptor';
 
 @ApiTags('Integrations')
 @ApiSecurity('api-key')
@@ -33,6 +35,7 @@ export class IntegrationsController {
   constructor(private readonly integrationCallsService: IntegrationCallsService) {}
 
   @Post('calls')
+  @UseInterceptors(NormalizeIntegrationCallInterceptor)
   @ApiOperation({
     summary: 'Initiate an outbound AI voice call (Smartflo click-to-call)',
     description:

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { CallSource } from '@prisma/client';
@@ -15,6 +16,8 @@ import { IntegrationCallbackService } from './integration-callback.service';
 
 @Injectable()
 export class IntegrationCallsService {
+  private readonly logger = new Logger(IntegrationCallsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly telephonyOutboundCallService: TelephonyOutboundCallService,
@@ -32,7 +35,12 @@ export class IntegrationCallsService {
     });
 
     if (existing) {
-      return this.formatCallResponse(existing, true);
+      return {
+        idempotent: true,
+        success: true,
+        message: 'Call already exists for this externalRef (idempotent replay)',
+        call: this.formatCallRecord(existing),
+      };
     }
 
     const callContext = this.buildCallContext(dto);
@@ -87,7 +95,13 @@ export class IntegrationCallsService {
       where: { id: result.callId },
     });
 
-    await this.callbackService.notifyStatusChange(call);
+    void this.callbackService.notifyStatusChange(call).catch((error) => {
+      this.logger.warn({
+        callId: call.id,
+        err: error instanceof Error ? error.message : String(error),
+        message: 'integration_status_webhook_failed_after_call_initiated',
+      });
+    });
 
     return {
       idempotent: false,

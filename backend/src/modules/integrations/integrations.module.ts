@@ -6,6 +6,7 @@ import { ApiKeysService } from './api-keys.service';
 import { IntegrationCallbackService } from './integration-callback.service';
 import { IntegrationCallsService } from './integration-calls.service';
 import { IntegrationsController } from './integrations.controller';
+import { NormalizeIntegrationCallInterceptor } from './normalize-integration-call.interceptor';
 
 @Module({
   imports: [forwardRef(() => VoiceModule)],
@@ -14,6 +15,7 @@ import { IntegrationsController } from './integrations.controller';
     ApiKeysService,
     IntegrationCallsService,
     IntegrationCallbackService,
+    NormalizeIntegrationCallInterceptor,
     ApiKeyGuard,
   ],
   exports: [
