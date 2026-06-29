@@ -1,20 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { WebSocket } from 'ws';
-import { TelephonyProvider } from './telephony/telephony-provider.types';
 
 @Injectable()
 export class VoiceSocketRegistry {
   private readonly bySocketSessionId = new Map<string, WebSocket>();
   private readonly byStreamSid = new Map<string, WebSocket>();
   private readonly socketToStreamSid = new Map<string, string>();
-  private readonly streamProviderBySocketSessionId = new Map<
-    string,
-    TelephonyProvider
-  >();
-  private readonly streamProviderByStreamSid = new Map<
-    string,
-    TelephonyProvider
-  >();
+  private readonly exotelSocketSessionIds = new Set<string>();
+  private readonly exotelStreamSids = new Set<string>();
   private readonly outboundChunkByStreamSid = new Map<string, number>();
   private readonly outboundSequenceByStreamSid = new Map<string, number>();
   private readonly outboundTimestampByStreamSid = new Map<string, number>();
@@ -23,40 +16,19 @@ export class VoiceSocketRegistry {
     this.bySocketSessionId.set(socketSessionId, client);
   }
 
-  setStreamProvider(
-    socketSessionId: string,
-    provider: TelephonyProvider,
-  ): void {
-    this.streamProviderBySocketSessionId.set(socketSessionId, provider);
+  registerExotelSocket(socketSessionId: string): void {
+    this.exotelSocketSessionIds.add(socketSessionId);
   }
 
-  bindStreamProvider(streamSid: string, provider: TelephonyProvider): void {
-    this.streamProviderByStreamSid.set(streamSid, provider);
+  markExotelStream(streamSid: string, socketSessionId?: string): void {
+    this.exotelStreamSids.add(streamSid);
+    if (socketSessionId) {
+      this.exotelSocketSessionIds.add(socketSessionId);
+    }
   }
 
-  getStreamProviderForSocket(
-    socketSessionId: string,
-  ): TelephonyProvider | undefined {
-    return this.streamProviderBySocketSessionId.get(socketSessionId);
-  }
-
-  getStreamProviderForStreamSid(
-    streamSid: string,
-  ): TelephonyProvider | undefined {
-    return this.streamProviderByStreamSid.get(streamSid);
-  }
-
-  resolveStreamProvider(
-    streamSid: string,
-    socketSessionId?: string,
-  ): TelephonyProvider {
-    return (
-      this.streamProviderByStreamSid.get(streamSid) ??
-      (socketSessionId
-        ? this.streamProviderBySocketSessionId.get(socketSessionId)
-        : undefined) ??
-      TelephonyProvider.SMARTFLO
-    );
+  isExotelStream(streamSid: string): boolean {
+    return this.exotelStreamSids.has(streamSid);
   }
 
   bindStreamSid(socketSessionId: string, streamSid: string): void {
@@ -67,9 +39,8 @@ export class VoiceSocketRegistry {
 
     this.byStreamSid.set(streamSid, client);
     this.socketToStreamSid.set(socketSessionId, streamSid);
-    const provider = this.streamProviderBySocketSessionId.get(socketSessionId);
-    if (provider) {
-      this.streamProviderByStreamSid.set(streamSid, provider);
+    if (this.exotelSocketSessionIds.has(socketSessionId)) {
+      this.exotelStreamSids.add(streamSid);
     }
     if (!this.outboundChunkByStreamSid.has(streamSid)) {
       this.outboundChunkByStreamSid.set(streamSid, 1);
@@ -114,18 +85,18 @@ export class VoiceSocketRegistry {
     if (streamSid) {
       this.byStreamSid.delete(streamSid);
       this.socketToStreamSid.delete(socketSessionId);
-      this.streamProviderByStreamSid.delete(streamSid);
+      this.exotelStreamSids.delete(streamSid);
       this.outboundChunkByStreamSid.delete(streamSid);
       this.outboundSequenceByStreamSid.delete(streamSid);
       this.outboundTimestampByStreamSid.delete(streamSid);
     }
 
-    this.streamProviderBySocketSessionId.delete(socketSessionId);
+    this.exotelSocketSessionIds.delete(socketSessionId);
   }
 
   removeByStreamSid(streamSid: string): void {
     this.byStreamSid.delete(streamSid);
-    this.streamProviderByStreamSid.delete(streamSid);
+    this.exotelStreamSids.delete(streamSid);
     this.outboundChunkByStreamSid.delete(streamSid);
     this.outboundSequenceByStreamSid.delete(streamSid);
     this.outboundTimestampByStreamSid.delete(streamSid);

@@ -76,7 +76,7 @@ export function buildGaSessionUpdate(options: {
       output_modalities: ['audio'],
       instructions: options.instructions,
       ...(options.maxResponseOutputTokens
-        ? { max_output_tokens: options.maxResponseOutputTokens }
+        ? { max_response_output_tokens: options.maxResponseOutputTokens }
         : {}),
       audio: {
         input: inputAudio,
