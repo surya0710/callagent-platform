@@ -311,7 +311,6 @@ export class TelephonyOutboundCallService {
     const apiKey = this.telephonyConfig.getExotelApiKey();
     const apiToken = this.telephonyConfig.getExotelApiToken();
     const callerId = this.telephonyConfig.getExotelCallerId();
-    const connectTo = this.telephonyConfig.getExotelConnectTo();
     const voiceFlowUrl = this.telephonyConfig.getExotelConnectUrl();
 
     if (!accountSid || !apiKey || !apiToken) {
@@ -320,9 +319,9 @@ export class TelephonyOutboundCallService {
       );
     }
 
-    if (!callerId || !connectTo) {
+    if (!callerId) {
       throw new ServiceUnavailableException(
-        'Exotel is not configured (EXOTEL_CALLER_ID / EXOTEL_CONNECT_TO missing)',
+        'Exotel is not configured (EXOTEL_CALLER_ID missing)',
       );
     }
 
@@ -330,9 +329,10 @@ export class TelephonyOutboundCallService {
     const url = `${this.telephonyConfig.getExotelApiBaseUrl()}/v1/Accounts/${accountSid}/Calls/connect.json`;
     const connectUrl = voiceFlowUrl;
 
+    // Flow-only outbound: From + CallerId + Url. Do not send To — that bridges a
+    // second phone leg and prevents the voice applet / AgentStream from starting.
     const formBody = new URLSearchParams({
       From: from,
-      To: connectTo,
       CallerId: callerId,
       Url: connectUrl,
     }).toString();
@@ -344,12 +344,11 @@ export class TelephonyOutboundCallService {
     this.logger.log({
       url,
       from,
-      to: connectTo,
       callerId,
       connectUrl,
       accountSid,
       apiKeyPrefix: `${apiKey.slice(0, 6)}...`,
-      message: 'Sending Exotel connect request',
+      message: 'Sending Exotel flow-only connect request',
     });
 
     try {

@@ -2465,7 +2465,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     try {
       const sent = this.sendResponseCreate(session, 'opening', {
-        modalities: ['audio'],
+        output_modalities: ['audio'],
         instructions: buildOpeningResponseInstructions(
           session.openingContext,
           session.callContext,
@@ -2899,7 +2899,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     const responseLanguage = resolveSessionResponseLanguage(session);
     try {
       const sent = this.sendResponseCreate(session, 'call_end_ack', {
-        modalities: ['audio'],
+        output_modalities: ['audio'],
         instructions: buildCallEndAcknowledgementInstructions(
           intent,
           responseLanguage,

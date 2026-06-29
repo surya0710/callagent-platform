@@ -651,15 +651,11 @@ export class VoiceSessionService {
   }
 
   getActiveSessions(): VoiceSession[] {
-    return Array.from(this.activeBySocketSessionId.values()).filter(
-      (session) => session.isAppInitiated === true,
-    );
+    return Array.from(this.activeBySocketSessionId.values());
   }
 
   async getRecentEndedSessions(): Promise<VoiceSession[]> {
-    const local = this.recentEndedSessions.filter(
-      (session) => session.isAppInitiated === true,
-    );
+    const local = this.recentEndedSessions;
     const shared = await this.voiceSharedStateService.listRecentEndedSessions();
 
     const merged = new Map<string, VoiceSession>();
@@ -1516,6 +1512,22 @@ export class VoiceSessionService {
       this.inboundStatsByStreamSid.delete(session.streamSid);
       this.outboundStatsByStreamSid.delete(session.streamSid);
     }
+
+    this.recentEndedSessions.push(session);
+    if (session.streamSid) {
+      this.recentEndedByStreamSid.set(session.streamSid, session);
+    }
+
+    while (this.recentEndedSessions.length > MAX_RECENT_ENDED_SESSIONS) {
+      const oldest = this.recentEndedSessions.shift();
+      if (oldest?.streamSid) {
+        this.recentEndedByStreamSid.delete(oldest.streamSid);
+      }
+    }
+
+    void this.voiceSharedStateService.saveEndedSession(
+      toVoiceSessionResponse(session),
+    );
   }
 
   private endSession(
