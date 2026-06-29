@@ -7,7 +7,7 @@ import {
 import { TelephonyMediaEncoding } from '../telephony/telephony-provider.types';
 
 export const SMARTFLO_OUTBOUND_CHUNK_BYTES = 800;
-export const EXOTEL_OUTBOUND_CHUNK_BYTES = 320;
+export const EXOTEL_OUTBOUND_CHUNK_BYTES = 3200;
 export const SMARTFLO_OUTBOUND_CHUNK_MS = 100;
 
 @Injectable()
@@ -41,7 +41,11 @@ export class VoiceAudioConfigService {
         'VOICE_EXOTEL_OUTBOUND_CHUNK_BYTES',
       );
       const parsed = raw ? Number(raw.trim()) : EXOTEL_OUTBOUND_CHUNK_BYTES;
-      if (!Number.isFinite(parsed) || parsed < 320 || parsed % 2 !== 0) {
+      if (
+        !Number.isFinite(parsed) ||
+        parsed < 320 ||
+        parsed % 320 !== 0
+      ) {
         return EXOTEL_OUTBOUND_CHUNK_BYTES;
       }
       return parsed;

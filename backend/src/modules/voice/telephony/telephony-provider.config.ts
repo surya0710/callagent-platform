@@ -74,4 +74,21 @@ export class TelephonyProviderConfigService {
       this.getExotelVoiceFlowUrl() ?? 'http://twimlets.com/holdmusic'
     );
   }
+
+  getVoiceStreamWssUrl(): string {
+    const base =
+      this.configService.get<string>('VOICE_WSS_BASE_URL')?.trim() ||
+      'wss://tatdai.in/api/voice/stream';
+
+    if (!this.isExotel()) {
+      return base;
+    }
+
+    if (base.includes('provider=exotel')) {
+      return base;
+    }
+
+    const separator = base.includes('?') ? '&' : '?';
+    return `${base}${separator}provider=exotel`;
+  }
 }

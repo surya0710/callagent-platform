@@ -7,6 +7,7 @@ import {
 import { IncomingMessage } from 'http';
 import { WebSocket } from 'ws';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
+import { ExotelStreamAdapter } from './exotel-stream.adapter';
 import { VoiceRecordingService } from './audio/voice-recording.service';
 import { voiceDebugLog } from './audio/voice-debug.util';
 import { VoiceAudioConfigService } from './audio/voice-audio-config.service';
@@ -22,14 +23,16 @@ import {
   CallTimingEvent,
 } from './call-timing-diagnostics.service';
 import { TelephonyProviderConfigService } from './telephony/telephony-provider.config';
-import { TelephonyMediaEncoding } from './telephony/telephony-provider.types';
+import { TelephonyMediaEncoding, TelephonyProvider } from './telephony/telephony-provider.types';
 import { encodePcm16ToMulaw } from './audio/mulaw-codec';
+import { parseVoiceStreamProviderFromRequest } from './voice-stream-provider.util';
 
 interface VoiceWebSocket extends WebSocket {
   socketSessionId?: string;
 }
 
 const MULAW_FRAME_BYTES = 160;
+const EXOTEL_PCM_FRAME_BYTES = 320;
 
 @WebSocketGateway({ path: '/api/voice/stream' })
 export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -39,11 +42,25 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly voiceSessionService: VoiceSessionService,
     private readonly voiceSocketRegistry: VoiceSocketRegistry,
     private readonly smartfloStreamAdapter: SmartfloStreamAdapter,
+    private readonly exotelStreamAdapter: ExotelStreamAdapter,
     private readonly voiceRecordingService: VoiceRecordingService,
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
     private readonly callTiming: CallTimingDiagnosticsService,
     private readonly telephonyProviderConfig: TelephonyProviderConfigService,
   ) {}
+
+  private resolveConnectionStreamProvider(
+    request: IncomingMessage,
+  ): TelephonyProvider {
+    const fromQuery = parseVoiceStreamProviderFromRequest(request);
+    if (fromQuery) {
+      return fromQuery;
+    }
+
+    return this.telephonyProviderConfig.isExotel()
+      ? TelephonyProvider.EXOTEL
+      : TelephonyProvider.SMARTFLO;
+  }
 
   handleConnection(client: VoiceWebSocket, request: IncomingMessage): void {
     try {
@@ -51,9 +68,16 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
         request.socket.remoteAddress ??
         (request.headers['x-forwarded-for'] as string | undefined);
 
+      const streamProvider = this.resolveConnectionStreamProvider(request);
+      const isExotel = streamProvider === TelephonyProvider.EXOTEL;
+
       const session = this.voiceSessionService.createSocketSession(remoteAddress);
       client.socketSessionId = session.socketSessionId;
       this.voiceSocketRegistry.registerSocket(session.socketSessionId, client);
+      this.voiceSocketRegistry.setStreamProvider(
+        session.socketSessionId,
+        streamProvider,
+      );
 
       client.on('message', (data) => {
         const raw =
@@ -62,6 +86,11 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
             : Buffer.isBuffer(data)
               ? data.toString('utf8')
               : String(data);
+
+        if (isExotel) {
+          this.exotelStreamAdapter.handleMessage(session.socketSessionId, raw);
+          return;
+        }
 
         this.smartfloStreamAdapter.handleMessage(session.socketSessionId, raw);
       });
@@ -72,6 +101,17 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
           'WebSocket client error',
         );
       });
+
+      if (isExotel) {
+        this.logger.log({
+          socketSessionId: session.socketSessionId,
+          remoteAddress,
+          connectedAt: session.connectedAt,
+          streamProvider,
+          message: 'EXOTEL_WS_CONNECTED',
+        });
+        return;
+      }
 
       this.logger.log({
         socketSessionId: session.socketSessionId,
@@ -104,7 +144,12 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       session &&
       (session.status === 'ACTIVE' || session.status === 'PENDING')
     ) {
-      void this.finalizeAndDisconnect(socketSessionId, streamSid, session.callSid);
+      void this.finalizeAndDisconnect(
+        socketSessionId,
+        streamSid,
+        session.callSid,
+        this.voiceSocketRegistry.resolveStreamProvider(streamSid, socketSessionId),
+      );
       return;
     }
 
@@ -120,19 +165,31 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private async finalizeAndDisconnect(
     socketSessionId: string,
     streamSid: string,
-    callSid?: string,
+    callSid: string | undefined,
+    streamProvider: TelephonyProvider,
   ): Promise<void> {
-    await this.smartfloStreamAdapter.finalizeRecordingForStreamAsync(
-      streamSid,
-      callSid,
-    );
+    if (streamProvider === TelephonyProvider.EXOTEL) {
+      await this.exotelStreamAdapter.finalizeRecordingForStreamAsync(
+        streamSid,
+        callSid,
+      );
+    } else {
+      await this.smartfloStreamAdapter.finalizeRecordingForStreamAsync(
+        streamSid,
+        callSid,
+      );
+    }
 
     this.voiceSessionService.endBySocketSessionId(socketSessionId);
     this.voiceSocketRegistry.removeBySocketSessionId(socketSessionId);
 
     this.logger.log({
       socketSessionId,
-      message: 'Smartflo WebSocket disconnected',
+      streamProvider,
+      message:
+        streamProvider === TelephonyProvider.EXOTEL
+          ? 'Exotel WebSocket disconnected'
+          : 'Smartflo WebSocket disconnected',
     });
   }
 
@@ -142,8 +199,14 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     chunk?: number,
     encoding?: TelephonyMediaEncoding,
   ): void {
+    const streamProvider =
+      this.voiceSocketRegistry.resolveStreamProvider(streamSid);
+    const isExotel = streamProvider === TelephonyProvider.EXOTEL;
     const mediaEncoding =
-      encoding ?? this.telephonyProviderConfig.getOutboundMediaEncoding();
+      encoding ??
+      (isExotel
+        ? 'pcm16'
+        : this.telephonyProviderConfig.getOutboundMediaEncoding());
     const client = this.voiceSocketRegistry.getByStreamSid(streamSid);
     const wsReadyState = client?.readyState ?? WebSocket.CLOSED;
     const socketFound = Boolean(client && wsReadyState === WebSocket.OPEN);
@@ -151,6 +214,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     voiceDebugLog(this.logger, streamSid, 'outbound_ws_ready_state', {
       readyState: wsReadyState,
       encoding: mediaEncoding,
+      streamProvider,
     });
 
     if (!socketFound) {
@@ -165,6 +229,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
         socketFound: false,
         wsReadyState,
         encoding: mediaEncoding,
+        streamProvider,
         message: 'Cannot send media: no active WebSocket for streamSid',
       });
       return;
@@ -174,6 +239,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     voiceDebugLog(this.logger, streamSid, 'outbound_payload_bytes', {
       bytes: decodedLength,
       encoding: mediaEncoding,
+      streamProvider,
     });
 
     if (mediaEncoding === 'pcm16') {
@@ -182,6 +248,15 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
           streamSid,
           decodedByteLength: decodedLength,
           message: 'Outbound PCM media payload has odd byte length',
+        });
+      } else if (
+        decodedLength < EXOTEL_PCM_FRAME_BYTES ||
+        decodedLength % EXOTEL_PCM_FRAME_BYTES !== 0
+      ) {
+        this.logger.warn({
+          streamSid,
+          decodedByteLength: decodedLength,
+          message: 'Outbound Exotel PCM payload is not a multiple of 320 bytes',
         });
       }
     } else if (
@@ -195,42 +270,65 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
     }
 
-    const chunkNumber =
-      chunk ?? this.voiceSocketRegistry.nextOutboundChunk(streamSid);
-    const chunkDurationMs =
-      mediaEncoding === 'pcm16'
-        ? (decodedLength / 2 / 8000) * 1000
-        : this.voiceAudioConfigService.getOutboundChunkMs();
-    const timestamp = this.voiceSocketRegistry.nextOutboundTimestamp(
-      streamSid,
-      chunkDurationMs,
-    );
-    const sequenceNumber =
-      this.voiceSocketRegistry.nextOutboundSequenceNumber(streamSid);
+    let outboundMessage: string;
 
-    const outboundMessage = JSON.stringify({
-      event: 'media',
-      streamSid,
-      sequenceNumber,
-      media: {
-        payload: base64Payload,
-        chunk: String(chunkNumber),
-        timestamp: String(timestamp),
-      },
-    });
+    if (isExotel) {
+      outboundMessage = JSON.stringify({
+        event: 'media',
+        stream_sid: streamSid,
+        media: {
+          payload: base64Payload,
+        },
+      });
 
-    this.logger.log({
-      streamSid,
-      sequenceNumber,
-      chunk: chunkNumber,
-      timestamp,
-      payloadBase64Length: base64Payload.length,
-      mediaBytes: decodedLength,
-      encoding: mediaEncoding,
-      socketFound: true,
-      wsReadyState,
-      message: 'Sending outbound media to telephony WebSocket',
-    });
+      this.logger.log({
+        streamSid,
+        payloadBase64Length: base64Payload.length,
+        mediaBytes: decodedLength,
+        encoding: mediaEncoding,
+        streamProvider,
+        socketFound: true,
+        wsReadyState,
+        message: `EXOTEL_AUDIO_SENT bytes=${decodedLength}`,
+      });
+    } else {
+      const chunkNumber =
+        chunk ?? this.voiceSocketRegistry.nextOutboundChunk(streamSid);
+      const chunkDurationMs =
+        mediaEncoding === 'pcm16'
+          ? (decodedLength / 2 / 8000) * 1000
+          : this.voiceAudioConfigService.getOutboundChunkMs();
+      const timestamp = this.voiceSocketRegistry.nextOutboundTimestamp(
+        streamSid,
+        chunkDurationMs,
+      );
+      const sequenceNumber =
+        this.voiceSocketRegistry.nextOutboundSequenceNumber(streamSid);
+
+      outboundMessage = JSON.stringify({
+        event: 'media',
+        streamSid,
+        sequenceNumber,
+        media: {
+          payload: base64Payload,
+          chunk: String(chunkNumber),
+          timestamp: String(timestamp),
+        },
+      });
+
+      this.logger.log({
+        streamSid,
+        sequenceNumber,
+        chunk: chunkNumber,
+        timestamp,
+        payloadBase64Length: base64Payload.length,
+        mediaBytes: decodedLength,
+        encoding: mediaEncoding,
+        socketFound: true,
+        wsReadyState,
+        message: 'Sending outbound media to telephony WebSocket',
+      });
+    }
 
     try {
       client!.send(outboundMessage);
@@ -241,14 +339,14 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       );
       voiceDebugLog(this.logger, streamSid, 'outbound_audio_chunk', {
         bytes: decodedLength,
-        chunk: chunkNumber,
         encoding: mediaEncoding,
+        streamProvider,
       });
       this.logger.debug({
         streamSid,
-        chunk: chunkNumber,
         mediaBytes: decodedLength,
         encoding: mediaEncoding,
+        streamProvider,
         message: 'Outbound media WebSocket send succeeded',
       });
     } catch (error) {
@@ -258,8 +356,8 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
       this.logger.error({
         streamSid,
-        chunk: chunkNumber,
         err: error,
+        streamProvider,
         message: 'Outbound media WebSocket send failed',
       });
       return;
@@ -327,12 +425,24 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
+    const isExotel =
+      this.voiceSocketRegistry.resolveStreamProvider(streamSid) ===
+      TelephonyProvider.EXOTEL;
+
     client.send(
-      JSON.stringify({
-        event: 'mark',
-        streamSid,
-        mark: { name },
-      }),
+      JSON.stringify(
+        isExotel
+          ? {
+              event: 'mark',
+              stream_sid: streamSid,
+              mark: { name },
+            }
+          : {
+              event: 'mark',
+              streamSid,
+              mark: { name },
+            },
+      ),
     );
   }
 
@@ -346,11 +456,22 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
+    const isExotel =
+      this.voiceSocketRegistry.resolveStreamProvider(streamSid) ===
+      TelephonyProvider.EXOTEL;
+
     client.send(
-      JSON.stringify({
-        event: 'clear',
-        streamSid,
-      }),
+      JSON.stringify(
+        isExotel
+          ? {
+              event: 'clear',
+              stream_sid: streamSid,
+            }
+          : {
+              event: 'clear',
+              streamSid,
+            },
+      ),
     );
   }
 

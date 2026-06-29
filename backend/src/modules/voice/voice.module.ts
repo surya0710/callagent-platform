@@ -14,6 +14,7 @@ import { SmartfloClickToCallService } from './smartflo-click-to-call.service';
 import { TelephonyOutboundCallService } from './telephony/telephony-outbound-call.service';
 import { TelephonyProviderConfigService } from './telephony/telephony-provider.config';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
+import { ExotelStreamAdapter } from './exotel-stream.adapter';
 import { CallTimingDiagnosticsService } from './call-timing-diagnostics.service';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
 import { VoiceSharedStateService } from './voice-shared-state.service';
@@ -43,6 +44,7 @@ import { VoiceTranscriptEmailController } from './voice-transcript-email.control
     TelephonyOutboundCallService,
     SmartfloClickToCallService,
     SmartfloStreamAdapter,
+    ExotelStreamAdapter,
     VoiceCallAuthorizationService,
     VoiceOpeningConfigService,
     MockVoiceRuntimeProvider,
