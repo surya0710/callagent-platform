@@ -1,10 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiKey, Call, CallStatus } from '@prisma/client';
+import { Call, CallStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import {
   appendWebhookTimeParam,
+  buildIntegrationWebhookAuthHeaders,
   buildRecordingDownloadUrl,
+  canDeliverIntegrationWebhook,
+  resolveIntegrationWebhookUrl,
   resolvePublicAppUrl,
 } from './integration-webhook.util';
 
@@ -42,78 +45,52 @@ export class IntegrationCallbackService {
     private readonly configService: ConfigService,
   ) {}
 
-  async resolveWebhookUrl(call: Pick<Call, 'callbackUrl' | 'apiKeyId'>): Promise<string | null> {
+  async resolveWebhookUrl(call: Pick<Call, 'apiKeyId'>): Promise<string | null> {
     const delivery = await this.resolveWebhookDelivery(call);
     return delivery?.url ?? null;
   }
 
   private async resolveWebhookDelivery(
-    call: Pick<Call, 'callbackUrl' | 'apiKeyId'>,
-  ): Promise<{ url: string; authHeaders: Record<string, string> } | null> {
-    let url = call.callbackUrl?.trim() || null;
-    let apiKey: Pick<
-      ApiKey,
-      'webhookUrl' | 'webhookAuthType' | 'webhookAuthHeaderName' | 'webhookAuthToken'
-    > | null = null;
-
-    if (call.apiKeyId) {
-      apiKey = await this.prisma.apiKey.findUnique({
-        where: { id: call.apiKeyId },
-        select: {
-          webhookUrl: true,
-          webhookAuthType: true,
-          webhookAuthHeaderName: true,
-          webhookAuthToken: true,
-        },
-      });
-
-      if (!url) {
-        url = apiKey?.webhookUrl?.trim() || null;
-      }
+    call: Pick<Call, 'apiKeyId'>,
+  ): Promise<{ url: string; authHeaders: Record<string, string>; apiKeyId: string } | null> {
+    if (!call.apiKeyId) {
+      return null;
     }
 
-    if (!url) {
+    const apiKey = await this.prisma.apiKey.findUnique({
+      where: { id: call.apiKeyId },
+      select: {
+        id: true,
+        webhookUrl: true,
+        webhookAuthType: true,
+        webhookAuthHeaderName: true,
+        webhookAuthToken: true,
+      },
+    });
+
+    const url = resolveIntegrationWebhookUrl(apiKey);
+    if (!url || !apiKey) {
       return null;
     }
 
     return {
       url,
-      authHeaders: this.buildWebhookAuthHeaders(apiKey),
+      apiKeyId: apiKey.id,
+      authHeaders: buildIntegrationWebhookAuthHeaders(apiKey),
     };
   }
 
-  private buildWebhookAuthHeaders(
-    apiKey: Pick<
-      ApiKey,
-      'webhookAuthType' | 'webhookAuthHeaderName' | 'webhookAuthToken'
-    > | null,
-  ): Record<string, string> {
-    if (!apiKey?.webhookAuthToken?.trim()) {
-      return {};
-    }
-
-    const token = apiKey.webhookAuthToken.trim();
-
-    switch (apiKey.webhookAuthType) {
-      case 'bearer':
-        return { Authorization: `Bearer ${token}` };
-      case 'header': {
-        const headerName = apiKey.webhookAuthHeaderName?.trim() || 'X-API-Key';
-        return { [headerName]: token };
-      }
-      default:
-        return {};
-    }
-  }
-
   async notifyStatusChange(call: Call) {
-    if (call.source !== 'integration') {
-      return { sent: false };
+    if (!canDeliverIntegrationWebhook(call)) {
+      return { sent: false, reason: 'not_api_key_call' };
     }
 
     const delivery = await this.resolveWebhookDelivery(call);
     if (!delivery) {
-      return { sent: false };
+      this.logger.warn(
+        `call.status_changed skipped for call ${call.id}: initiating API key has no webhook URL`,
+      );
+      return { sent: false, reason: 'no_webhook' };
     }
 
     const payload: CallStatusCallbackPayload = {
@@ -134,6 +111,7 @@ export class IntegrationCallbackService {
       'call.status_changed',
       payload,
       call.id,
+      delivery.apiKeyId,
       delivery.authHeaders,
     );
   }
@@ -154,8 +132,8 @@ export class IntegrationCallbackService {
       },
     });
 
-    if (!call || call.source !== 'integration') {
-      return { sent: false, reason: 'not_integration_call' };
+    if (!call || !canDeliverIntegrationWebhook(call)) {
+      return { sent: false, reason: 'not_api_key_call' };
     }
 
     const metadata = asRecord(call.metadata) ?? {};
@@ -167,7 +145,7 @@ export class IntegrationCallbackService {
     const delivery = await this.resolveWebhookDelivery(call);
     if (!delivery) {
       this.logger.warn(
-        `call.result_ready skipped for call ${callId}: no webhook URL configured`,
+        `call.result_ready skipped for call ${callId}: initiating API key ${call.apiKeyId} has no webhook URL`,
       );
       return { sent: false, reason: 'no_webhook' };
     }
@@ -195,6 +173,7 @@ export class IntegrationCallbackService {
       'call.result_ready',
       payload,
       call.id,
+      delivery.apiKeyId,
       delivery.authHeaders,
     );
 
@@ -270,6 +249,7 @@ export class IntegrationCallbackService {
     event: 'call.status_changed' | 'call.result_ready',
     payload: CallStatusCallbackPayload | IntegrationCallResultWebhookPayload,
     callId: string,
+    apiKeyId: string,
     authHeaders: Record<string, string> = {},
   ) {
     const requestUrl = appendWebhookTimeParam(webhookUrl);
@@ -292,7 +272,9 @@ export class IntegrationCallbackService {
         return { sent: false, status: response.status };
       }
 
-      this.logger.log(`${event} webhook sent for call ${callId} → ${requestUrl}`);
+      this.logger.log(
+        `${event} webhook sent for call ${callId} (apiKey ${apiKeyId}) → ${requestUrl}`,
+      );
       return { sent: true, status: response.status };
     } catch (error) {
       this.logger.error(

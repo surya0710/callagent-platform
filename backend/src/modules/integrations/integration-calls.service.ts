@@ -47,7 +47,7 @@ export class IntegrationCallsService {
         integration: {
           apiKeyId: apiKey.id,
           externalRef: dto.externalRef,
-          callbackUrl: dto.webhookUrl ?? dto.callbackUrl ?? apiKey.webhookUrl ?? undefined,
+          callbackUrl: apiKey.webhookUrl ?? undefined,
           apiKeyName: apiKey.name,
           metadata: dto.metadata,
         },

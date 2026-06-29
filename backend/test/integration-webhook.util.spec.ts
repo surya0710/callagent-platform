@@ -1,11 +1,60 @@
 import {
   appendWebhookTimeParam,
+  buildIntegrationWebhookAuthHeaders,
   buildRecordingDownloadUrl,
+  canDeliverIntegrationWebhook,
   formatWebhookTimeParam,
+  resolveIntegrationWebhookUrl,
   resolvePublicAppUrl,
 } from '../src/modules/integrations/integration-webhook.util';
 
 describe('integration-webhook.util', () => {
+  describe('canDeliverIntegrationWebhook', () => {
+    it('allows only integration calls with an apiKeyId', () => {
+      expect(
+        canDeliverIntegrationWebhook({
+          source: 'integration',
+          apiKeyId: 'key-1',
+        }),
+      ).toBe(true);
+      expect(
+        canDeliverIntegrationWebhook({
+          source: 'integration',
+          apiKeyId: null,
+        }),
+      ).toBe(false);
+      expect(
+        canDeliverIntegrationWebhook({
+          source: 'test',
+          apiKeyId: 'key-1',
+        }),
+      ).toBe(false);
+    });
+  });
+
+  describe('resolveIntegrationWebhookUrl', () => {
+    it('uses only the initiating API key webhook URL', () => {
+      expect(
+        resolveIntegrationWebhookUrl({
+          webhookUrl: 'https://www.tatd.in/tatd-ai/ai-tatd-data-received-api.php',
+        }),
+      ).toBe('https://www.tatd.in/tatd-ai/ai-tatd-data-received-api.php');
+      expect(resolveIntegrationWebhookUrl({ webhookUrl: '   ' })).toBeNull();
+      expect(resolveIntegrationWebhookUrl(null)).toBeNull();
+    });
+  });
+
+  describe('buildIntegrationWebhookAuthHeaders', () => {
+    it('builds bearer auth from the initiating API key', () => {
+      expect(
+        buildIntegrationWebhookAuthHeaders({
+          webhookAuthType: 'bearer',
+          webhookAuthToken: 'secret',
+        }),
+      ).toEqual({ Authorization: 'Bearer secret' });
+    });
+  });
+
   it('formats webhook time as UTC YYYYMMDDHHmmss', () => {
     expect(
       formatWebhookTimeParam(new Date('2026-06-29T14:30:52.000Z')),

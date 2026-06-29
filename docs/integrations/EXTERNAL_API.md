@@ -92,8 +92,9 @@ Content-Type: application/json
 | `externalRef` | Yes | Your unique booking/reference ID (idempotency key) |
 | `customerNumber` | Yes | 10-digit Indian mobile or `91XXXXXXXXXX` |
 | `callContext` | No | Booking/customer details injected into AI runtime |
-| `webhookUrl` | No | Per-call webhook URL override (falls back to API key `webhookUrl`) |
 | `metadata` | No | Opaque JSON stored on the call record |
+
+Webhooks are sent only to the **webhook URL configured on the API key** used to initiate the call. Test calls, campaign calls, and calls from other API keys never share webhook destinations.
 
 ### Example — driver service feedback call
 
@@ -117,7 +118,7 @@ Content-Type: application/json
 }
 ```
 
-If you omit `webhookUrl`, webhooks are sent to the `webhookUrl` configured on the API key.
+If you omit a webhook URL on the API key, no webhooks are sent for calls from that key.
 
 ### `callContext` fields (all optional)
 
@@ -207,7 +208,7 @@ X-API-Key: avp_...
 
 ## Webhooks
 
-Webhooks are POST requests to your `webhookUrl` (API key default) or per-call `webhookUrl` override.
+Webhooks are POST requests to the **webhook URL on the API key that initiated the call**. Each API key only receives data for its own calls.
 
 Every webhook includes:
 
@@ -311,4 +312,4 @@ Look under the **Integrations** tag → `POST /integrations/v1/calls`.
 - `callContext` is passed to OpenAI prewarm and live runtime instructions
 - Calls require app authorization (`VOICE_REQUIRE_APP_AUTHORIZATION`) — the integration endpoint registers authorization automatically after Smartflo accepts the call
 - Indian mobile numbers only: 10 digits or `91` + 10 digits
-- Configure `webhookUrl` when creating the API key in **Settings → Integration API Keys** to receive webhooks without passing `webhookUrl` on every call
+- Configure `webhookUrl` when creating the API key in **Settings → Integration API Keys**. Only calls initiated with that key are POSTed to that URL.

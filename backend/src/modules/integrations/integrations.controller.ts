@@ -36,7 +36,8 @@ export class IntegrationsController {
   @ApiOperation({
     summary: 'Initiate an outbound AI voice call (Smartflo click-to-call)',
     description:
-      'Same payload shape as POST /voice/test-call, plus externalRef for idempotency and optional webhookUrl. ' +
+      'Same payload shape as POST /voice/test-call, plus externalRef for idempotency. ' +
+      'Webhooks are delivered only to the webhookUrl configured on the initiating API key. ' +
       'Places a Smartflo outbound call and injects callContext into the AI voice runtime.',
   })
   createOnDemandCall(
