@@ -18,4 +18,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /var/www/ai-voice-platform
+            git fetch origin main
+            git checkout main 2>/dev/null || git checkout -B main origin/main
+            git reset --hard origin/main
             bash ./scripts/deploy.sh
