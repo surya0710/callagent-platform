@@ -1,7 +1,10 @@
 import {
   buildTurnResponseInstructions,
+  mulawBytesToPlaybackMs,
+  resolveInterruptedAssistantText,
   shouldCancelResponseOnInterrupt,
   shouldIgnoreCustomerInterrupt,
+  shouldSkipAssistantTranscriptDone,
 } from '../src/modules/voice/voice-interruption.util';
 
 describe('voice-interruption.util', () => {
@@ -87,7 +90,49 @@ describe('voice-interruption.util', () => {
 
       expect(instructions).toContain('Reply in English or Hinglish');
       expect(instructions).toContain('If interrupted, do not repeat yourself');
-      expect(instructions).toContain('Do not repeat your previous response');
+      expect(instructions).toContain(
+        'The customer only heard part of your previous reply',
+      );
+      expect(instructions).toContain(
+        'Is this a good time to speak about your booking?',
+      );
+    });
+  });
+
+  describe('mulawBytesToPlaybackMs', () => {
+    it('converts 8kHz mulaw bytes to milliseconds', () => {
+      expect(mulawBytesToPlaybackMs(8000)).toBe(1000);
+      expect(mulawBytesToPlaybackMs(160)).toBe(20);
+      expect(mulawBytesToPlaybackMs(0)).toBe(0);
+    });
+  });
+
+  describe('shouldSkipAssistantTranscriptDone', () => {
+    it('skips transcript completion for the interrupted assistant item', () => {
+      expect(
+        shouldSkipAssistantTranscriptDone({
+          interruptedAssistantItemId: 'item_1',
+          assistantTranscriptItemId: 'item_1',
+        }),
+      ).toBe(true);
+
+      expect(
+        shouldSkipAssistantTranscriptDone({
+          interruptedAssistantItemId: 'item_1',
+          assistantTranscriptItemId: 'item_2',
+        }),
+      ).toBe(false);
+    });
+  });
+
+  describe('resolveInterruptedAssistantText', () => {
+    it('prefers partial transcript buffer over stale full text', () => {
+      expect(
+        resolveInterruptedAssistantText({
+          assistantTranscriptBuffer: 'Is this a good',
+          lastAssistantText: 'Is this a good time to speak about your booking?',
+        }),
+      ).toBe('Is this a good');
     });
   });
 });

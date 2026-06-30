@@ -75,8 +75,11 @@ import {
 } from '../voice-language.util';
 import {
   buildTurnResponseInstructions,
+  mulawBytesToPlaybackMs,
+  resolveInterruptedAssistantText,
   shouldCancelResponseOnInterrupt,
   shouldIgnoreCustomerInterrupt,
+  shouldSkipAssistantTranscriptDone,
 } from '../voice-interruption.util';
 
 const SMARTFLO_SAMPLE_RATE = 8000;
@@ -136,6 +139,9 @@ interface OpenAiRealtimeSession {
   responseCreateCount: number;
   responseDoneCount: number;
   outboundMediaCount: number;
+  currentResponseMulawSent: number;
+  interruptedAssistantItemId?: string;
+  truncateSentForItemId?: string;
   lastCloseCode?: number;
   lastCloseReason?: string;
   useServerVad: boolean;
@@ -461,6 +467,30 @@ function extractResponseId(event: Record<string, unknown>): string | undefined {
   if (typeof event.id === 'string') {
     return event.id;
   }
+  return undefined;
+}
+
+function extractAssistantItemIdFromResponseCreated(
+  event: Record<string, unknown>,
+): string | undefined {
+  const fromEvent = extractEventItemId(event);
+  if (fromEvent) {
+    return fromEvent;
+  }
+
+  const response = asRecord(event.response);
+  const output = response?.output;
+  if (!Array.isArray(output)) {
+    return undefined;
+  }
+
+  for (const entry of output) {
+    const item = asRecord(entry);
+    if (typeof item?.id === 'string' && item.role === 'assistant') {
+      return item.id;
+    }
+  }
+
   return undefined;
 }
 
@@ -947,6 +977,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       responseCreateCount: 0,
       responseDoneCount: 0,
       outboundMediaCount: 0,
+      currentResponseMulawSent: 0,
       useServerVad,
       model,
       aiSpeakFirstEnabled,
@@ -2132,6 +2163,103 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
+  private tryTruncateInterruptedAssistantItem(
+    session: OpenAiRealtimeSession,
+    reason: string,
+  ): void {
+    const itemId = session.assistantTranscriptItemId;
+    if (!itemId || session.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    if (session.truncateSentForItemId === itemId) {
+      return;
+    }
+
+    const audioEndMs = mulawBytesToPlaybackMs(session.currentResponseMulawSent);
+    const partialText = resolveInterruptedAssistantText({
+      assistantTranscriptBuffer: session.assistantTranscriptBuffer,
+      lastAssistantText: session.lastAssistantText,
+    });
+
+    session.truncateSentForItemId = itemId;
+    session.interruptedAssistantItemId = itemId;
+
+    if (partialText) {
+      session.lastAssistantText = partialText;
+      session.lastAssistantTranscript = partialText;
+    }
+
+    try {
+      session.ws.send(
+        JSON.stringify({
+          type: 'conversation.item.truncate',
+          item_id: itemId,
+          content_index: 0,
+          audio_end_ms: audioEndMs,
+        }),
+      );
+      this.logger.log({
+        streamSid: session.streamSid,
+        itemId,
+        audioEndMs,
+        currentResponseMulawSent: session.currentResponseMulawSent,
+        partialTextLength: partialText?.length ?? 0,
+        reason,
+        message: 'conversation_item_truncate_sent',
+      });
+      this.logTurnTaking(session, 'voice_conversation_item_truncate_sent', {
+        itemId,
+        audioEndMs,
+        reason,
+      });
+    } catch (error) {
+      this.logger.warn({
+        streamSid: session.streamSid,
+        itemId,
+        reason,
+        err: error,
+        message: 'Failed to truncate interrupted assistant conversation item',
+      });
+    }
+  }
+
+  private commitInterruptedAssistantTranscript(
+    session: OpenAiRealtimeSession,
+  ): void {
+    const text = resolveInterruptedAssistantText({
+      assistantTranscriptBuffer: session.assistantTranscriptBuffer,
+      lastAssistantText: session.lastAssistantText,
+    });
+    if (!text) {
+      return;
+    }
+
+    const streamSid = session.streamSid;
+    const endedAtMs = this.resolveTranscriptOffsetMs(session);
+    const startedAtMs = session.aiSpeakingStartedAt
+      ? this.resolveTranscriptOffsetMs(session, session.aiSpeakingStartedAt)
+      : Math.max(0, endedAtMs - 2000);
+
+    void this.voiceTranscriptService
+      .handleRealtimeCompleted({
+        streamSid,
+        callId: this.resolveCallId(streamSid),
+        speaker: 'assistant',
+        text,
+        itemId: session.interruptedAssistantItemId,
+        startedAtMs,
+        endedAtMs,
+      })
+      .catch((error) => {
+        this.logger.warn({
+          streamSid,
+          message: 'transcript_error',
+          err: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
   private tryCancelInterruptedResponse(
     session: OpenAiRealtimeSession,
     reason: string,
@@ -2165,6 +2293,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.wasInterruptedResponse = true;
     session.lastCustomerInterruptAt = new Date();
     session.outboundMulawBuffer = Buffer.alloc(0);
+
+    this.audioGateway.sendClear(session.streamSid);
+    this.tryTruncateInterruptedAssistantItem(session, reason);
 
     try {
       session.ws.send(JSON.stringify({ type: 'response.cancel' }));
@@ -3142,7 +3273,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       preferredLanguage: session.responseLanguage,
       lockedLanguage: session.languageLock.lockedLanguage,
       wasInterrupted: session.wasInterruptedResponse,
-      lastAssistantText: session.lastAssistantText ?? session.lastAssistantTranscript,
+      lastAssistantText: resolveInterruptedAssistantText({
+        assistantTranscriptBuffer: session.assistantTranscriptBuffer,
+        lastAssistantText:
+          session.lastAssistantText ?? session.lastAssistantTranscript,
+      }),
     });
 
     if (session.wasInterruptedResponse) {
@@ -3594,6 +3729,22 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       type === 'response.output_audio_transcript.done' ||
       type.includes('output_audio_transcript.done')
     ) {
+      if (
+        shouldSkipAssistantTranscriptDone({
+          interruptedAssistantItemId: session.interruptedAssistantItemId,
+          assistantTranscriptItemId: session.assistantTranscriptItemId,
+        })
+      ) {
+        this.logger.log({
+          streamSid,
+          itemId: session.assistantTranscriptItemId,
+          message: 'assistant_transcript_done_skipped_after_interrupt',
+        });
+        session.assistantTranscriptBuffer = '';
+        session.assistantTranscriptItemId = undefined;
+        return;
+      }
+
       const text =
         extractTranscriptText(event) ?? session.assistantTranscriptBuffer.trim();
       if (text) {
@@ -3662,14 +3813,47 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       if (session.openingIsCurrentResponse && !session.openingGreetingComplete) {
         this.failOpeningWithFallback(session, 'Opening response cancelled');
       }
+      if (session.interruptedAssistantItemId) {
+        this.commitInterruptedAssistantTranscript(session);
+      }
       this.resetResponseGuards(session, 'response_cancelled');
       session.currentResponseId = undefined;
       session.aiSpeakingStartedAt = undefined;
+      session.assistantTranscriptBuffer = '';
+      session.assistantTranscriptItemId = undefined;
       this.clearManualFallbackSilenceTimer(session);
       this.updateRuntimeState(streamSid, {
         isAiSpeaking: false,
         lastOpenAiEvent: type,
       });
+      return;
+    }
+
+    if (type === 'conversation.item.truncated') {
+      const itemId = extractEventItemId(event);
+      const audioEndMs =
+        typeof event.audio_end_ms === 'number' ? event.audio_end_ms : undefined;
+      this.logger.log({
+        streamSid,
+        itemId,
+        audioEndMs,
+        message: 'conversation_item_truncated',
+      });
+      if (
+        itemId &&
+        session.interruptedAssistantItemId &&
+        itemId === session.interruptedAssistantItemId
+      ) {
+        session.assistantTranscriptBuffer = '';
+      }
+      return;
+    }
+
+    if (type === 'response.output_item.added') {
+      const item = asRecord(event.item);
+      if (typeof item?.id === 'string' && item.role === 'assistant') {
+        session.assistantTranscriptItemId = item.id;
+      }
       return;
     }
 
@@ -3699,8 +3883,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.responseCount += 1;
       session.outboundPcmDownsampler.reset();
       session.outboundMulawBuffer = Buffer.alloc(0);
+      session.currentResponseMulawSent = 0;
       session.assistantTranscriptBuffer = '';
-      session.assistantTranscriptItemId = extractEventItemId(event);
+      session.assistantTranscriptItemId = extractAssistantItemIdFromResponseCreated(event);
+      session.interruptedAssistantItemId = undefined;
+      session.truncateSentForItemId = undefined;
       session.currentResponseId = extractResponseId(event);
       session.aiSpeakingStartedAt = new Date();
       if (!session.firstResponseCreateAt) {
@@ -4002,6 +4189,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       );
       const payload = frame.toString('base64');
       session.totalOutputMulawSent += frame.length;
+      session.currentResponseMulawSent += frame.length;
       session.outboundMediaCount += 1;
       this.sendOutboundMedia(
         session.streamSid,

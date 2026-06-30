@@ -66,6 +66,38 @@ export function shouldCancelResponseOnInterrupt(input: {
 export const VOICE_INTERRUPTION_HARD_RULE =
   'If interrupted, do not repeat yourself. Acknowledge briefly and respond to the customer\'s latest point. Do not restart a cancelled sentence.';
 
+export const TELEPHONY_MULAW_SAMPLE_RATE_HZ = 8000;
+
+export function mulawBytesToPlaybackMs(mulawBytes: number): number {
+  return Math.max(
+    0,
+    Math.floor((mulawBytes / TELEPHONY_MULAW_SAMPLE_RATE_HZ) * 1000),
+  );
+}
+
+export function shouldSkipAssistantTranscriptDone(input: {
+  interruptedAssistantItemId?: string;
+  assistantTranscriptItemId?: string;
+}): boolean {
+  if (!input.interruptedAssistantItemId || !input.assistantTranscriptItemId) {
+    return false;
+  }
+
+  return input.interruptedAssistantItemId === input.assistantTranscriptItemId;
+}
+
+export function resolveInterruptedAssistantText(input: {
+  assistantTranscriptBuffer: string;
+  lastAssistantText?: string;
+}): string | undefined {
+  const partial = input.assistantTranscriptBuffer.trim();
+  if (partial) {
+    return partial;
+  }
+
+  return input.lastAssistantText?.trim() || undefined;
+}
+
 export function buildTurnResponseInstructions(input: {
   preferredLanguage?: string;
   lockedLanguage?: LanguageLockState;
@@ -85,7 +117,12 @@ export function buildTurnResponseInstructions(input: {
 
   if (input.wasInterrupted) {
     parts.push(VOICE_INTERRUPTION_HARD_RULE);
-    if (input.lastAssistantText?.trim()) {
+    const heardText = input.lastAssistantText?.trim();
+    if (heardText) {
+      parts.push(
+        `The customer only heard part of your previous reply (approximately: "${heardText}"). Do not repeat that content or continue that sentence. Respond only to what the customer just said.`,
+      );
+    } else {
       parts.push('Do not repeat your previous response.');
     }
   }
