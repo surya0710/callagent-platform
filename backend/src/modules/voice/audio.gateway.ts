@@ -22,7 +22,10 @@ import {
   CallTimingDiagnosticsService,
   CallTimingEvent,
 } from './call-timing-diagnostics.service';
-import { parseVoiceStreamQueryFromRequest } from './voice-stream-provider.util';
+import {
+  looksLikeExotelStreamMessage,
+  parseVoiceStreamQueryFromRequest,
+} from './voice-stream-provider.util';
 import { TelephonyProvider } from './telephony/telephony-provider.types';
 import { TelephonyOutboundMediaFactory } from './telephony/outbound/telephony-outbound-media.factory';
 import { SmartfloTelephonyAudioConfigService } from './telephony/audio/smartflo-telephony-audio.config';
@@ -64,17 +67,23 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const streamQuery = parseVoiceStreamQueryFromRequest(request);
       const streamProvider = streamQuery.provider;
-      const isExotel = streamProvider === TelephonyProvider.EXOTEL;
-      const telephonyProvider = isExotel
-        ? TelephonyProvider.EXOTEL
-        : TelephonyProvider.SMARTFLO;
+      let useExotel = streamProvider === TelephonyProvider.EXOTEL;
+      let exotelRoutingActivated = false;
+
       if (streamQuery.authorizationId) {
         this.voiceSessionService.setSocketQueryAuthorizationId(
           session.socketSessionId,
           streamQuery.authorizationId,
         );
       }
-      if (isExotel) {
+
+      const activateExotelRouting = (reason: 'query' | 'first_frame'): void => {
+        if (exotelRoutingActivated) {
+          return;
+        }
+        exotelRoutingActivated = true;
+        useExotel = true;
+
         this.voiceSocketRegistry.registerExotelSocket(session.socketSessionId);
         const fallbackStreamSid =
           this.voiceSessionService.initializeExotelSessionOnConnect(
@@ -96,12 +105,14 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
 
         this.logger.log({
-          telephonyProvider,
+          telephonyProvider: TelephonyProvider.EXOTEL,
           socketSessionId: session.socketSessionId,
           sessionId: session.socketSessionId,
           remoteAddress,
           connectedAt: session.connectedAt,
-          provider: streamProvider,
+          requestUrl: request.url ?? null,
+          routingReason: reason,
+          provider: streamProvider ?? null,
           authorizationId: streamQuery.authorizationId ?? null,
           callSid: streamQuery.callSid ?? null,
           streamSid: fallbackStreamSid || null,
@@ -112,6 +123,10 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
           },
           message: 'Exotel WebSocket connected',
         });
+      };
+
+      if (useExotel) {
+        activateExotelRouting('query');
       }
 
       client.on('message', (data) => {
@@ -122,7 +137,17 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
               ? data.toString('utf8')
               : String(data);
 
-        if (isExotel) {
+        if (!useExotel && looksLikeExotelStreamMessage(raw)) {
+          this.logger.warn({
+            socketSessionId: session.socketSessionId,
+            requestUrl: request.url ?? null,
+            message:
+              'Exotel stream detected from first frame; WSS query params were missing or not parsed',
+          });
+          activateExotelRouting('first_frame');
+        }
+
+        if (useExotel) {
           this.exotelStreamAdapter.handleMessage(session.socketSessionId, raw);
           return;
         }
@@ -137,15 +162,16 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
         );
       });
 
-      if (isExotel) {
+      if (useExotel) {
         return;
       }
 
       this.logger.log({
-        telephonyProvider,
+        telephonyProvider: TelephonyProvider.SMARTFLO,
         socketSessionId: session.socketSessionId,
         remoteAddress,
         connectedAt: session.connectedAt,
+        requestUrl: request.url ?? null,
         message: 'Smartflo WebSocket connected',
       });
       this.callTiming.mark(

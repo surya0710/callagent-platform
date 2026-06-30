@@ -49,13 +49,41 @@ export function parseVoiceStreamQueryFromRequest(
       ? TelephonyProvider.EXOTEL
       : provider === TelephonyProvider.SMARTFLO
         ? TelephonyProvider.SMARTFLO
-        : undefined;
+        : authorizationId
+          ? TelephonyProvider.EXOTEL
+          : undefined;
 
   return {
     provider: resolvedProvider,
     authorizationId,
     callSid,
   };
+}
+
+/** True when the first telephony frame looks like Exotel AgentStream, not Smartflo. */
+export function looksLikeExotelStreamMessage(raw: string): boolean {
+  try {
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+    const event = payload.event;
+    if (event === 'connected') {
+      return true;
+    }
+    if (event === 'start') {
+      const start =
+        payload.start && typeof payload.start === 'object'
+          ? (payload.start as Record<string, unknown>)
+          : undefined;
+      return Boolean(
+        payload.stream_sid ||
+          payload.streamSid ||
+          start?.stream_sid ||
+          start?.streamSid,
+      );
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 export function parseVoiceStreamProviderFromRequest(

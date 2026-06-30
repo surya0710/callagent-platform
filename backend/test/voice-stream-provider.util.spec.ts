@@ -1,5 +1,6 @@
 import { IncomingMessage } from 'http';
 import {
+  looksLikeExotelStreamMessage,
   parseVoiceStreamAuthorizationIdFromRequest,
   parseVoiceStreamQueryFromRequest,
 } from '../src/modules/voice/voice-stream-provider.util';
@@ -51,10 +52,40 @@ describe('voice-stream-provider.util', () => {
     expect(parseVoiceStreamQueryFromRequest(request).callSid).toBe('CA-snake');
   });
 
+  it('infers exotel provider when only authorizationId is present in WSS query', () => {
+    const request = mockRequest(
+      '/api/voice/stream?authorizationId=auth-only',
+    );
+
+    expect(parseVoiceStreamQueryFromRequest(request)).toEqual({
+      provider: TelephonyProvider.EXOTEL,
+      authorizationId: 'auth-only',
+      callSid: undefined,
+    });
+  });
+
   it('returns empty query params when URL has no search string', () => {
     const request = mockRequest('/api/voice/stream');
 
     expect(parseVoiceStreamQueryFromRequest(request)).toEqual({});
     expect(parseVoiceStreamAuthorizationIdFromRequest(request)).toBeUndefined();
+  });
+
+  it('detects Exotel connected event from first frame', () => {
+    expect(looksLikeExotelStreamMessage('{"event":"connected"}')).toBe(true);
+  });
+
+  it('detects Exotel start event with stream_sid', () => {
+    expect(
+      looksLikeExotelStreamMessage(
+        '{"event":"start","start":{"stream_sid":"MZ123"}}',
+      ),
+    ).toBe(true);
+  });
+
+  it('does not treat Smartflo start without stream sid as Exotel', () => {
+    expect(
+      looksLikeExotelStreamMessage('{"event":"start","start":{"callSid":"CA1"}}'),
+    ).toBe(false);
   });
 });
