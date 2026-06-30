@@ -66,9 +66,12 @@ import {
 } from './voice-turn-taking.util';
 import {
   CustomerLanguage,
-  detectCustomerLanguage,
-  evaluatePreferredLanguageUpdate,
-  resolveResponseLanguage,
+  assessCustomerUtteranceLanguage,
+  createInitialLanguageLockState,
+  lockStateToCustomerLanguage,
+  LanguageLockSessionState,
+  resolveResponseLanguageFromLock,
+  updateLanguageLock,
 } from '../voice-language.util';
 import {
   buildTurnResponseInstructions,
@@ -171,7 +174,8 @@ interface OpenAiRealtimeSession {
   lastCustomerLanguage?: CustomerLanguage;
   preferredLanguage: CustomerLanguage;
   responseLanguage?: CustomerLanguage;
-  languageMatchMode: 'latest_customer_message';
+  languageLock: LanguageLockSessionState;
+  languageMatchMode: 'conservative_language_lock';
   currentResponseId?: string;
   interruptedResponseId?: string;
   cancelSentForResponseId?: string;
@@ -461,10 +465,7 @@ function extractResponseId(event: Record<string, unknown>): string | undefined {
 }
 
 function resolveSessionResponseLanguage(session: OpenAiRealtimeSession): CustomerLanguage {
-  return resolveResponseLanguage(
-    session.preferredLanguage,
-    session.lastCustomerLanguage,
-  );
+  return resolveResponseLanguageFromLock(session.languageLock.lockedLanguage);
 }
 
 @Injectable()
@@ -960,8 +961,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       customerAudioAppendedSinceLastResponse: false,
       startupDelayLogged: false,
       autoReplyBlockedCount: 0,
-      preferredLanguage: 'unknown',
-      languageMatchMode: 'latest_customer_message',
+      preferredLanguage: 'hinglish',
+      languageLock: createInitialLanguageLockState(),
+      languageMatchMode: 'conservative_language_lock',
       wasInterruptedResponse: false,
       activeInstructionsMode:
         aiSpeakFirstEnabled && openingContext ? 'opening' : 'normal',
@@ -1254,6 +1256,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       activePlaybook,
       callContextInstructions,
       preferredLanguage: session.preferredLanguage,
+      lockedLanguage: session.languageLock.lockedLanguage,
     });
 
     const payload = buildGaSessionUpdate({
@@ -2177,57 +2180,41 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session: OpenAiRealtimeSession,
     text: string,
   ): void {
-    const detection = detectCustomerLanguage(text);
-    session.detectedCustomerLanguage = detection.language;
+    const assessment = assessCustomerUtteranceLanguage(text);
+    const lockResult = updateLanguageLock(session.languageLock, assessment);
 
-    if (detection.language !== 'unknown') {
-      session.lastCustomerLanguage = detection.language;
+    session.detectedCustomerLanguage = assessment.detection.language;
+    if (assessment.detection.language !== 'unknown') {
+      session.lastCustomerLanguage = assessment.detection.language;
     }
 
-    const updateResult = evaluatePreferredLanguageUpdate(
-      session.preferredLanguage,
-      detection,
+    session.preferredLanguage = lockStateToCustomerLanguage(
+      lockResult.lockedLanguage,
     );
-
-    if (updateResult.shouldUpdate) {
-      const previousLanguage = session.preferredLanguage;
-      session.preferredLanguage = updateResult.newLanguage;
-      this.logger.log({
-        streamSid: session.streamSid,
-        text,
-        previousLanguage,
-        preferredLanguage: session.preferredLanguage,
-        confidence: detection.confidence,
-        message: 'language_changed',
-      });
-    } else if (updateResult.skipReason && updateResult.skipReason !== 'already_set') {
-      this.logger.log({
-        streamSid: session.streamSid,
-        text,
-        preferredLanguage: session.preferredLanguage,
-        detectedLanguage: detection.language,
-        confidence: detection.confidence,
-        skipReason: updateResult.skipReason,
-        message: 'language_change_skipped_reason',
-      });
-    }
-
     session.responseLanguage = resolveSessionResponseLanguage(session);
 
     this.logger.log({
       streamSid: session.streamSid,
-      text,
-      detectedCustomerLanguage: detection.language,
-      confidence: detection.confidence,
+      detectedLanguage: lockResult.detectedLanguage,
+      lockedLanguage: lockResult.lockedLanguage,
+      previousLock: lockResult.previousLock,
+      reason: lockResult.reason,
+      hindiWordRatio: Number(lockResult.hindiWordRatio.toFixed(3)),
+      utteranceSample: lockResult.utteranceSample,
+      changed: lockResult.changed,
+      consecutivePrimaryHindiTurns:
+        session.languageLock.consecutivePrimaryHindiTurns,
+      consecutivePrimaryEnglishHinglishTurns:
+        session.languageLock.consecutivePrimaryEnglishHinglishTurns,
       preferredLanguage: session.preferredLanguage,
-      lastCustomerLanguage: session.lastCustomerLanguage,
       responseLanguage: session.responseLanguage,
-      languageMatchMode: session.languageMatchMode,
-      message: 'language_detected',
+      message: lockResult.changed
+        ? 'language_lock_changed'
+        : 'language_lock_evaluated',
     });
 
     this.updateRuntimeState(session.streamSid, {
-      detectedCustomerLanguage: detection.language,
+      detectedCustomerLanguage: assessment.detection.language,
       lastCustomerLanguage: session.lastCustomerLanguage,
       preferredLanguage: session.preferredLanguage,
       responseLanguage: session.responseLanguage,
@@ -3141,6 +3128,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     const turnInstructions = buildTurnResponseInstructions({
       preferredLanguage: session.responseLanguage,
+      lockedLanguage: session.languageLock.lockedLanguage,
       wasInterrupted: session.wasInterruptedResponse,
       lastAssistantText: session.lastAssistantText ?? session.lastAssistantTranscript,
     });
@@ -4118,7 +4106,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       lastCustomerLanguage?: CustomerLanguage;
       preferredLanguage?: CustomerLanguage;
       responseLanguage?: CustomerLanguage;
-      languageMatchMode?: 'latest_customer_message';
+      languageMatchMode?: 'latest_customer_message' | 'conservative_language_lock';
       firstCustomerSpeechAt?: Date;
       firstResponseCreateAt?: Date;
       startupListenDelayMs?: number;

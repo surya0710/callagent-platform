@@ -1,3 +1,6 @@
+import type { CustomerLanguage, LanguageLockState } from './voice-language.util';
+import { buildLanguageInstruction, buildLockedLanguageInstruction } from './voice-language.util';
+
 export const DEFAULT_ECHO_TAIL_MS = 400;
 
 export interface InterruptGateInput {
@@ -65,16 +68,20 @@ export const VOICE_INTERRUPTION_HARD_RULE =
 
 export function buildTurnResponseInstructions(input: {
   preferredLanguage?: string;
+  lockedLanguage?: LanguageLockState;
   wasInterrupted?: boolean;
   lastAssistantText?: string;
 }): string | undefined {
   const parts: string[] = [];
 
-  if (input.preferredLanguage && input.preferredLanguage !== 'unknown') {
-    parts.push(
-      `Reply in ${input.preferredLanguage}. Do not switch language based on accent. Switch only if the customer clearly changes language.`,
-    );
-  }
+  const languageInstruction =
+    input.lockedLanguage && input.lockedLanguage !== 'unknown'
+      ? buildLockedLanguageInstruction(input.lockedLanguage)
+      : input.preferredLanguage && input.preferredLanguage !== 'unknown'
+        ? buildLanguageInstruction(input.preferredLanguage as CustomerLanguage)
+        : buildLockedLanguageInstruction('english_hinglish');
+
+  parts.push(languageInstruction);
 
   if (input.wasInterrupted) {
     parts.push(VOICE_INTERRUPTION_HARD_RULE);

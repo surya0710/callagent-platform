@@ -1,7 +1,9 @@
 import { RuntimeAgentPlaybook } from '../training/agent-playbook.service';
 import {
   buildLanguageInstruction,
+  buildLockedLanguageInstruction,
   CustomerLanguage,
+  LanguageLockState,
 } from './voice-language.util';
 import { VOICE_INTERRUPTION_HARD_RULE } from './voice-interruption.util';
 import {
@@ -16,6 +18,7 @@ export interface VoiceRuntimeInstructionOptions {
   campaignContext?: string;
   callContextInstructions?: string;
   preferredLanguage?: CustomerLanguage;
+  lockedLanguage?: LanguageLockState;
 }
 
 export const VOICE_AGENT_PLAYBOOK_SAFETY_BLOCK = [
@@ -29,13 +32,17 @@ export const VOICE_AGENT_PLAYBOOK_SAFETY_BLOCK = [
 ].join('\n');
 
 export const VOICE_LANGUAGE_MATCH_HARD_RULE =
-  'Always respond in the same language/style used by the customer in their latest message. If the customer speaks English, reply in English. If Hindi, reply in Hindi. If Hinglish, reply in Hinglish. Indian accent does NOT mean Hindi. Do not switch language based on accent alone.';
+  'Maintain the locked conversation language for this call. Default to English or Hinglish. Do not switch language because of accent or isolated Hindi filler words (haan, ji, nahi, theek, achha, matlab, bas, sir, madam). Do not switch to Hindi from one or two Hindi words inside an English sentence. Continue in the locked language unless the customer clearly and consistently speaks mostly Hindi across multiple meaningful utterances.';
 
 export function buildPreferredLanguageInstruction(
   preferredLanguage?: CustomerLanguage,
+  lockedLanguage?: LanguageLockState,
 ): string | undefined {
+  if (lockedLanguage && lockedLanguage !== 'unknown') {
+    return buildLockedLanguageInstruction(lockedLanguage);
+  }
   if (!preferredLanguage || preferredLanguage === 'unknown') {
-    return undefined;
+    return buildLockedLanguageInstruction('english_hinglish');
   }
   return buildLanguageInstruction(preferredLanguage);
 }
@@ -46,9 +53,13 @@ export function buildVoiceRuntimeInstructions({
   campaignContext,
   callContextInstructions,
   preferredLanguage,
+  lockedLanguage,
 }: VoiceRuntimeInstructionOptions): string {
   const contextBlock = callContextInstructions?.trim() || campaignContext?.trim();
-  const preferredLanguageBlock = buildPreferredLanguageInstruction(preferredLanguage);
+  const preferredLanguageBlock = buildPreferredLanguageInstruction(
+    preferredLanguage,
+    lockedLanguage,
+  );
 
   if (!activePlaybook) {
     return [
