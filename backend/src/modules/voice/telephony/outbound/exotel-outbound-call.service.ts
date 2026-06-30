@@ -10,32 +10,32 @@ import { CallEventType, CallSource, CallStatus, Prisma } from '@prisma/client';
 import {
   buildCallRequestOriginInfo,
   CallRequestOriginInfo,
-} from '../../../common/server-origin.util';
-import { PrismaService } from '../../../database/prisma.service';
-import { VoiceRuntimeFactory } from '../runtime/voice-runtime.factory';
+} from '../../../../common/server-origin.util';
+import { PrismaService } from '../../../../database/prisma.service';
+import { VoiceRuntimeFactory } from '../../runtime/voice-runtime.factory';
 import {
   CallTimingDiagnosticsService,
   CallTimingEvent,
-} from '../call-timing-diagnostics.service';
+} from '../../call-timing-diagnostics.service';
 import {
   VoiceCallAuthorizationService,
   VoiceCallSource,
-} from '../voice-call-authorization.service';
+} from '../../voice-call-authorization.service';
 import {
   isEmptyCallContext,
   sanitizeCallContext,
-} from '../voice-call-context.util';
-import { CallContext } from '../voice-call-context.types';
-import { VoiceOpeningConfigService } from '../voice-opening-config.service';
-import { TelephonyProviderConfigService } from './telephony-provider.config';
-import { TelephonyProvider } from './telephony-provider.types';
-import { toExotelCustomerNumber } from './telephony-phone.util';
-import { extractExotelProviderCallSid } from './exotel-provider-call-sid.util';
+} from '../../voice-call-context.util';
+import { CallContext } from '../../voice-call-context.types';
+import { VoiceOpeningConfigService } from '../../voice-opening-config.service';
+import { TelephonyProviderConfigService } from '../telephony-provider.config';
+import { TelephonyProvider } from '../telephony-provider.types';
+import { toExotelCustomerNumber } from '../telephony-phone.util';
+import { extractExotelProviderCallSid } from '../exotel-provider-call-sid.util';
 import {
   InitiateVoiceCallInput,
   InitiateVoiceCallIntegrationMeta,
   VoiceTestCallResult,
-} from './telephony-outbound-call.service';
+} from '../telephony-outbound-call.service';
 
 @Injectable()
 export class ExotelOutboundCallService {

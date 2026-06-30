@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { extractSmartfloProviderCallSid } from '../../voice-call-authorization.service';
+import { extractSmartfloProviderCallSid } from '../voice-call-authorization.service';
 
 /**
  * Extract provider call SID from Exotel connect API JSON responses.
