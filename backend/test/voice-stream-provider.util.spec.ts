@@ -18,8 +18,21 @@ describe('voice-stream-provider.util', () => {
     expect(parseVoiceStreamQueryFromRequest(request)).toEqual({
       provider: TelephonyProvider.EXOTEL,
       authorizationId: 'auth-123',
+      callSid: undefined,
     });
     expect(parseVoiceStreamAuthorizationIdFromRequest(request)).toBe('auth-123');
+  });
+
+  it('parses CallSid from WSS query for Exotel handoff', () => {
+    const request = mockRequest(
+      '/api/voice/stream?provider=exotel&authorizationId=auth-123&CallSid=CA-wss',
+    );
+
+    expect(parseVoiceStreamQueryFromRequest(request)).toEqual({
+      provider: TelephonyProvider.EXOTEL,
+      authorizationId: 'auth-123',
+      callSid: 'CA-wss',
+    });
   });
 
   it('accepts authorization_id snake_case alias', () => {
@@ -28,6 +41,14 @@ describe('voice-stream-provider.util', () => {
     );
 
     expect(parseVoiceStreamAuthorizationIdFromRequest(request)).toBe('auth-456');
+  });
+
+  it('accepts call_sid snake_case alias', () => {
+    const request = mockRequest(
+      '/api/voice/stream?provider=exotel&call_sid=CA-snake',
+    );
+
+    expect(parseVoiceStreamQueryFromRequest(request).callSid).toBe('CA-snake');
   });
 
   it('returns empty query params when URL has no search string', () => {

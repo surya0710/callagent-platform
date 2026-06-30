@@ -20,6 +20,37 @@ import { VoiceSession, VoiceSessionStatus, voiceRecordingDownloadUrl } from '../
 
 const POLL_INTERVAL_MS = 2000;
 
+function authStatusLabel(session: VoiceSession): string {
+  if (session.isAppInitiated === true) {
+    return 'Authorized';
+  }
+  if (session.isAppInitiated === false || session.rejectionReason) {
+    return session.rejectionReason ?? 'Unauthorized';
+  }
+  if (session.authorizationId || session.authorizationSource) {
+    return 'Pending';
+  }
+  return '—';
+}
+
+function providerLabel(session: VoiceSession): string {
+  if (session.telephonyProvider) {
+    return session.telephonyProvider;
+  }
+  if (session.runtimeProvider) {
+    return session.runtimeProvider;
+  }
+  return 'smartflo';
+}
+
+function streamIdLabel(session: VoiceSession): string {
+  const sid = session.streamSid ?? '—';
+  if (session.streamSidIsFallback && session.streamSid) {
+    return `${sid} (fallback)`;
+  }
+  return sid;
+}
+
 function aiConnectionLabel(session: VoiceSession): string {
   if (session.isOpenAiConnected || session.runtimeStatus === 'connected') {
     return 'AI connected';
@@ -38,6 +69,9 @@ function aiConnectionLabel(session: VoiceSession): string {
         : 'Unauthorized';
   }
   if (session.lastEvent === 'connected' && session.status === 'PENDING') {
+    return 'Stream connected';
+  }
+  if (session.lastEvent === 'stream_connected' && session.status === 'PENDING') {
     return 'Stream connected';
   }
   if (session.status === 'ACTIVE' && !session.runtimeStatus) {
@@ -320,12 +354,14 @@ export function VoiceSessionsPage() {
           <Table
             headers={[
               'Status',
+              'Provider',
+              'Auth',
               'streamSid',
               'callSid',
               'From',
               'To',
               'Packets',
-              'Stop Reason',
+              'Stop / Rejection',
               'Recording',
               'Started At',
               'Ended At',
@@ -338,11 +374,17 @@ export function VoiceSessionsPage() {
                 <td className="px-4 py-3">
                   <StatusBadge status={session.status} />
                 </td>
+                <td className="whitespace-nowrap px-4 py-3 capitalize">
+                  {providerLabel(session)}
+                </td>
+                <td className="max-w-[10rem] truncate px-4 py-3 text-xs" title={authStatusLabel(session)}>
+                  {authStatusLabel(session)}
+                </td>
                 <td
                   className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
                   title={session.streamSid ?? undefined}
                 >
-                  {safeValue(session.streamSid)}
+                  {streamIdLabel(session)}
                 </td>
                 <td
                   className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
@@ -353,8 +395,8 @@ export function VoiceSessionsPage() {
                 <td className="whitespace-nowrap px-4 py-3">{safeValue(session.from)}</td>
                 <td className="whitespace-nowrap px-4 py-3">{safeValue(session.to)}</td>
                 <td className="whitespace-nowrap px-4 py-3">{session.packetsReceived}</td>
-                <td className="max-w-[12rem] truncate px-4 py-3" title={session.stopReason ?? undefined}>
-                  {safeValue(session.stopReason)}
+                <td className="max-w-[12rem] truncate px-4 py-3" title={session.stopReason ?? session.rejectionReason ?? undefined}>
+                  {safeValue(session.stopReason ?? session.rejectionReason)}
                 </td>
                 <td className="px-4 py-3">
                   {session.recordingAvailable && session.streamSid ? (
@@ -398,7 +440,9 @@ export function VoiceSessionsPage() {
           <Table
             headers={[
               'Status',
+              'Provider',
               'AI',
+              'Auth',
               'streamSid',
               'callSid',
               'From',
@@ -416,12 +460,18 @@ export function VoiceSessionsPage() {
                 <td className="px-4 py-3">
                   <StatusBadge status={session.status} />
                 </td>
+                <td className="whitespace-nowrap px-4 py-3 capitalize">
+                  {providerLabel(session)}
+                </td>
                 <td className="px-4 py-3 text-xs capitalize">{aiConnectionLabel(session)}</td>
+                <td className="max-w-[10rem] truncate px-4 py-3 text-xs" title={authStatusLabel(session)}>
+                  {authStatusLabel(session)}
+                </td>
                 <td
                   className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
                   title={session.streamSid ?? undefined}
                 >
-                  {safeValue(session.streamSid)}
+                  {streamIdLabel(session)}
                 </td>
                 <td
                   className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"

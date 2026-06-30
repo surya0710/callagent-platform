@@ -95,6 +95,10 @@ export class VoiceStreamRuntimeBridge {
       this.voiceSessionService.markAppInitiated(streamSid, false, {
         rejectionReason: authorization.reason,
       });
+      this.voiceSessionService.updateRuntimeState(streamSid, {
+        runtimeStatus: 'error',
+        runtimeError: authorization.reason,
+      });
 
       this.logger.warn({
         telephonyProvider,
@@ -103,8 +107,9 @@ export class VoiceStreamRuntimeBridge {
         callSid: startData.callSid,
         from: startData.from,
         to: startData.to,
-        reason: authorization.reason,
-        message: `${telephonyProvider} stream rejected — not app-initiated`,
+        authorizationId: socketQueryAuthorizationId ?? null,
+        rejectionReason: authorization.reason,
+        message: `${telephonyProvider} authorization failed — session preserved`,
       });
       return;
     }
@@ -206,9 +211,17 @@ export class VoiceStreamRuntimeBridge {
       agentName: openingContext?.agentName,
       companyName: openingContext?.companyName,
       hasCallContext: Boolean(callContext),
-      message: aiSpeakFirstEnabled
-        ? 'voice_ai_speak_first_enabled'
-        : `${telephonyProvider} start authorized — starting OpenAI runtime`,
+      message:
+        telephonyProvider === TelephonyProvider.EXOTEL
+          ? 'Opening OpenAI Realtime WebSocket for Exotel session'
+          : aiSpeakFirstEnabled
+            ? 'voice_ai_speak_first_enabled'
+            : `${telephonyProvider} start authorized — starting OpenAI runtime`,
+    });
+
+    this.voiceSessionService.updateRuntimeState(streamSid, {
+      runtimeProvider: this.voiceRuntime.name,
+      runtimeStatus: 'connecting',
     });
 
     void this.voiceRuntime.createSession({
@@ -356,7 +369,7 @@ export class VoiceStreamRuntimeBridge {
       appInitiated,
       message: appInitiated
         ? `${telephonyProvider} stop event — finalizing voice session`
-        : `${telephonyProvider} stop event — discarded unauthorized stream`,
+        : `${telephonyProvider} stop event — session moved to Recent Ended`,
     });
   }
 

@@ -7,6 +7,7 @@ import { VoiceRecordingService } from './audio/voice-recording.service';
 import { VoiceStreamRuntimeBridge } from './stream/voice-stream-runtime.bridge';
 import { TelephonyProvider } from './telephony/telephony-provider.types';
 import {
+  extractExotelCallSid,
   normalizeExotelStreamEvent,
   readExotelMediaPayloadBytes,
 } from './telephony/stream/exotel-stream.normalizer';
@@ -16,6 +17,7 @@ const PROVIDER = TelephonyProvider.EXOTEL;
 @Injectable()
 export class ExotelStreamAdapter {
   private readonly logger = new Logger(ExotelStreamAdapter.name);
+  private readonly loggedFirstMessageBySocket = new Set<string>();
   private readonly loggedFirstMediaBySocket = new Set<string>();
   private readonly loggedMediaShapeByStreamSid = new Set<string>();
 
@@ -51,6 +53,21 @@ export class ExotelStreamAdapter {
       return;
     }
 
+    if (!this.loggedFirstMessageBySocket.has(socketSessionId)) {
+      this.loggedFirstMessageBySocket.add(socketSessionId);
+      this.logger.log({
+        telephonyProvider: PROVIDER,
+        provider: PROVIDER,
+        socketSessionId,
+        sessionId: socketSessionId,
+        authorizationId:
+          this.voiceSessionService.getSocketQueryAuthorizationId(socketSessionId) ??
+          null,
+        event,
+        message: 'First raw Exotel WebSocket message received',
+      });
+    }
+
     this.logger.debug({
       telephonyProvider: PROVIDER,
       socketSessionId,
@@ -65,7 +82,7 @@ export class ExotelStreamAdapter {
         this.voiceStreamRuntimeBridge.handleConnected(PROVIDER, socketSessionId);
         break;
       case 'start':
-        void this.handleStart(socketSessionId, normalized);
+        void this.handleStart(socketSessionId, normalized, payload);
         break;
       case 'media':
         this.handleMedia(socketSessionId, normalized, payload);
@@ -92,27 +109,86 @@ export class ExotelStreamAdapter {
     }
   }
 
+  private resolveStreamSid(
+    socketSessionId: string,
+    normalizedStreamSid?: string,
+    callSid?: string,
+  ): string {
+    if (normalizedStreamSid && normalizedStreamSid.length > 0) {
+      return normalizedStreamSid;
+    }
+
+    const existing = this.voiceSessionService.resolveStreamSid(
+      undefined,
+      socketSessionId,
+    );
+    if (existing) {
+      return existing;
+    }
+
+    const authorizationId =
+      this.voiceSessionService.getSocketQueryAuthorizationId(socketSessionId);
+    return `exotel_${callSid || authorizationId || socketSessionId}`;
+  }
+
   private async handleStart(
     socketSessionId: string,
     normalized: Extract<
       ReturnType<typeof normalizeExotelStreamEvent>,
       { event: 'start' }
     >,
+    rawPayload: Record<string, unknown>,
   ): Promise<void> {
-    const { streamSid, start: startData } = normalized;
+    const startRecord =
+      rawPayload.start && typeof rawPayload.start === 'object'
+        ? (rawPayload.start as Record<string, unknown>)
+        : {};
+    const callSid =
+      normalized.start.callSid ??
+      extractExotelCallSid(rawPayload, startRecord);
+    const streamSid = this.resolveStreamSid(
+      socketSessionId,
+      normalized.streamSid,
+      callSid,
+    );
+    const startData = {
+      ...normalized.start,
+      streamSid,
+      callSid,
+    };
+    const previousStreamSid = this.voiceSessionService.getBySocketSessionId(
+      socketSessionId,
+    )?.streamSid;
 
     this.logger.log({
       telephonyProvider: PROVIDER,
+      provider: PROVIDER,
       socketSessionId,
+      sessionId: socketSessionId,
       streamSid,
-      callSid: startData.callSid,
-      from: startData.from,
-      to: startData.to,
-      message: 'exotel start event received',
+      callSid: startData.callSid ?? null,
+      from: startData.from ?? null,
+      to: startData.to ?? null,
+      authorizationId:
+        this.voiceSessionService.getSocketQueryAuthorizationId(socketSessionId) ??
+        null,
+      streamSidIsFallback: !normalized.streamSid,
+      previousStreamSid: previousStreamSid ?? null,
+      message: 'Exotel normalized start event',
     });
 
     this.voiceSessionService.bindStreamSid(socketSessionId, startData);
-    this.voiceSocketRegistry.bindStreamSid(socketSessionId, streamSid);
+
+    if (previousStreamSid && previousStreamSid !== streamSid) {
+      this.voiceSocketRegistry.rebindStreamSid(
+        socketSessionId,
+        previousStreamSid,
+        streamSid,
+      );
+    } else {
+      this.voiceSocketRegistry.bindStreamSid(socketSessionId, streamSid);
+    }
+
     this.voiceSocketRegistry.markExotelStream(streamSid, socketSessionId);
     this.voiceSessionService.markAuthorizationPending(streamSid);
     this.voiceRecordingService.start(streamSid, startData.callSid);
@@ -147,38 +223,9 @@ export class ExotelStreamAdapter {
       PROVIDER,
       socketSessionId,
       streamSid,
-      {
-        ...startData,
-        callSid:
-          startData.callSid ??
-          this.extractCallSidFromCustomParameters(startData.customParameters),
-      },
+      startData,
       this.voiceSessionService.getSocketQueryAuthorizationId(socketSessionId),
     );
-  }
-
-  private extractCallSidFromCustomParameters(
-    customParameters: unknown,
-  ): string | undefined {
-    const record =
-      typeof customParameters === 'string'
-        ? Object.fromEntries(new URLSearchParams(customParameters.trim()))
-        : customParameters && typeof customParameters === 'object'
-          ? (customParameters as Record<string, unknown>)
-          : undefined;
-
-    if (!record) {
-      return undefined;
-    }
-
-    for (const key of ['callSid', 'call_sid', 'CallSid']) {
-      const value = record[key];
-      if (typeof value === 'string' && value.trim().length > 0) {
-        return value.trim();
-      }
-    }
-
-    return undefined;
   }
 
   private handleMedia(
@@ -296,10 +343,16 @@ export class ExotelStreamAdapter {
 
     this.logger.log({
       telephonyProvider: PROVIDER,
+      provider: PROVIDER,
       socketSessionId,
+      sessionId: socketSessionId,
       streamSid,
+      callSid:
+        normalized.callSid ??
+        this.voiceSessionService.getByStreamSid(streamSid)?.callSid ??
+        null,
       stopReason: normalized.reason ?? null,
-      message: 'exotel stop event received',
+      message: 'Exotel stop event received',
     });
 
     await this.voiceStreamRuntimeBridge.finalizeOnStop(

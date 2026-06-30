@@ -49,6 +49,25 @@ export class VoiceSocketRegistry {
     }
   }
 
+  rebindStreamSid(
+    socketSessionId: string,
+    previousStreamSid: string,
+    nextStreamSid: string,
+  ): void {
+    const client = this.bySocketSessionId.get(socketSessionId);
+    if (!client) {
+      return;
+    }
+
+    this.byStreamSid.delete(previousStreamSid);
+    this.exotelStreamSids.delete(previousStreamSid);
+    this.outboundChunkByStreamSid.delete(previousStreamSid);
+    this.outboundSequenceByStreamSid.delete(previousStreamSid);
+    this.outboundTimestampByStreamSid.delete(previousStreamSid);
+
+    this.bindStreamSid(socketSessionId, nextStreamSid);
+  }
+
   getByStreamSid(streamSid: string): WebSocket | undefined {
     return this.byStreamSid.get(streamSid);
   }

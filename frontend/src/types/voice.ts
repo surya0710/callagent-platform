@@ -47,6 +47,10 @@ export interface VoiceSession {
   recordingInboundChunkCount?: number;
   recordingOutboundChunkCount?: number;
   runtimeProvider?: string;
+  telephonyProvider?: string;
+  streamSidIsFallback?: boolean;
+  authorizationSource?: string;
+  authorizationId?: string;
   runtimeStatus?: 'idle' | 'connecting' | 'connected' | 'error' | 'closed';
   runtimeConnectedAt?: string;
   runtimeLastEventAt?: string;

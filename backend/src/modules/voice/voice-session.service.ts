@@ -61,6 +61,8 @@ export interface VoiceSession {
   recordingInboundChunkCount?: number;
   recordingOutboundChunkCount?: number;
   runtimeProvider?: string;
+  telephonyProvider?: string;
+  streamSidIsFallback?: boolean;
   runtimeStatus?: VoiceRuntimeStatus;
   runtimeConnectedAt?: Date;
   runtimeLastEventAt?: Date;
@@ -222,6 +224,8 @@ export interface VoiceSessionResponse {
   recordingInboundChunkCount?: number;
   recordingOutboundChunkCount?: number;
   runtimeProvider?: string;
+  telephonyProvider?: string;
+  streamSidIsFallback?: boolean;
   runtimeStatus?: VoiceRuntimeStatus;
   runtimeConnectedAt?: string;
   runtimeLastEventAt?: string;
@@ -381,6 +385,8 @@ export function toVoiceSessionResponse(
     recordingInboundChunkCount: session.recordingInboundChunkCount,
     recordingOutboundChunkCount: session.recordingOutboundChunkCount,
     runtimeProvider: session.runtimeProvider,
+    telephonyProvider: session.telephonyProvider,
+    streamSidIsFallback: session.streamSidIsFallback,
     runtimeStatus: session.runtimeStatus,
     runtimeConnectedAt: session.runtimeConnectedAt?.toISOString(),
     runtimeLastEventAt: session.runtimeLastEventAt?.toISOString(),
@@ -624,6 +630,45 @@ export class VoiceSessionService {
     return session;
   }
 
+  /**
+   * Bind an Exotel session immediately on WebSocket connect so it appears in Active Calls
+   * before the telephony `start` event arrives.
+   */
+  initializeExotelSessionOnConnect(
+    socketSessionId: string,
+    options: {
+      authorizationId?: string;
+      callSid?: string;
+    },
+  ): string {
+    const session = this.activeBySocketSessionId.get(socketSessionId);
+    if (!session) {
+      return '';
+    }
+
+    const authorizationId = options.authorizationId?.trim();
+    const callSid = options.callSid?.trim();
+    const fallbackStreamSid = `exotel_${callSid || authorizationId || socketSessionId}`;
+
+    session.telephonyProvider = 'exotel';
+    session.streamSid = fallbackStreamSid;
+    session.streamSidIsFallback = true;
+    session.callSid = callSid;
+    session.status = 'PENDING';
+    session.lastEvent = 'stream_connected';
+    session.lastEventAt = new Date();
+
+    if (authorizationId) {
+      session.socketQueryAuthorizationId = authorizationId;
+      session.authorizationId = authorizationId;
+    }
+
+    this.activeByStreamSid.set(fallbackStreamSid, session);
+    this.socketToStreamSid.set(socketSessionId, fallbackStreamSid);
+
+    return fallbackStreamSid;
+  }
+
   getBySocketSessionId(socketSessionId: string): VoiceSession | undefined {
     return (
       this.activeBySocketSessionId.get(socketSessionId) ??
@@ -658,6 +703,10 @@ export class VoiceSessionService {
       }
 
       if (session.isAppInitiated === true) {
+        return true;
+      }
+
+      if (session.telephonyProvider === 'exotel') {
         return true;
       }
 
@@ -699,7 +748,8 @@ export class VoiceSessionService {
     const local = this.recentEndedSessions.filter(
       (session) =>
         session.isAppInitiated === true ||
-        Boolean(session.streamSid && session.startedAt),
+        Boolean(session.streamSid && session.startedAt) ||
+        (session.telephonyProvider === 'exotel' && Boolean(session.streamSid)),
     );
     const shared = await this.voiceSharedStateService.listRecentEndedSessions();
 
@@ -951,8 +1001,19 @@ export class VoiceSessionService {
     }
 
     const now = new Date();
+    const previousStreamSid = session.streamSid;
+
+    if (
+      previousStreamSid &&
+      previousStreamSid !== data.streamSid
+    ) {
+      this.activeByStreamSid.delete(previousStreamSid);
+      this.authorizationPending.delete(previousStreamSid);
+    }
+
     session.streamSid = data.streamSid;
-    session.callSid = data.callSid;
+    session.streamSidIsFallback = false;
+    session.callSid = data.callSid ?? session.callSid;
     session.accountSid = data.accountSid;
     session.from = data.from;
     session.to = data.to;
@@ -1550,12 +1611,17 @@ export class VoiceSessionService {
       return true;
     }
 
+    if (session.telephonyProvider === 'exotel' && session.connectedAt) {
+      return true;
+    }
+
     return Boolean(
       session.streamSid &&
         (session.startedAt ||
           session.packetsReceived > 0 ||
           session.lastEvent === 'start' ||
           session.lastEvent === 'media' ||
+          session.lastEvent === 'stream_connected' ||
           session.status === 'ACTIVE'),
     );
   }

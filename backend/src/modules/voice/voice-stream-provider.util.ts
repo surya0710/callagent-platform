@@ -6,6 +6,7 @@ export type VoiceStreamProvider = TelephonyProvider;
 export interface VoiceStreamQueryParams {
   provider?: VoiceStreamProvider;
   authorizationId?: string;
+  callSid?: string;
 }
 
 function readVoiceStreamSearchParams(
@@ -37,6 +38,11 @@ export function parseVoiceStreamQueryFromRequest(
     params.get('authorizationId')?.trim() ||
     params.get('authorization_id')?.trim() ||
     undefined;
+  const callSid =
+    params.get('CallSid')?.trim() ||
+    params.get('callSid')?.trim() ||
+    params.get('call_sid')?.trim() ||
+    undefined;
 
   const resolvedProvider =
     provider === TelephonyProvider.EXOTEL
@@ -48,6 +54,7 @@ export function parseVoiceStreamQueryFromRequest(
   return {
     provider: resolvedProvider,
     authorizationId,
+    callSid,
   };
 }
 

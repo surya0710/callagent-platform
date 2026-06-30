@@ -37,6 +37,7 @@ const MULAW_FRAME_BYTES = 160;
 @WebSocketGateway({ path: '/api/voice/stream' })
 export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(AudioGateway.name);
+  private readonly loggedFirstExotelOutboundByStreamSid = new Set<string>();
 
   constructor(
     private readonly voiceSessionService: VoiceSessionService,
@@ -75,6 +76,42 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
       if (isExotel) {
         this.voiceSocketRegistry.registerExotelSocket(session.socketSessionId);
+        const fallbackStreamSid =
+          this.voiceSessionService.initializeExotelSessionOnConnect(
+            session.socketSessionId,
+            {
+              authorizationId: streamQuery.authorizationId,
+              callSid: streamQuery.callSid,
+            },
+          );
+        if (fallbackStreamSid) {
+          this.voiceSocketRegistry.bindStreamSid(
+            session.socketSessionId,
+            fallbackStreamSid,
+          );
+          this.voiceSocketRegistry.markExotelStream(
+            fallbackStreamSid,
+            session.socketSessionId,
+          );
+        }
+
+        this.logger.log({
+          telephonyProvider,
+          socketSessionId: session.socketSessionId,
+          sessionId: session.socketSessionId,
+          remoteAddress,
+          connectedAt: session.connectedAt,
+          provider: streamProvider,
+          authorizationId: streamQuery.authorizationId ?? null,
+          callSid: streamQuery.callSid ?? null,
+          streamSid: fallbackStreamSid || null,
+          queryParams: {
+            provider: streamProvider ?? null,
+            authorizationId: streamQuery.authorizationId ?? null,
+            callSid: streamQuery.callSid ?? null,
+          },
+          message: 'Exotel WebSocket connected',
+        });
       }
 
       client.on('message', (data) => {
@@ -101,14 +138,6 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       if (isExotel) {
-        this.logger.log({
-          telephonyProvider,
-          socketSessionId: session.socketSessionId,
-          remoteAddress,
-          connectedAt: session.connectedAt,
-          authorizationId: streamQuery.authorizationId ?? null,
-          message: 'Exotel WebSocket connected',
-        });
         return;
       }
 
@@ -151,9 +180,15 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.voiceSessionService.endBySocketSessionId(socketSessionId);
     this.voiceSocketRegistry.removeBySocketSessionId(socketSessionId);
 
+    const telephonyProvider =
+      session?.telephonyProvider === TelephonyProvider.EXOTEL
+        ? TelephonyProvider.EXOTEL
+        : TelephonyProvider.SMARTFLO;
+
     this.logger.log({
       socketSessionId,
-      telephonyProvider: TelephonyProvider.SMARTFLO,
+      telephonyProvider,
+      streamSid: session?.streamSid ?? null,
       message: 'Voice WebSocket disconnected',
     });
   }
@@ -211,17 +246,20 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       bytes: decodedLength,
     });
 
-    if (decodedLength < MULAW_FRAME_BYTES || decodedLength % MULAW_FRAME_BYTES !== 0) {
-      this.logger.warn({
-        streamSid,
-        decodedByteLength: decodedLength,
-        message: 'Outbound media payload is not a multiple of 160 bytes',
-      });
-    }
-
     const telephonyProvider = this.voiceSocketRegistry.isExotelStream(streamSid)
       ? TelephonyProvider.EXOTEL
       : TelephonyProvider.SMARTFLO;
+
+    if (decodedLength < MULAW_FRAME_BYTES || decodedLength % MULAW_FRAME_BYTES !== 0) {
+      if (telephonyProvider !== TelephonyProvider.EXOTEL) {
+        this.logger.warn({
+          streamSid,
+          decodedByteLength: decodedLength,
+          message: 'Outbound media payload is not a multiple of 160 bytes',
+        });
+      }
+    }
+
     const outboundAdapter = this.outboundMediaFactory.getAdapter(telephonyProvider);
     const audioConfig =
       telephonyProvider === TelephonyProvider.EXOTEL
@@ -266,6 +304,19 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
         outbound.decodedMulawBytes,
         wsReadyState,
       );
+      if (
+        telephonyProvider === TelephonyProvider.EXOTEL &&
+        !this.loggedFirstExotelOutboundByStreamSid.has(streamSid)
+      ) {
+        this.loggedFirstExotelOutboundByStreamSid.add(streamSid);
+        this.logger.log({
+          telephonyProvider,
+          streamSid,
+          payloadByteLength: outbound.decodedMulawBytes,
+          payloadBase64Length: base64MulawPayload.length,
+          message: 'Sent outbound Exotel audio frame',
+        });
+      }
       voiceDebugLog(this.logger, streamSid, 'outbound_audio_chunk', {
         bytes: outbound.decodedMulawBytes,
         chunk: chunkNumber,

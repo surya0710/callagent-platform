@@ -32,11 +32,23 @@ export class ExotelVoiceController {
     @Query('to') toLower?: string,
   ) {
     const telephonyProvider = TelephonyProvider.EXOTEL;
+    const resolvedCallSid = (callSid ?? callSidSnake)?.trim();
+    const resolvedFrom = from ?? fromLower;
+    const resolvedTo = to ?? toLower;
+
+    this.logger.log({
+      telephonyProvider,
+      callSid: resolvedCallSid ?? null,
+      from: resolvedFrom ?? null,
+      to: resolvedTo ?? null,
+      message: 'Exotel stream-url endpoint hit',
+    });
+
     const authorizationId =
       await this.voiceCallAuthorizationService.findPendingAuthorizationId({
-        callSid: callSid ?? callSidSnake,
-        from: from ?? fromLower,
-        to: to ?? toLower,
+        callSid: resolvedCallSid,
+        from: resolvedFrom,
+        to: resolvedTo,
       });
 
     const baseWss = appendVoiceStreamProviderQuery(
@@ -44,8 +56,6 @@ export class ExotelVoiceController {
         'wss://tatdai.in/api/voice/stream',
       TelephonyProvider.EXOTEL,
     );
-
-    const resolvedCallSid = (callSid ?? callSidSnake)?.trim();
 
     if (!authorizationId) {
       this.logger.warn({
@@ -70,7 +80,8 @@ export class ExotelVoiceController {
       telephonyProvider,
       callSid: resolvedCallSid,
       authorizationId,
-      message: 'exotel stream-url resolver: returning authorized WSS URL',
+      url,
+      message: 'Exotel stream-url response generated',
     });
 
     return {

@@ -252,6 +252,11 @@ export class VoiceCallAuthorizationService {
     input: VoiceCallStartAuthorizationInput,
   ): Promise<VoiceCallAuthorizationResult> {
     if (!this.isAuthorizationRequired()) {
+      this.logger.log({
+        streamSid: input.streamSid,
+        matchMethod: 'dev_bypass',
+        message: 'Voice stream authorization bypassed (dev mode)',
+      });
       return {
         authorized: true,
         authorizationId: 'dev-bypass',
@@ -265,14 +270,29 @@ export class VoiceCallAuthorizationService {
       input.authorizationId?.trim() ||
       this.extractCustomAuthorizationId(input.customParameters);
     if (customAuthorizationId) {
+      this.logger.log({
+        streamSid: input.streamSid,
+        callSid: input.callSid ?? null,
+        authorizationId: customAuthorizationId,
+        matchMethod: 'authorizationId',
+        message: 'Authorization match attempt: authorizationId',
+      });
       const byCustom = await this.consumeAuthorization(customAuthorizationId);
       if (byCustom) {
+        this.logger.log({
+          streamSid: input.streamSid,
+          authorizationId: customAuthorizationId,
+          matchMethod: 'authorizationId',
+          message: 'Authorization success via authorizationId',
+        });
         return byCustom;
       }
 
       this.logger.warn({
         streamSid: input.streamSid,
         authorizationId: customAuthorizationId,
+        matchMethod: 'authorizationId',
+        rejectionReason: 'authorizationId_not_consumable',
         message:
           'Voice stream authorizationId present but could not be consumed (missing, expired, or already used)',
       });
@@ -283,28 +303,65 @@ export class VoiceCallAuthorizationService {
       const reservedAuthorizationId =
         this.streamUrlAuthorizationByCallSid.get(callSid.toLowerCase());
       if (reservedAuthorizationId) {
+        this.logger.log({
+          streamSid: input.streamSid,
+          callSid,
+          authorizationId: reservedAuthorizationId,
+          matchMethod: 'streamUrlCallSidReservation',
+          message: 'Authorization match attempt: stream-url callSid reservation',
+        });
         const reservedMatch = await this.consumeAuthorization(
           reservedAuthorizationId,
         );
         if (reservedMatch) {
           this.streamUrlAuthorizationByCallSid.delete(callSid.toLowerCase());
+          this.logger.log({
+            streamSid: input.streamSid,
+            callSid,
+            matchMethod: 'streamUrlCallSidReservation',
+            message: 'Authorization success via stream-url callSid reservation',
+          });
           return reservedMatch;
         }
       }
 
+      this.logger.log({
+        streamSid: input.streamSid,
+        callSid,
+        matchMethod: 'callSidExact',
+        message: 'Authorization match attempt: exact callSid',
+      });
       const authorizationId = this.findAuthorizationIdForCallSid(callSid);
       if (authorizationId) {
         const match = await this.consumeAuthorization(authorizationId);
         if (match) {
+          this.logger.log({
+            streamSid: input.streamSid,
+            callSid,
+            matchMethod: 'callSidExact',
+            message: 'Authorization success via exact callSid',
+          });
           return match;
         }
       }
 
+      this.logger.log({
+        streamSid: input.streamSid,
+        callSid,
+        matchMethod: 'callSidCaseInsensitive',
+        message: 'Authorization match attempt: case-insensitive callSid (redis)',
+      });
       const redisEntry =
         await this.voiceSharedStateService.loadAuthorizationByCallSid(callSid);
       if (redisEntry) {
         const match = await this.consumeAuthorization(redisEntry.authorizationId);
         if (match) {
+          this.logger.log({
+            streamSid: input.streamSid,
+            callSid,
+            matchMethod: 'callSidCaseInsensitive',
+            message: 'Authorization success via redis callSid',
+          });
           return match;
         }
       }
@@ -313,15 +370,41 @@ export class VoiceCallAuthorizationService {
     const candidatePhones = this.buildPhoneMatchCandidates(input.from, input.to);
 
     for (const phone of candidatePhones) {
+      this.logger.log({
+        streamSid: input.streamSid,
+        callSid: input.callSid ?? null,
+        phone,
+        matchMethod: 'phoneExact',
+        message: 'Authorization match attempt: phone exact',
+      });
       const match = await this.consumeLatestPhoneAuthorization(phone);
       if (match) {
+        this.logger.log({
+          streamSid: input.streamSid,
+          phone,
+          matchMethod: 'phoneExact',
+          message: 'Authorization success via phone exact',
+        });
         return match;
       }
     }
 
     for (const phone of candidatePhones) {
+      this.logger.log({
+        streamSid: input.streamSid,
+        callSid: input.callSid ?? null,
+        phone,
+        matchMethod: 'phoneSuffix',
+        message: 'Authorization match attempt: phone suffix (last 10 digits)',
+      });
       const fuzzyMatch = await this.consumeAuthorizationByPhoneSuffix(phone);
       if (fuzzyMatch) {
+        this.logger.log({
+          streamSid: input.streamSid,
+          phone,
+          matchMethod: 'phoneSuffix',
+          message: 'Authorization success via phone suffix',
+        });
         return fuzzyMatch;
       }
     }
@@ -333,6 +416,7 @@ export class VoiceCallAuthorizationService {
       to: input.to,
       authorizationId: input.authorizationId ?? null,
       candidatePhones,
+      rejectionReason: 'not_app_initiated',
       sharedState: this.voiceSharedStateService.usesRedis ? 'redis' : 'memory',
       message:
         'Rejected voice stream — no matching app-initiated call authorization',

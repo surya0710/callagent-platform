@@ -22,13 +22,13 @@ function readString(
   }
 
   const snake = record[snakeKey];
-  if (typeof snake === 'string' && snake.length > 0) {
-    return snake;
+  if (typeof snake === 'string' && snake.trim().length > 0) {
+    return snake.trim();
   }
 
   const camel = record[camelKey];
-  if (typeof camel === 'string' && camel.length > 0) {
-    return camel;
+  if (typeof camel === 'string' && camel.trim().length > 0) {
+    return camel.trim();
   }
 
   return undefined;
@@ -45,6 +45,59 @@ function normalizeCustomParameters(raw: unknown): unknown {
   }
 
   return raw;
+}
+
+function readCallSidFromCustomParameters(
+  customParameters: unknown,
+): string | undefined {
+  const record =
+    typeof customParameters === 'string'
+      ? Object.fromEntries(new URLSearchParams(customParameters.trim()))
+      : customParameters && typeof customParameters === 'object'
+        ? (customParameters as Record<string, unknown>)
+        : undefined;
+
+  if (!record) {
+    return undefined;
+  }
+
+  for (const key of ['callSid', 'call_sid', 'CallSid']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+export function extractExotelStreamSid(
+  payload: Record<string, unknown>,
+  start: Record<string, unknown>,
+): string | undefined {
+  return (
+    readString(start, 'stream_sid', 'streamSid') ??
+    readStreamSid(payload) ??
+    readString(start, 'call_sid', 'callSid') ??
+    readString(payload, 'call_sid', 'callSid')
+  );
+}
+
+export function extractExotelCallSid(
+  payload: Record<string, unknown>,
+  start: Record<string, unknown>,
+): string | undefined {
+  const normalizedCustom =
+    normalizeCustomParameters(start.customParameters ?? start.custom_parameters) ??
+    normalizeCustomParameters(
+      payload.custom_parameters ?? payload.customParameters,
+    );
+
+  return (
+    readString(start, 'call_sid', 'callSid') ??
+    readString(payload, 'call_sid', 'callSid') ??
+    readCallSidFromCustomParameters(normalizedCustom)
+  );
 }
 
 export interface ExotelNormalizedStart {
@@ -92,20 +145,15 @@ export function normalizeExotelStreamEvent(
 
     case 'start': {
       const start = asRecord(payload.start) ?? {};
-      const streamSid =
-        readString(start, 'stream_sid', 'streamSid') ?? topLevelStreamSid;
-      if (!streamSid) {
-        return { event: 'unknown', raw: payload };
-      }
+      const streamSid = extractExotelStreamSid(payload, start) ?? '';
+      const callSid = extractExotelCallSid(payload, start);
 
       return {
         event: 'start',
         streamSid,
         start: {
           streamSid,
-          callSid:
-            readString(start, 'call_sid', 'callSid') ??
-            readString(payload, 'call_sid', 'callSid'),
+          callSid,
           accountSid: readString(start, 'account_sid', 'accountSid'),
           from: typeof start.from === 'string' ? start.from : undefined,
           to: typeof start.to === 'string' ? start.to : undefined,
