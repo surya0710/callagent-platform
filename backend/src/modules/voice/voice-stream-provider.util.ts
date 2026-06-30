@@ -60,25 +60,20 @@ export function parseVoiceStreamQueryFromRequest(
   };
 }
 
-/** True when the first telephony frame looks like Exotel AgentStream, not Smartflo. */
+/**
+ * True when a telephony frame looks like Exotel AgentStream (snake_case), not Smartflo.
+ * Smartflo also sends `connected` and camelCase `streamSid`; those must not trigger Exotel routing.
+ */
 export function looksLikeExotelStreamMessage(raw: string): boolean {
   try {
     const payload = JSON.parse(raw) as Record<string, unknown>;
     const event = payload.event;
-    if (event === 'connected') {
-      return true;
-    }
     if (event === 'start') {
       const start =
         payload.start && typeof payload.start === 'object'
           ? (payload.start as Record<string, unknown>)
           : undefined;
-      return Boolean(
-        payload.stream_sid ||
-          payload.streamSid ||
-          start?.stream_sid ||
-          start?.streamSid,
-      );
+      return Boolean(payload.stream_sid || start?.stream_sid);
     }
     return false;
   } catch {

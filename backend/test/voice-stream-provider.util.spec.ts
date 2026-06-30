@@ -71,8 +71,8 @@ describe('voice-stream-provider.util', () => {
     expect(parseVoiceStreamAuthorizationIdFromRequest(request)).toBeUndefined();
   });
 
-  it('detects Exotel connected event from first frame', () => {
-    expect(looksLikeExotelStreamMessage('{"event":"connected"}')).toBe(true);
+  it('does not treat connected event alone as Exotel (Smartflo also sends connected)', () => {
+    expect(looksLikeExotelStreamMessage('{"event":"connected"}')).toBe(false);
   });
 
   it('detects Exotel start event with stream_sid', () => {
@@ -81,6 +81,14 @@ describe('voice-stream-provider.util', () => {
         '{"event":"start","start":{"stream_sid":"MZ123"}}',
       ),
     ).toBe(true);
+  });
+
+  it('does not treat Smartflo start with camelCase streamSid as Exotel', () => {
+    expect(
+      looksLikeExotelStreamMessage(
+        '{"event":"start","start":{"streamSid":"9075a0fe-39ce-47a7-b2c1-000000000001","callSid":"CA1"}}',
+      ),
+    ).toBe(false);
   });
 
   it('does not treat Smartflo start without stream sid as Exotel', () => {

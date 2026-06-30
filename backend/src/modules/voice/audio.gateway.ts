@@ -27,6 +27,7 @@ import {
   parseVoiceStreamQueryFromRequest,
 } from './voice-stream-provider.util';
 import { TelephonyProvider } from './telephony/telephony-provider.types';
+import { TelephonyProviderConfigService } from './telephony/telephony-provider.config';
 import { TelephonyOutboundMediaFactory } from './telephony/outbound/telephony-outbound-media.factory';
 import { SmartfloTelephonyAudioConfigService } from './telephony/audio/smartflo-telephony-audio.config';
 import { ExotelTelephonyAudioConfigService } from './telephony/audio/exotel-telephony-audio.config';
@@ -53,6 +54,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly outboundMediaFactory: TelephonyOutboundMediaFactory,
     private readonly smartfloTelephonyAudioConfig: SmartfloTelephonyAudioConfigService,
     private readonly exotelTelephonyAudioConfig: ExotelTelephonyAudioConfigService,
+    private readonly telephonyConfig: TelephonyProviderConfigService,
   ) {}
 
   handleConnection(client: VoiceWebSocket, request: IncomingMessage): void {
@@ -137,7 +139,11 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
               ? data.toString('utf8')
               : String(data);
 
-        if (!useExotel && looksLikeExotelStreamMessage(raw)) {
+        if (
+          !useExotel &&
+          this.telephonyConfig.isExotel() &&
+          looksLikeExotelStreamMessage(raw)
+        ) {
           this.logger.warn({
             socketSessionId: session.socketSessionId,
             requestUrl: request.url ?? null,

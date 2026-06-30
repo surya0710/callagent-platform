@@ -152,7 +152,13 @@ export class SmartfloStreamAdapter {
       customParameters: start.customParameters,
     };
 
-    this.voiceSessionService.bindStreamSid(socketSessionId, startData);
+    const boundSession = this.voiceSessionService.bindStreamSid(
+      socketSessionId,
+      startData,
+    );
+    if (boundSession) {
+      boundSession.telephonyProvider = 'smartflo';
+    }
     this.voiceSocketRegistry.bindStreamSid(socketSessionId, streamSid);
     this.voiceSessionService.markAuthorizationPending(streamSid);
     this.voiceRecordingService.start(streamSid, startData.callSid);
