@@ -28,10 +28,14 @@ function aiConnectionLabel(session: VoiceSession): string {
     return 'AI connecting';
   }
   if (session.runtimeStatus === 'error') {
-    return 'AI error';
+    return session.runtimeError ? `AI error` : 'AI error';
   }
-  if (session.isAppInitiated === false) {
-    return 'Unauthorized';
+  if (session.isAppInitiated === false || session.rejectionReason) {
+    return session.rejectionReason === 'not_app_initiated'
+      ? 'Unauthorized'
+      : session.rejectionReason === 'authorization_incomplete'
+        ? 'Auth incomplete'
+        : 'Unauthorized';
   }
   if (session.lastEvent === 'connected' && session.status === 'PENDING') {
     return 'Stream connected';

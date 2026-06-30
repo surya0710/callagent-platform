@@ -74,6 +74,8 @@ export class VoiceCallAuthorizationService {
   private readonly pending = new Map<string, PendingAuthorization>();
   private readonly pendingByCallSid = new Map<string, string>();
   private readonly pendingByPhone = new Map<string, string[]>();
+  /** Populated when Exotel stream-url resolver matches a pending authorization. */
+  private readonly streamUrlAuthorizationByCallSid = new Map<string, string>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -173,6 +175,21 @@ export class VoiceCallAuthorizationService {
     void this.voiceSharedStateService.saveAuthorization(entry);
   }
 
+  rememberStreamUrlAuthorization(
+    callSid: string | undefined,
+    authorizationId: string,
+  ): void {
+    const normalizedCallSid = callSid?.trim();
+    if (!normalizedCallSid || !authorizationId.trim()) {
+      return;
+    }
+
+    this.streamUrlAuthorizationByCallSid.set(
+      normalizedCallSid.toLowerCase(),
+      authorizationId.trim(),
+    );
+  }
+
   async findPendingAuthorizationId(input: {
     callSid?: string;
     from?: string;
@@ -252,11 +269,30 @@ export class VoiceCallAuthorizationService {
       if (byCustom) {
         return byCustom;
       }
+
+      this.logger.warn({
+        streamSid: input.streamSid,
+        authorizationId: customAuthorizationId,
+        message:
+          'Voice stream authorizationId present but could not be consumed (missing, expired, or already used)',
+      });
     }
 
     const callSid = input.callSid?.trim();
     if (callSid) {
-      const authorizationId = this.pendingByCallSid.get(callSid);
+      const reservedAuthorizationId =
+        this.streamUrlAuthorizationByCallSid.get(callSid.toLowerCase());
+      if (reservedAuthorizationId) {
+        const reservedMatch = await this.consumeAuthorization(
+          reservedAuthorizationId,
+        );
+        if (reservedMatch) {
+          this.streamUrlAuthorizationByCallSid.delete(callSid.toLowerCase());
+          return reservedMatch;
+        }
+      }
+
+      const authorizationId = this.findAuthorizationIdForCallSid(callSid);
       if (authorizationId) {
         const match = await this.consumeAuthorization(authorizationId);
         if (match) {
@@ -274,12 +310,7 @@ export class VoiceCallAuthorizationService {
       }
     }
 
-    const candidatePhones = [
-      normalizeVoicePhoneNumber(input.to),
-      normalizeVoicePhoneNumber(input.from),
-    ].filter((value, index, list): value is string =>
-      Boolean(value && list.indexOf(value) === index),
-    );
+    const candidatePhones = this.buildPhoneMatchCandidates(input.from, input.to);
 
     for (const phone of candidatePhones) {
       const match = await this.consumeLatestPhoneAuthorization(phone);
@@ -288,20 +319,100 @@ export class VoiceCallAuthorizationService {
       }
     }
 
+    for (const phone of candidatePhones) {
+      const fuzzyMatch = await this.consumeAuthorizationByPhoneSuffix(phone);
+      if (fuzzyMatch) {
+        return fuzzyMatch;
+      }
+    }
+
     this.logger.warn({
       streamSid: input.streamSid,
       callSid: input.callSid,
       from: input.from,
       to: input.to,
+      authorizationId: input.authorizationId ?? null,
+      candidatePhones,
       sharedState: this.voiceSharedStateService.usesRedis ? 'redis' : 'memory',
       message:
-        'Rejected Smartflo stream — no matching app-initiated call authorization',
+        'Rejected voice stream — no matching app-initiated call authorization',
     });
 
     return {
       authorized: false,
       reason: 'not_app_initiated',
     };
+  }
+
+  private findAuthorizationIdForCallSid(callSid: string): string | undefined {
+    const trimmed = callSid.trim();
+    const direct = this.pendingByCallSid.get(trimmed);
+    if (direct) {
+      return direct;
+    }
+
+    const lower = trimmed.toLowerCase();
+    for (const [key, authorizationId] of this.pendingByCallSid.entries()) {
+      if (key.toLowerCase() === lower) {
+        return authorizationId;
+      }
+    }
+
+    return undefined;
+  }
+
+  private buildPhoneMatchCandidates(
+    from?: string,
+    to?: string,
+  ): string[] {
+    const candidates = new Set<string>();
+
+    for (const raw of [from, to]) {
+      const normalized = normalizeVoicePhoneNumber(raw);
+      if (!normalized) {
+        continue;
+      }
+
+      candidates.add(normalized);
+      if (normalized.length === 12 && normalized.startsWith('91')) {
+        candidates.add(normalized.slice(2));
+      }
+    }
+
+    return [...candidates];
+  }
+
+  private phoneSuffix(value: string): string {
+    const digits = value.replace(/\D/g, '');
+    return digits.length >= 10 ? digits.slice(-10) : digits;
+  }
+
+  private async consumeAuthorizationByPhoneSuffix(
+    phone: string,
+  ): Promise<VoiceCallAuthorizationMatch | undefined> {
+    const suffix = this.phoneSuffix(phone);
+    if (suffix.length < 10) {
+      return undefined;
+    }
+
+    for (const [authorizationId, entry] of this.pending.entries()) {
+      if (
+        entry.consumed ||
+        entry.expiresAt.getTime() <= Date.now() ||
+        !entry.customerNumber
+      ) {
+        continue;
+      }
+
+      if (this.phoneSuffix(entry.customerNumber) === suffix) {
+        const match = await this.consumeAuthorization(authorizationId);
+        if (match) {
+          return match;
+        }
+      }
+    }
+
+    return undefined;
   }
 
   private async consumeLatestPhoneAuthorization(

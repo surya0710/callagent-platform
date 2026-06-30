@@ -103,7 +103,9 @@ export function normalizeExotelStreamEvent(
         streamSid,
         start: {
           streamSid,
-          callSid: readString(start, 'call_sid', 'callSid'),
+          callSid:
+            readString(start, 'call_sid', 'callSid') ??
+            readString(payload, 'call_sid', 'callSid'),
           accountSid: readString(start, 'account_sid', 'accountSid'),
           from: typeof start.from === 'string' ? start.from : undefined,
           to: typeof start.to === 'string' ? start.to : undefined,

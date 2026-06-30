@@ -45,10 +45,12 @@ export class ExotelVoiceController {
       TelephonyProvider.EXOTEL,
     );
 
+    const resolvedCallSid = (callSid ?? callSidSnake)?.trim();
+
     if (!authorizationId) {
       this.logger.warn({
         telephonyProvider,
-        callSid: callSid ?? callSidSnake,
+        callSid: resolvedCallSid,
         from: from ?? fromLower,
         to: to ?? toLower,
         message: 'exotel stream-url resolver: no pending authorization found',
@@ -56,9 +58,24 @@ export class ExotelVoiceController {
       return { url: baseWss };
     }
 
+    this.voiceCallAuthorizationService.rememberStreamUrlAuthorization(
+      resolvedCallSid,
+      authorizationId,
+    );
+
     const separator = baseWss.includes('?') ? '&' : '?';
+    const url = `${baseWss}${separator}authorizationId=${encodeURIComponent(authorizationId)}`;
+
+    this.logger.log({
+      telephonyProvider,
+      callSid: resolvedCallSid,
+      authorizationId,
+      message: 'exotel stream-url resolver: returning authorized WSS URL',
+    });
+
     return {
-      url: `${baseWss}${separator}authorizationId=${encodeURIComponent(authorizationId)}`,
+      url,
+      custom_parameters: `authorizationId=${encodeURIComponent(authorizationId)}`,
     };
   }
 }

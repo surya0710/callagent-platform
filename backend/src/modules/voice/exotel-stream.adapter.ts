@@ -147,9 +147,38 @@ export class ExotelStreamAdapter {
       PROVIDER,
       socketSessionId,
       streamSid,
-      startData,
+      {
+        ...startData,
+        callSid:
+          startData.callSid ??
+          this.extractCallSidFromCustomParameters(startData.customParameters),
+      },
       this.voiceSessionService.getSocketQueryAuthorizationId(socketSessionId),
     );
+  }
+
+  private extractCallSidFromCustomParameters(
+    customParameters: unknown,
+  ): string | undefined {
+    const record =
+      typeof customParameters === 'string'
+        ? Object.fromEntries(new URLSearchParams(customParameters.trim()))
+        : customParameters && typeof customParameters === 'object'
+          ? (customParameters as Record<string, unknown>)
+          : undefined;
+
+    if (!record) {
+      return undefined;
+    }
+
+    for (const key of ['callSid', 'call_sid', 'CallSid']) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value.trim();
+      }
+    }
+
+    return undefined;
   }
 
   private handleMedia(

@@ -697,7 +697,9 @@ export class VoiceSessionService {
 
   async getRecentEndedSessions(): Promise<VoiceSession[]> {
     const local = this.recentEndedSessions.filter(
-      (session) => session.isAppInitiated === true,
+      (session) =>
+        session.isAppInitiated === true ||
+        Boolean(session.streamSid && session.startedAt),
     );
     const shared = await this.voiceSharedStateService.listRecentEndedSessions();
 
@@ -1515,12 +1517,15 @@ export class VoiceSessionService {
       return;
     }
 
-    if (session.isAppInitiated !== true) {
-      this.discardSession(session, stopReason ?? null, 'stop');
+    if (this.shouldPreserveEndedSession(session)) {
+      if (session.isAppInitiated !== true) {
+        session.rejectionReason ??= 'authorization_incomplete';
+      }
+      this.endSession(session, stopReason ?? null, 'stop');
       return;
     }
 
-    this.endSession(session, stopReason ?? null, 'stop');
+    this.discardSession(session, stopReason ?? null, 'stop');
   }
 
   endBySocketSessionId(socketSessionId: string): void {
@@ -1529,12 +1534,30 @@ export class VoiceSessionService {
       return;
     }
 
-    if (session.isAppInitiated !== true) {
-      this.discardSession(session, 'websocket_disconnected', 'disconnect');
+    if (this.shouldPreserveEndedSession(session)) {
+      if (session.isAppInitiated !== true) {
+        session.rejectionReason ??= 'authorization_incomplete';
+      }
+      this.endSession(session, 'websocket_disconnected', 'disconnect');
       return;
     }
 
-    this.endSession(session, 'websocket_disconnected', 'disconnect');
+    this.discardSession(session, 'websocket_disconnected', 'disconnect');
+  }
+
+  private shouldPreserveEndedSession(session: VoiceSession): boolean {
+    if (session.isAppInitiated === true) {
+      return true;
+    }
+
+    return Boolean(
+      session.streamSid &&
+        (session.startedAt ||
+          session.packetsReceived > 0 ||
+          session.lastEvent === 'start' ||
+          session.lastEvent === 'media' ||
+          session.status === 'ACTIVE'),
+    );
   }
 
   private discardSession(
