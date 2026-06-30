@@ -7,6 +7,9 @@ export class AnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getOverview() {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
     const [
       totalCustomers,
       totalCampaigns,
@@ -15,6 +18,7 @@ export class AnalyticsService {
       failedCalls,
       durationAgg,
       sentimentCounts,
+      promptsToday,
     ] = await Promise.all([
       this.prisma.customer.count({ where: { deletedAt: null } }),
       this.prisma.campaign.count(),
@@ -30,6 +34,9 @@ export class AnalyticsService {
       this.prisma.callSummary.groupBy({
         by: ['sentiment'],
         _count: { sentiment: true },
+      }),
+      this.prisma.agentPrompt.count({
+        where: { createdAt: { gte: startOfToday } },
       }),
     ]);
 
@@ -47,6 +54,7 @@ export class AnalyticsService {
       positiveSentiment: sentimentMap[SentimentLabel.positive] ?? 0,
       neutralSentiment: sentimentMap[SentimentLabel.neutral] ?? 0,
       negativeSentiment: sentimentMap[SentimentLabel.negative] ?? 0,
+      promptsToday,
     };
   }
 

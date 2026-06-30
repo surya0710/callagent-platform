@@ -28,6 +28,7 @@ export function DashboardPage() {
         <StatCard label="Avg Duration (sec)" value={data?.averageCallDuration ?? 0} />
         <StatCard label="Positive Sentiment" value={data?.positiveSentiment ?? 0} />
         <StatCard label="Negative Sentiment" value={data?.negativeSentiment ?? 0} />
+        <StatCard label="Prompts Today" value={data?.promptsToday ?? 0} />
       </div>
     </div>
   );

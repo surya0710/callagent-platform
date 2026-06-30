@@ -20,4 +20,5 @@ export interface OverviewMetrics {
   positiveSentiment: number;
   neutralSentiment: number;
   negativeSentiment: number;
+  promptsToday: number;
 }
