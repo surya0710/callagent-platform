@@ -18,7 +18,6 @@ import {
   CallTimingEvent,
 } from '../call-timing-diagnostics.service';
 import {
-  extractSmartfloProviderCallSid,
   VoiceCallAuthorizationService,
   VoiceCallSource,
 } from '../voice-call-authorization.service';
@@ -31,44 +30,16 @@ import { VoiceOpeningConfigService } from '../voice-opening-config.service';
 import { TelephonyProviderConfigService } from './telephony-provider.config';
 import { TelephonyProvider } from './telephony-provider.types';
 import { toExotelCustomerNumber } from './telephony-phone.util';
-import { ExotelOutboundCallService } from './outbound/exotel-outbound-call.service';
-
-export interface VoiceTestCallResult {
-  success: boolean;
-  message: string;
-  providerResponse: unknown;
-  requestedCustomerNumber: string;
-  normalizedCustomerNumber: string;
-  callOrigin: CallRequestOriginInfo;
-  authorizationId?: string;
-  callId?: string;
-  providerCallSid?: string | null;
-  telephonyProvider: TelephonyProvider;
-}
-
-export interface InitiateVoiceCallIntegrationMeta {
-  apiKeyId: string;
-  externalRef: string;
-  callbackUrl?: string;
-  apiKeyName?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface InitiateVoiceCallInput {
-  customerNumber: string;
-  callContext?: unknown;
-  source: VoiceCallSource;
-  callSource: CallSource;
-  integration?: InitiateVoiceCallIntegrationMeta;
-  requestMeta?: {
-    requestedByIp?: string;
-    requestedByForwardedFor?: string;
-  };
-}
+import { extractExotelProviderCallSid } from './exotel-provider-call-sid.util';
+import {
+  InitiateVoiceCallInput,
+  InitiateVoiceCallIntegrationMeta,
+  VoiceTestCallResult,
+} from './telephony-outbound-call.service';
 
 @Injectable()
-export class TelephonyOutboundCallService {
-  private readonly logger = new Logger(TelephonyOutboundCallService.name);
+export class ExotelOutboundCallService {
+  private readonly logger = new Logger(ExotelOutboundCallService.name);
 
   constructor(
     private readonly configService: ConfigService,
@@ -78,53 +49,26 @@ export class TelephonyOutboundCallService {
     private readonly voiceRuntimeFactory: VoiceRuntimeFactory,
     private readonly voiceOpeningConfigService: VoiceOpeningConfigService,
     private readonly callTiming: CallTimingDiagnosticsService,
-    private readonly exotelOutboundCallService: ExotelOutboundCallService,
-  ) { }
-
-  async initiateTestCall(
-    customerNumber: string,
-    requestMeta?: {
-      requestedByIp?: string;
-      requestedByForwardedFor?: string;
-      callContext?: unknown;
-    },
-  ): Promise<VoiceTestCallResult> {
-    return this.initiateCall({
-      customerNumber,
-      callContext: requestMeta?.callContext,
-      source: 'test-call',
-      callSource: CallSource.test,
-      requestMeta,
-    });
-  }
+  ) {}
 
   async initiateCall(input: InitiateVoiceCallInput): Promise<VoiceTestCallResult> {
-    const telephonyProvider = this.telephonyConfig.getProvider();
-
-    if (telephonyProvider === TelephonyProvider.EXOTEL) {
-      return this.exotelOutboundCallService.initiateCall(input);
-    }
-
+    const telephonyProvider = TelephonyProvider.EXOTEL;
     const requestedCustomerNumber = input.customerNumber.trim();
-    const callOrigin = this.buildCallOrigin(telephonyProvider, input.requestMeta);
+    const callOrigin = this.buildCallOrigin(input.requestMeta);
     const callContext = this.resolveCallContext(input.callContext);
 
     this.logger.log({
-      requestedCustomerNumber,
       telephonyProvider,
+      requestedCustomerNumber,
       callOrigin,
       source: input.source,
       externalRef: input.integration?.externalRef,
       hasCallContext: Boolean(callContext),
-      callContextKeys: callContext ? Object.keys(callContext) : [],
-      message: callContext
-        ? 'voice_call_context_received'
-        : `${telephonyProvider} outbound call requested`,
+      message: 'exotel outbound call requested',
     });
 
     const normalizedCustomerNumber =
       this.normalizeCustomerNumber(requestedCustomerNumber);
-    this.logger.log(`Normalized customer number: ${normalizedCustomerNumber}`);
 
     const traceLabel =
       input.integration?.externalRef ?? `phone:${normalizedCustomerNumber}`;
@@ -140,39 +84,47 @@ export class TelephonyOutboundCallService {
       telephonyProvider,
     });
 
+    const authorizationId = this.voiceCallAuthorizationService.register({
+      source: input.source,
+      customerNumber: normalizedCustomerNumber,
+      callContext,
+    });
+
+    const openingContext = this.voiceOpeningConfigService.isSpeakFirstEnabled()
+      ? this.voiceOpeningConfigService.resolve()
+      : undefined;
+
+    if (this.voiceOpeningConfigService.isSpeakFirstEnabled()) {
+      this.voiceRuntimeFactory.getProvider().prewarmAuthorizedCall?.({
+        customerNumber: normalizedCustomerNumber,
+        callContext,
+        openingContext,
+        aiSpeakFirstEnabled: true,
+      });
+    }
+
     let response: Response;
     try {
       this.callTiming.mark(traceId, CallTimingEvent.SMARTFLO_REQUEST_SENT, {
         telephonyProvider,
       });
-      response = await this.dialProvider(
-        telephonyProvider,
-        normalizedCustomerNumber,
-        callOrigin,
-      );
+      response = await this.dialExotel(normalizedCustomerNumber);
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;
       }
 
       const message =
-        error instanceof Error ? error.message : `${telephonyProvider} request failed`;
-      const cause =
-        error instanceof Error && 'cause' in error
-          ? String((error as Error & { cause?: unknown }).cause)
-          : undefined;
+        error instanceof Error ? error.message : 'exotel request failed';
       this.logger.error({
         telephonyProvider,
         err: message,
-        cause,
-        message: `${telephonyProvider} outbound call network request failed`,
+        message: 'exotel outbound call network request failed',
       });
       throw new ServiceUnavailableException(
-        `Unable to reach ${telephonyProvider} outbound call API: ${message}`,
+        `Unable to reach exotel outbound call API: ${message}`,
       );
     }
-
-    this.logger.log(`${telephonyProvider} API response status: ${response.status}`);
 
     const providerResponse = this.stripSensitiveFields(
       await this.parseProviderResponse(response),
@@ -183,13 +135,16 @@ export class TelephonyOutboundCallService {
     });
 
     if (!response.ok) {
-      this.logger.error(
-        `${telephonyProvider} outbound call failed: status=${response.status} body=${JSON.stringify(providerResponse)}`,
-      );
+      this.logger.error({
+        telephonyProvider,
+        providerStatus: response.status,
+        providerResponse,
+        message: 'exotel outbound call failed',
+      });
 
       return {
         success: false,
-        message: `${telephonyProvider} outbound call failed with status ${response.status}`,
+        message: `exotel outbound call failed with status ${response.status}`,
         providerResponse,
         requestedCustomerNumber,
         normalizedCustomerNumber,
@@ -198,31 +153,14 @@ export class TelephonyOutboundCallService {
       };
     }
 
-    this.logger.log({
-      normalizedCustomerNumber,
-      telephonyProvider,
-      callOrigin,
-      providerStatus: response.status,
-      source: input.source,
-      externalRef: input.integration?.externalRef,
-      message: `${telephonyProvider} outbound call accepted`,
-    });
-
-    const providerCallSid = extractSmartfloProviderCallSid(providerResponse);
+    const providerCallSid = extractExotelProviderCallSid(providerResponse);
     this.callTiming.linkCallSid(providerCallSid, traceId);
 
-    const openingContext = this.voiceOpeningConfigService.isSpeakFirstEnabled()
-      ? this.voiceOpeningConfigService.resolve()
-      : undefined;
-
-    if (this.voiceOpeningConfigService.isSpeakFirstEnabled()) {
-      this.voiceRuntimeFactory.getProvider().prewarmAuthorizedCall?.({
-        callSid: providerCallSid,
-        customerNumber: normalizedCustomerNumber,
-        callContext,
-        openingContext,
-        aiSpeakFirstEnabled: true,
-      });
+    if (providerCallSid) {
+      this.voiceCallAuthorizationService.linkProviderCallDetails(
+        authorizationId,
+        { callSid: providerCallSid },
+      );
     }
 
     const call = await this.createLiveAnalysisCallRecord({
@@ -234,24 +172,28 @@ export class TelephonyOutboundCallService {
       callContext,
       callSource: input.callSource,
       integration: input.integration,
-      telephonyProvider,
-    });
-    const authorizationId = this.voiceCallAuthorizationService.register({
-      source: input.source,
-      customerNumber: normalizedCustomerNumber,
-      callSid: providerCallSid,
-      callId: call.id,
-      callContext,
     });
 
-    const successMessage =
-      input.source === 'integration'
-        ? 'Integration call initiated successfully'
-        : 'Test call initiated successfully';
+    this.voiceCallAuthorizationService.linkProviderCallDetails(
+      authorizationId,
+      { callId: call.id },
+    );
+
+    this.logger.log({
+      telephonyProvider,
+      normalizedCustomerNumber,
+      providerCallSid,
+      authorizationId,
+      callId: call.id,
+      message: 'exotel outbound call accepted',
+    });
 
     return {
       success: true,
-      message: successMessage,
+      message:
+        input.source === 'integration'
+          ? 'Integration call initiated successfully'
+          : 'Test call initiated successfully',
       providerResponse,
       requestedCustomerNumber,
       normalizedCustomerNumber,
@@ -263,62 +205,12 @@ export class TelephonyOutboundCallService {
     };
   }
 
-  private async dialProvider(
-    provider: TelephonyProvider,
-    normalizedCustomerNumber: string,
-    callOrigin: CallRequestOriginInfo,
-  ): Promise<Response> {
-    if (provider === TelephonyProvider.EXOTEL) {
-      return this.dialExotel(normalizedCustomerNumber, callOrigin);
-    }
-
-    return this.dialSmartflo(normalizedCustomerNumber, callOrigin);
-  }
-
-  private async dialSmartflo(
-    normalizedCustomerNumber: string,
-    callOrigin: CallRequestOriginInfo,
-  ): Promise<Response> {
-    const apiKey = this.configService
-      .get<string>('SMARTFLO_CLICK_TO_CALL_API_KEY')
-      ?.trim();
-    const callerId = this.configService.get<string>('SMARTFLO_CALLER_ID')?.trim();
-
-    if (!apiKey) {
-      throw new ServiceUnavailableException(
-        'Smartflo click-to-call is not configured (SMARTFLO_CLICK_TO_CALL_API_KEY missing)',
-      );
-    }
-
-    if (!callerId) {
-      throw new ServiceUnavailableException(
-        'Smartflo click-to-call is not configured (SMARTFLO_CALLER_ID missing)',
-      );
-    }
-
-    const payload = {
-      api_key: apiKey,
-      customer_number: normalizedCustomerNumber,
-      caller_id: callerId,
-      async: 1,
-    };
-
-    return fetch(callOrigin.smartfloRequestUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  }
-
-  private async dialExotel(
-    normalizedCustomerNumber: string,
-    _callOrigin: CallRequestOriginInfo,
-  ): Promise<Response> {
+  private async dialExotel(normalizedCustomerNumber: string): Promise<Response> {
     const accountSid = this.telephonyConfig.getExotelAccountSid();
     const apiKey = this.telephonyConfig.getExotelApiKey();
     const apiToken = this.telephonyConfig.getExotelApiToken();
     const callerId = this.telephonyConfig.getExotelCallerId();
-    const voiceFlowUrl = this.telephonyConfig.getExotelConnectUrl();
+    const connectUrl = this.telephonyConfig.getExotelConnectUrl();
 
     if (!accountSid || !apiKey || !apiToken) {
       throw new ServiceUnavailableException(
@@ -334,10 +226,6 @@ export class TelephonyOutboundCallService {
 
     const from = toExotelCustomerNumber(normalizedCustomerNumber);
     const url = `${this.telephonyConfig.getExotelApiBaseUrl()}/v1/Accounts/${accountSid}/Calls/connect.json`;
-    const connectUrl = voiceFlowUrl;
-
-    // Flow-only outbound: From + CallerId + Url. Do not send To — that bridges a
-    // second phone leg and prevents the voice applet / AgentStream from starting.
     const formBody = new URLSearchParams({
       From: from,
       CallerId: callerId,
@@ -349,42 +237,28 @@ export class TelephonyOutboundCallService {
     );
 
     this.logger.log({
+      telephonyProvider: TelephonyProvider.EXOTEL,
       url,
       from,
       callerId,
       connectUrl,
-      accountSid,
-      apiKeyPrefix: `${apiKey.slice(0, 6)}...`,
-      message: 'Sending Exotel flow-only connect request',
+      message: 'Sending exotel flow-only connect request',
     });
 
-    try {
-      return await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Basic ${basicAuth}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formBody,
-      });
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Exotel fetch failed';
-      this.logger.error({
-        url,
-        err: message,
-        message: 'Exotel connect fetch threw before HTTP response',
-      });
-      throw error;
-    }
+    return fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formBody,
+    });
   }
 
   private resolveCallContext(input: unknown): CallContext | undefined {
     const sanitized = sanitizeCallContext(input);
     if (input && !sanitized && !isEmptyCallContext(input as CallContext)) {
-      this.logger.warn({
-        message: 'voice_call_context_validation_failed',
-      });
+      this.logger.warn({ message: 'voice_call_context_validation_failed' });
     }
     return sanitized;
   }
@@ -398,7 +272,6 @@ export class TelephonyOutboundCallService {
     callContext?: CallContext;
     callSource: CallSource;
     integration?: InitiateVoiceCallIntegrationMeta;
-    telephonyProvider: TelephonyProvider;
   }) {
     const customerName = input.callContext?.customerName?.trim();
     const [firstName, ...lastNameParts] = customerName
@@ -435,18 +308,20 @@ export class TelephonyOutboundCallService {
         phone: input.normalizedCustomerNumber,
         providerRef: input.providerCallSid,
         startedAt: new Date(),
-        metadata: this.toJsonValue({
-          origin: input.callOrigin,
-          telephonyProvider: input.telephonyProvider,
-          providerResponse: input.providerResponse,
-          ...(input.callContext ? { callContext: input.callContext } : {}),
-          ...(input.integration?.metadata
-            ? { custom: input.integration.metadata }
-            : {}),
-          ...(input.integration?.apiKeyName
-            ? { integration: { apiKeyName: input.integration.apiKeyName } }
-            : {}),
-        }),
+        metadata: JSON.parse(
+          JSON.stringify({
+            origin: input.callOrigin,
+            telephonyProvider: TelephonyProvider.EXOTEL,
+            providerResponse: input.providerResponse,
+            ...(input.callContext ? { callContext: input.callContext } : {}),
+            ...(input.integration?.metadata
+              ? { custom: input.integration.metadata }
+              : {}),
+            ...(input.integration?.apiKeyName
+              ? { integration: { apiKeyName: input.integration.apiKeyName } }
+              : {}),
+          }),
+        ) as Prisma.InputJsonValue,
       },
     });
 
@@ -459,7 +334,7 @@ export class TelephonyOutboundCallService {
             input.callSource === CallSource.integration
               ? 'integration_call_initiated'
               : 'voice_test_call_initiated',
-          telephonyProvider: input.telephonyProvider,
+          telephonyProvider: TelephonyProvider.EXOTEL,
           providerCallSid: input.providerCallSid ?? null,
           externalRef: input.integration?.externalRef ?? null,
         },
@@ -469,29 +344,19 @@ export class TelephonyOutboundCallService {
     return call;
   }
 
-  private toJsonValue(value: unknown): Prisma.InputJsonValue {
-    return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
-  }
-
-  private buildCallOrigin(
-    telephonyProvider: TelephonyProvider,
-    requestMeta?: {
-      requestedByIp?: string;
-      requestedByForwardedFor?: string;
-    },
-  ): CallRequestOriginInfo {
-    const accountSid = this.telephonyConfig.getExotelAccountSid();
-    const exotelBase = this.telephonyConfig.getExotelApiBaseUrl();
-
+  private buildCallOrigin(requestMeta?: {
+    requestedByIp?: string;
+    requestedByForwardedFor?: string;
+  }): CallRequestOriginInfo {
     return buildCallRequestOriginInfo({
       nodeEnv: this.configService.get<string>('NODE_ENV'),
       appVersion: this.configService.get<string>('APP_VERSION'),
       serverId: this.configService.get<string>('APP_SERVER_ID'),
       smartfloBaseUrl: this.configService.get<string>('SMARTFLO_BASE_URL'),
       voiceWssBaseUrl: this.configService.get<string>('VOICE_WSS_BASE_URL'),
-      telephonyProvider,
-      exotelBaseUrl: exotelBase,
-      exotelAccountSid: accountSid,
+      telephonyProvider: TelephonyProvider.EXOTEL,
+      exotelBaseUrl: this.telephonyConfig.getExotelApiBaseUrl(),
+      exotelAccountSid: this.telephonyConfig.getExotelAccountSid(),
       requestedByIp: requestMeta?.requestedByIp,
       requestedByForwardedFor: requestMeta?.requestedByForwardedFor,
     });
@@ -499,27 +364,22 @@ export class TelephonyOutboundCallService {
 
   private normalizeCustomerNumber(input: string): string {
     const trimmed = input.trim();
-
     if (!trimmed) {
       throw new BadRequestException('Customer number is required');
     }
-
     if (!/^\d+$/.test(trimmed)) {
       throw new BadRequestException(
         'Customer number must be numeric (digits only)',
       );
     }
-
     if (trimmed.length === 10) {
       if (!/^[6-9]\d{9}$/.test(trimmed)) {
         throw new BadRequestException(
           'Invalid 10-digit Indian mobile number. Must start with 6, 7, 8, or 9.',
         );
       }
-
       return `91${trimmed}`;
     }
-
     if (trimmed.length === 12 && trimmed.startsWith('91')) {
       const mobilePart = trimmed.slice(2);
       if (!/^[6-9]\d{9}$/.test(mobilePart)) {
@@ -527,10 +387,8 @@ export class TelephonyOutboundCallService {
           'Invalid Indian mobile number after country code 91',
         );
       }
-
       return trimmed;
     }
-
     throw new BadRequestException(
       'Enter a 10-digit Indian mobile number or 91XXXXXXXXXX',
     );
@@ -541,7 +399,6 @@ export class TelephonyOutboundCallService {
     if (!text.trim()) {
       return null;
     }
-
     try {
       return JSON.parse(text) as unknown;
     } catch {
@@ -553,11 +410,9 @@ export class TelephonyOutboundCallService {
     if (value === null || value === undefined) {
       return value;
     }
-
     if (Array.isArray(value)) {
       return value.map((item) => this.stripSensitiveFields(item));
     }
-
     if (typeof value === 'object') {
       const sanitized: Record<string, unknown> = {};
       for (const [key, nestedValue] of Object.entries(
@@ -570,7 +425,6 @@ export class TelephonyOutboundCallService {
       }
       return sanitized;
     }
-
     return value;
   }
 }

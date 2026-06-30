@@ -15,6 +15,14 @@ import { TelephonyOutboundCallService } from './telephony/telephony-outbound-cal
 import { TelephonyProviderConfigService } from './telephony/telephony-provider.config';
 import { SmartfloStreamAdapter } from './smartflo-stream.adapter';
 import { ExotelStreamAdapter } from './exotel-stream.adapter';
+import { ExotelVoiceController } from './exotel-voice.controller';
+import { VoiceStreamRuntimeBridge } from './stream/voice-stream-runtime.bridge';
+import { ExotelTelephonyAudioConfigService } from './telephony/audio/exotel-telephony-audio.config';
+import { SmartfloTelephonyAudioConfigService } from './telephony/audio/smartflo-telephony-audio.config';
+import { ExotelOutboundCallService } from './telephony/outbound/exotel-outbound-call.service';
+import { ExotelOutboundMediaAdapter } from './telephony/outbound/exotel-outbound-media.adapter';
+import { SmartfloOutboundMediaAdapter } from './telephony/outbound/smartflo-outbound-media.adapter';
+import { TelephonyOutboundMediaFactory } from './telephony/outbound/telephony-outbound-media.factory';
 import { CallTimingDiagnosticsService } from './call-timing-diagnostics.service';
 import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
 import { VoiceSharedStateService } from './voice-shared-state.service';
@@ -31,7 +39,7 @@ import { VoiceTranscriptEmailController } from './voice-transcript-email.control
 
 @Module({
   imports: [NotificationsModule, TrainingModule, forwardRef(() => IntegrationsModule)],
-  controllers: [VoiceController, VoiceTestCallController, VoiceTranscriptEmailController],
+  controllers: [VoiceController, VoiceTestCallController, VoiceTranscriptEmailController, ExotelVoiceController],
   providers: [
     CallTimingDiagnosticsService,
     VoiceSharedStateService,
@@ -40,11 +48,18 @@ import { VoiceTranscriptEmailController } from './voice-transcript-email.control
     S3RecordingStorageService,
     VoiceRecordingService,
     VoiceAudioConfigService,
+    SmartfloTelephonyAudioConfigService,
+    ExotelTelephonyAudioConfigService,
+    SmartfloOutboundMediaAdapter,
+    ExotelOutboundMediaAdapter,
+    TelephonyOutboundMediaFactory,
     TelephonyProviderConfigService,
+    ExotelOutboundCallService,
     TelephonyOutboundCallService,
     SmartfloClickToCallService,
     SmartfloStreamAdapter,
     ExotelStreamAdapter,
+    VoiceStreamRuntimeBridge,
     VoiceCallAuthorizationService,
     VoiceOpeningConfigService,
     MockVoiceRuntimeProvider,

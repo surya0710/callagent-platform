@@ -24,7 +24,9 @@ import {
 } from './call-timing-diagnostics.service';
 import { parseVoiceStreamProviderFromRequest } from './voice-stream-provider.util';
 import { TelephonyProvider } from './telephony/telephony-provider.types';
-import { smartfloMulawBase64ToExotelPcm16Base64 } from './telephony/exotel-media.util';
+import { TelephonyOutboundMediaFactory } from './telephony/outbound/telephony-outbound-media.factory';
+import { SmartfloTelephonyAudioConfigService } from './telephony/audio/smartflo-telephony-audio.config';
+import { ExotelTelephonyAudioConfigService } from './telephony/audio/exotel-telephony-audio.config';
 
 interface VoiceWebSocket extends WebSocket {
   socketSessionId?: string;
@@ -44,6 +46,9 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly voiceRecordingService: VoiceRecordingService,
     private readonly voiceAudioConfigService: VoiceAudioConfigService,
     private readonly callTiming: CallTimingDiagnosticsService,
+    private readonly outboundMediaFactory: TelephonyOutboundMediaFactory,
+    private readonly smartfloTelephonyAudioConfig: SmartfloTelephonyAudioConfigService,
+    private readonly exotelTelephonyAudioConfig: ExotelTelephonyAudioConfigService,
   ) {}
 
   handleConnection(client: VoiceWebSocket, request: IncomingMessage): void {
@@ -56,8 +61,11 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.socketSessionId = session.socketSessionId;
       this.voiceSocketRegistry.registerSocket(session.socketSessionId, client);
 
-      const isExotel =
-        parseVoiceStreamProviderFromRequest(request) === TelephonyProvider.EXOTEL;
+      const streamProvider = parseVoiceStreamProviderFromRequest(request);
+      const isExotel = streamProvider === TelephonyProvider.EXOTEL;
+      const telephonyProvider = isExotel
+        ? TelephonyProvider.EXOTEL
+        : TelephonyProvider.SMARTFLO;
       if (isExotel) {
         this.voiceSocketRegistry.registerExotelSocket(session.socketSessionId);
       }
@@ -87,6 +95,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       if (isExotel) {
         this.logger.log({
+          telephonyProvider,
           socketSessionId: session.socketSessionId,
           remoteAddress,
           connectedAt: session.connectedAt,
@@ -96,6 +105,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       this.logger.log({
+        telephonyProvider,
         socketSessionId: session.socketSessionId,
         remoteAddress,
         connectedAt: session.connectedAt,
@@ -135,7 +145,8 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     this.logger.log({
       socketSessionId,
-      message: 'Smartflo WebSocket disconnected',
+      telephonyProvider: TelephonyProvider.SMARTFLO,
+      message: 'Voice WebSocket disconnected',
     });
   }
 
@@ -155,7 +166,10 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     this.logger.log({
       socketSessionId,
-      message: 'Smartflo WebSocket disconnected',
+      telephonyProvider: this.voiceSocketRegistry.isExotelStream(streamSid)
+        ? TelephonyProvider.EXOTEL
+        : TelephonyProvider.SMARTFLO,
+      message: 'Voice WebSocket disconnected',
     });
   }
 
@@ -197,9 +211,18 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
     }
 
+    const telephonyProvider = this.voiceSocketRegistry.isExotelStream(streamSid)
+      ? TelephonyProvider.EXOTEL
+      : TelephonyProvider.SMARTFLO;
+    const outboundAdapter = this.outboundMediaFactory.getAdapter(telephonyProvider);
+    const audioConfig =
+      telephonyProvider === TelephonyProvider.EXOTEL
+        ? this.exotelTelephonyAudioConfig
+        : this.smartfloTelephonyAudioConfig;
+
     const chunkNumber =
       chunk ?? this.voiceSocketRegistry.nextOutboundChunk(streamSid);
-    const chunkDurationMs = this.voiceAudioConfigService.getOutboundChunkMs();
+    const chunkDurationMs = audioConfig.getOutboundChunkMs();
     const timestamp = this.voiceSocketRegistry.nextOutboundTimestamp(
       streamSid,
       chunkDurationMs,
@@ -207,51 +230,38 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const sequenceNumber =
       this.voiceSocketRegistry.nextOutboundSequenceNumber(streamSid);
 
-    const isExotel = this.voiceSocketRegistry.isExotelStream(streamSid);
-    const exotelPayload = isExotel
-      ? smartfloMulawBase64ToExotelPcm16Base64(base64MulawPayload)
-      : base64MulawPayload;
-    const outboundMessage = isExotel
-      ? JSON.stringify({
-          event: 'media',
-          stream_sid: streamSid,
-          media: {
-            payload: exotelPayload,
-          },
-        })
-      : JSON.stringify({
-          event: 'media',
-          streamSid,
-          sequenceNumber,
-          media: {
-            payload: base64MulawPayload,
-            chunk: String(chunkNumber),
-            timestamp: String(timestamp),
-          },
-        });
+    const outbound = outboundAdapter.buildOutboundMedia({
+      streamSid,
+      base64MulawPayload,
+      chunk: chunkNumber,
+      sequenceNumber,
+      timestamp,
+    });
 
     this.logger.log({
+      telephonyProvider,
       streamSid,
       sequenceNumber,
       chunk: chunkNumber,
       timestamp,
       payloadBase64Length: base64MulawPayload.length,
-      mulawBytes: decodedLength,
+      mulawBytes: outbound.decodedMulawBytes,
       socketFound: true,
       wsReadyState,
-      message: 'Sending outbound media to Smartflo WebSocket',
+      message: `Sending outbound media to ${telephonyProvider} WebSocket`,
     });
 
     try {
-      client!.send(outboundMessage);
+      client!.send(outbound.message);
       this.voiceSessionService.recordSmartfloOutboundSend(
         streamSid,
-        decodedLength,
+        outbound.decodedMulawBytes,
         wsReadyState,
       );
       voiceDebugLog(this.logger, streamSid, 'outbound_audio_chunk', {
-        bytes: decodedLength,
+        bytes: outbound.decodedMulawBytes,
         chunk: chunkNumber,
+        telephonyProvider,
       });
       this.logger.debug({
         streamSid,
@@ -330,21 +340,12 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    client.send(
-      JSON.stringify(
-        this.voiceSocketRegistry.isExotelStream(streamSid)
-          ? {
-              event: 'mark',
-              stream_sid: streamSid,
-              mark: { name },
-            }
-          : {
-              event: 'mark',
-              streamSid,
-              mark: { name },
-            },
-      ),
-    );
+    const telephonyProvider = this.voiceSocketRegistry.isExotelStream(streamSid)
+      ? TelephonyProvider.EXOTEL
+      : TelephonyProvider.SMARTFLO;
+    const adapter = this.outboundMediaFactory.getAdapter(telephonyProvider);
+
+    client.send(adapter.buildMarkMessage(streamSid, name));
   }
 
   sendClear(streamSid: string): void {
@@ -357,19 +358,12 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    client.send(
-      JSON.stringify(
-        this.voiceSocketRegistry.isExotelStream(streamSid)
-          ? {
-              event: 'clear',
-              stream_sid: streamSid,
-            }
-          : {
-              event: 'clear',
-              streamSid,
-            },
-      ),
-    );
+    const telephonyProvider = this.voiceSocketRegistry.isExotelStream(streamSid)
+      ? TelephonyProvider.EXOTEL
+      : TelephonyProvider.SMARTFLO;
+    const adapter = this.outboundMediaFactory.getAdapter(telephonyProvider);
+
+    client.send(adapter.buildClearMessage(streamSid));
   }
 
   closeStream(streamSid: string, reason = 'ai_conversation_complete'): void {
@@ -383,10 +377,15 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
+    const telephonyProvider = this.voiceSocketRegistry.isExotelStream(streamSid)
+      ? TelephonyProvider.EXOTEL
+      : TelephonyProvider.SMARTFLO;
+
     this.logger.log({
+      telephonyProvider,
       streamSid,
       reason,
-      message: 'Closing Smartflo stream from AI runtime',
+      message: 'Closing voice stream from AI runtime',
     });
     client.close(1000, reason);
   }

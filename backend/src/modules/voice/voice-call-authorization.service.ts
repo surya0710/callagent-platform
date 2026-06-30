@@ -149,6 +149,86 @@ export class VoiceCallAuthorizationService {
     return authorizationId;
   }
 
+  linkProviderCallDetails(
+    authorizationId: string,
+    details: { callSid?: string; callId?: string },
+  ): void {
+    const entry = this.pending.get(authorizationId);
+    if (!entry) {
+      return;
+    }
+
+    if (details.callSid?.trim()) {
+      const callSid = details.callSid.trim();
+      entry.callSid = callSid;
+      this.pendingByCallSid.set(callSid, authorizationId);
+    }
+
+    if (details.callId?.trim()) {
+      entry.callId = details.callId.trim();
+    }
+
+    void this.voiceSharedStateService.saveAuthorization(entry);
+  }
+
+  async findPendingAuthorizationId(input: {
+    callSid?: string;
+    from?: string;
+    to?: string;
+  }): Promise<string | undefined> {
+    this.pruneExpired();
+
+    const callSid = input.callSid?.trim();
+    if (callSid) {
+      const authorizationId = this.pendingByCallSid.get(callSid);
+      if (authorizationId) {
+        const entry = await this.resolveAuthorization(authorizationId);
+        if (entry && !entry.consumed && entry.expiresAt.getTime() > Date.now()) {
+          return authorizationId;
+        }
+      }
+
+      const redisEntry =
+        await this.voiceSharedStateService.loadAuthorizationByCallSid(callSid);
+      if (
+        redisEntry &&
+        !redisEntry.consumed &&
+        redisEntry.expiresAt.getTime() > Date.now()
+      ) {
+        return redisEntry.authorizationId;
+      }
+    }
+
+    const candidatePhones = [
+      normalizeVoicePhoneNumber(input.to),
+      normalizeVoicePhoneNumber(input.from),
+    ].filter((value, index, list): value is string =>
+      Boolean(value && list.indexOf(value) === index),
+    );
+
+    for (const phone of candidatePhones) {
+      const authorizationIds = this.pendingByPhone.get(phone) ?? [];
+      for (const authorizationId of authorizationIds) {
+        const entry = await this.resolveAuthorization(authorizationId);
+        if (entry && !entry.consumed && entry.expiresAt.getTime() > Date.now()) {
+          return authorizationId;
+        }
+      }
+
+      const redisEntry =
+        await this.voiceSharedStateService.loadLatestAuthorizationByPhone(phone);
+      if (
+        redisEntry &&
+        !redisEntry.consumed &&
+        redisEntry.expiresAt.getTime() > Date.now()
+      ) {
+        return redisEntry.authorizationId;
+      }
+    }
+
+    return undefined;
+  }
+
   async authorizeStart(
     input: VoiceCallStartAuthorizationInput,
   ): Promise<VoiceCallAuthorizationResult> {
@@ -290,11 +370,7 @@ export class VoiceCallAuthorizationService {
   private extractCustomAuthorizationId(
     customParameters: unknown,
   ): string | undefined {
-    const record =
-      customParameters && typeof customParameters === 'object'
-        ? (customParameters as Record<string, unknown>)
-        : undefined;
-
+    const record = this.normalizeCustomParameters(customParameters);
     if (!record) {
       return undefined;
     }
@@ -309,6 +385,23 @@ export class VoiceCallAuthorizationService {
       if (typeof value === 'string' && value.trim().length > 0) {
         return value.trim();
       }
+    }
+
+    return undefined;
+  }
+
+  private normalizeCustomParameters(
+    customParameters: unknown,
+  ): Record<string, unknown> | undefined {
+    if (typeof customParameters === 'string' && customParameters.trim().length > 0) {
+      const parsed = Object.fromEntries(
+        new URLSearchParams(customParameters.trim()),
+      );
+      return Object.keys(parsed).length > 0 ? parsed : undefined;
+    }
+
+    if (customParameters && typeof customParameters === 'object') {
+      return customParameters as Record<string, unknown>;
     }
 
     return undefined;
@@ -387,7 +480,7 @@ export function extractSmartfloProviderCallSid(
       if (
         typeof nestedValue === 'string' &&
         nestedValue.trim().length > 0 &&
-        /call[_-]?(sid|id)|uuid|reference/i.test(key)
+        (/call[_-]?(sid|id)|uuid|reference/i.test(key) || /^sid$/i.test(key))
       ) {
         return nestedValue.trim();
       }

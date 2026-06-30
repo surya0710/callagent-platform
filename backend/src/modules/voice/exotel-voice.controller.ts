@@ -1,0 +1,64 @@
+import { Controller, Get, Logger, Query } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
+import { Public } from '../../common/decorators/public.decorator';
+import { VoiceCallAuthorizationService } from './voice-call-authorization.service';
+import { appendVoiceStreamProviderQuery } from './voice-stream-provider.util';
+import { TelephonyProvider } from './telephony/telephony-provider.types';
+
+@ApiTags('Voice')
+@Public()
+@Controller('voice/exotel')
+export class ExotelVoiceController {
+  private readonly logger = new Logger(ExotelVoiceController.name);
+
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly voiceCallAuthorizationService: VoiceCallAuthorizationService,
+  ) {}
+
+  @Get('stream-url')
+  @ApiOperation({
+    summary: 'Exotel dynamic AgentStream WebSocket URL resolver',
+    description:
+      'Use as the dynamic HTTPS URL in the Exotel Voicebot applet. Returns a per-call WSS URL with authorizationId.',
+  })
+  async resolveStreamUrl(
+    @Query('CallSid') callSid?: string,
+    @Query('call_sid') callSidSnake?: string,
+    @Query('From') from?: string,
+    @Query('from') fromLower?: string,
+    @Query('To') to?: string,
+    @Query('to') toLower?: string,
+  ) {
+    const telephonyProvider = TelephonyProvider.EXOTEL;
+    const authorizationId =
+      await this.voiceCallAuthorizationService.findPendingAuthorizationId({
+        callSid: callSid ?? callSidSnake,
+        from: from ?? fromLower,
+        to: to ?? toLower,
+      });
+
+    const baseWss = appendVoiceStreamProviderQuery(
+      this.configService.get<string>('VOICE_WSS_BASE_URL')?.trim() ||
+        'wss://tatdai.in/api/voice/stream',
+      TelephonyProvider.EXOTEL,
+    );
+
+    if (!authorizationId) {
+      this.logger.warn({
+        telephonyProvider,
+        callSid: callSid ?? callSidSnake,
+        from: from ?? fromLower,
+        to: to ?? toLower,
+        message: 'exotel stream-url resolver: no pending authorization found',
+      });
+      return { url: baseWss };
+    }
+
+    const separator = baseWss.includes('?') ? '&' : '?';
+    return {
+      url: `${baseWss}${separator}authorizationId=${encodeURIComponent(authorizationId)}`,
+    };
+  }
+}
