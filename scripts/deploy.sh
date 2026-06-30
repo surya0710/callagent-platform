@@ -4,8 +4,10 @@ set -euo pipefail
 APP_DIR="/var/www/ai-voice-platform"
 cd "$APP_DIR"
 
-echo "==> Pulling latest code"
-git pull origin main
+echo "==> Syncing to origin/main"
+git fetch origin main
+git checkout main 2>/dev/null || git checkout -B main origin/main
+git reset --hard origin/main
 
 echo "==> Installing backend dependencies"
 cd backend
