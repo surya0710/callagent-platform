@@ -149,7 +149,15 @@ export function formatCustomerNameForGreeting(customerName: string): string {
   return `${firstName} ji`;
 }
 
-export function buildCallContextInstructions(callContext: CallContext): string {
+export interface BuildCallContextInstructionsOptions {
+  /** When true, keep the opening greeting short but retain full context for Q&A. */
+  openingPhase?: boolean;
+}
+
+export function buildCallContextInstructions(
+  callContext: CallContext,
+  options?: BuildCallContextInstructionsOptions,
+): string {
   const lines: string[] = ['Call-specific context (on-demand driver service):'];
 
   if (callContext.bookingNumber) {
@@ -184,12 +192,21 @@ export function buildCallContextInstructions(callContext: CallContext): string {
     'Rules:',
     '- This is an on-demand driver service feedback call about a driver service booking or ride.',
     VOICE_DOMAIN_FEEDBACK_GUIDANCE,
+    '- Treat every field listed above as authoritative booking data for this call.',
+    '- When the customer asks for a field listed above, answer accurately from this context.',
     '- Use this information only when relevant.',
     '- Do not mention all details at once.',
     '- Do not invent missing values.',
-    '- If the customer asks for unavailable details, say the team can confirm.',
+    '- If the customer asks for a detail not listed above, say the team can confirm.',
     '- Keep replies short and conversational.',
   );
+
+  if (options?.openingPhase) {
+    lines.push(
+      '- During the opening greeting only: mention customer name and booking number if available.',
+      '- Do not volunteer driver, payment, or fare details in the opening greeting.',
+    );
+  }
 
   return lines.join('\n');
 }

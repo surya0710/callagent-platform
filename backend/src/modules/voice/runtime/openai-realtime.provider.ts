@@ -818,6 +818,16 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
     this.sessions.set(realStreamSid, session);
 
+    if (
+      session.ws.readyState === WebSocket.OPEN &&
+      session.openAiSessionUpdated &&
+      session.callContext
+    ) {
+      const phase =
+        session.activeInstructionsMode === 'opening' ? 'opening' : 'conversation';
+      void this.sendSessionUpdate(session, session.model, phase);
+    }
+
     if (customerNumber) {
       this.callTiming.linkStreamSid(realStreamSid, `phone:${customerNumber}`);
     }
@@ -1243,12 +1253,14 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       phase === 'conversation' || !session.aiSpeakFirstEnabled
         ? await this.resolveActivePlaybookForSession(session)
         : null;
-    session.activeInstructionsMode =
-      phase === 'opening' && session.aiSpeakFirstEnabled ? 'opening' : 'normal';
-    const callContextInstructions =
-      session.activeInstructionsMode === 'normal' && session.callContext
-        ? buildCallContextInstructions(session.callContext)
-        : undefined;
+    const isOpeningPhase =
+      phase === 'opening' && session.aiSpeakFirstEnabled;
+    session.activeInstructionsMode = isOpeningPhase ? 'opening' : 'normal';
+    const callContextInstructions = session.callContext
+      ? buildCallContextInstructions(session.callContext, {
+          openingPhase: isOpeningPhase,
+        })
+      : undefined;
     const instructions = buildVoiceRuntimeInstructions({
       baseInstructions,
       activePlaybook,
