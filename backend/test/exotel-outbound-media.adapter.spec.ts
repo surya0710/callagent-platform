@@ -15,12 +15,12 @@ describe('ExotelOutboundMediaAdapter', () => {
 
     const parsed = JSON.parse(result.message) as {
       event: string;
-      stream_sid: string;
+      streamSid: string;
       media: { payload: string };
     };
 
     expect(parsed.event).toBe('media');
-    expect(parsed.stream_sid).toBe('MZ123');
+    expect(parsed.streamSid).toBe('MZ123');
     expect(typeof parsed.media.payload).toBe('string');
     expect(Buffer.from(parsed.media.payload, 'base64').length).toBeGreaterThan(0);
     expect(result.decodedMulawBytes).toBe(160);

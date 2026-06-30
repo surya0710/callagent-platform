@@ -22,7 +22,7 @@ export class ExotelOutboundMediaAdapter implements TelephonyOutboundMediaAdapter
       decodedMulawBytes,
       message: JSON.stringify({
         event: 'media',
-        stream_sid: input.streamSid,
+        streamSid: input.streamSid,
         media: {
           payload: exotelPayload,
         },
@@ -33,7 +33,7 @@ export class ExotelOutboundMediaAdapter implements TelephonyOutboundMediaAdapter
   buildMarkMessage(streamSid: string, name: string): string {
     return JSON.stringify({
       event: 'mark',
-      stream_sid: streamSid,
+      streamSid,
       mark: { name },
     });
   }
@@ -41,7 +41,7 @@ export class ExotelOutboundMediaAdapter implements TelephonyOutboundMediaAdapter
   buildClearMessage(streamSid: string): string {
     return JSON.stringify({
       event: 'clear',
-      stream_sid: streamSid,
+      streamSid,
     });
   }
 }

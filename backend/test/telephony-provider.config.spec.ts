@@ -25,4 +25,14 @@ describe('TelephonyProviderConfigService', () => {
     expect(service.getProvider()).toBe(TelephonyProvider.SMARTFLO);
     expect(service.getOutboundMediaEncoding()).toBe('mulaw');
   });
+
+  it('normalizes exotel dashboard edit URL to exoml start_voice URL', () => {
+    const service = buildService({
+      EXOTEL_VOICE_FLOW_URL:
+        'https://my.exotel.com/tatd63/flows/edit/1277414',
+    });
+    expect(service.getExotelConnectUrl()).toBe(
+      'https://my.exotel.com/tatd63/exoml/start_voice/1277414',
+    );
+  });
 });

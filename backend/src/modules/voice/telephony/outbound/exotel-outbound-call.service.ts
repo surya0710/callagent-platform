@@ -230,6 +230,7 @@ export class ExotelOutboundCallService {
       From: from,
       CallerId: callerId,
       Url: connectUrl,
+      CallType: 'trans',
     }).toString();
 
     const basicAuth = Buffer.from(`${apiKey}:${apiToken}`, 'utf8').toString(

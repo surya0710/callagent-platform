@@ -69,10 +69,24 @@ export class TelephonyProviderConfigService {
     return raw || undefined;
   }
 
-  getExotelConnectUrl(): string {
-    return (
-      this.getExotelVoiceFlowUrl() ?? 'http://twimlets.com/holdmusic'
+  /**
+   * Exotel connect API requires the AppEngine flow URL, not the dashboard edit URL.
+   * Accepts either format and normalizes to exoml/start_voice/{app_id}.
+   */
+  normalizeExotelFlowUrl(url: string): string {
+    const trimmed = url.trim();
+    const editMatch = trimmed.match(
+      /my\.exotel\.com\/([^/]+)\/flows\/edit\/(\d+)/i,
     );
+    if (editMatch) {
+      return `https://my.exotel.com/${editMatch[1]}/exoml/start_voice/${editMatch[2]}`;
+    }
+    return trimmed;
+  }
+
+  getExotelConnectUrl(): string {
+    const raw = this.getExotelVoiceFlowUrl() ?? 'http://twimlets.com/holdmusic';
+    return this.normalizeExotelFlowUrl(raw);
   }
 
   getVoiceStreamWssUrl(): string {
