@@ -80,11 +80,12 @@ describe('voice-interruption.util', () => {
     it('includes language and interruption guidance after barge-in', () => {
       const instructions = buildTurnResponseInstructions({
         preferredLanguage: 'english',
+        lockedLanguage: 'english_hinglish',
         wasInterrupted: true,
         lastAssistantText: 'Is this a good time to speak about your booking?',
       });
 
-      expect(instructions).toContain('Reply in english');
+      expect(instructions).toContain('Reply in English or Hinglish');
       expect(instructions).toContain('If interrupted, do not repeat yourself');
       expect(instructions).toContain('Do not repeat your previous response');
     });

@@ -84,7 +84,7 @@ export interface VoiceSession {
   lastCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   preferredLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   responseLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
-  languageMatchMode?: 'latest_customer_message';
+  languageMatchMode?: 'latest_customer_message' | 'conservative_language_lock';
   firstCustomerSpeechAt?: Date;
   firstResponseCreateAt?: Date;
   startupListenDelayMs?: number;
@@ -247,7 +247,7 @@ export interface VoiceSessionResponse {
   lastCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   preferredLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
   responseLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
-  languageMatchMode?: 'latest_customer_message';
+  languageMatchMode?: 'latest_customer_message' | 'conservative_language_lock';
   firstCustomerSpeechAt?: string;
   firstResponseCreateAt?: string;
   startupListenDelayMs?: number;
@@ -1183,7 +1183,7 @@ export class VoiceSessionService {
       lastCustomerLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
       preferredLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
       responseLanguage?: 'english' | 'hindi' | 'hinglish' | 'unknown';
-      languageMatchMode?: 'latest_customer_message';
+      languageMatchMode?: 'latest_customer_message' | 'conservative_language_lock';
       firstCustomerSpeechAt?: Date;
       firstResponseCreateAt?: Date;
       startupListenDelayMs?: number;
