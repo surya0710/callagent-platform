@@ -69,13 +69,25 @@ export class VoiceStreamRuntimeBridge {
     socketSessionId: string,
     streamSid: string,
     startData: VoiceStreamStartData,
+    socketQueryAuthorizationId?: string,
   ): Promise<void> {
+    if (socketQueryAuthorizationId) {
+      this.logger.log({
+        telephonyProvider,
+        socketSessionId,
+        streamSid,
+        authorizationId: socketQueryAuthorizationId,
+        message: `${telephonyProvider} authorizing stream with WSS query authorizationId`,
+      });
+    }
+
     const authorization = await this.voiceCallAuthorizationService.authorizeStart({
       streamSid,
       callSid: startData.callSid,
       from: startData.from,
       to: startData.to,
       customParameters: startData.customParameters,
+      authorizationId: socketQueryAuthorizationId,
     });
 
     if (!authorization.authorized) {

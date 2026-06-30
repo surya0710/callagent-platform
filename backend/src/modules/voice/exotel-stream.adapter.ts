@@ -148,6 +148,7 @@ export class ExotelStreamAdapter {
       socketSessionId,
       streamSid,
       startData,
+      this.voiceSessionService.getSocketQueryAuthorizationId(socketSessionId),
     );
   }
 

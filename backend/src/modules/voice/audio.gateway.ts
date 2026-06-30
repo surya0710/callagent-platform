@@ -22,7 +22,7 @@ import {
   CallTimingDiagnosticsService,
   CallTimingEvent,
 } from './call-timing-diagnostics.service';
-import { parseVoiceStreamProviderFromRequest } from './voice-stream-provider.util';
+import { parseVoiceStreamQueryFromRequest } from './voice-stream-provider.util';
 import { TelephonyProvider } from './telephony/telephony-provider.types';
 import { TelephonyOutboundMediaFactory } from './telephony/outbound/telephony-outbound-media.factory';
 import { SmartfloTelephonyAudioConfigService } from './telephony/audio/smartflo-telephony-audio.config';
@@ -61,11 +61,18 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.socketSessionId = session.socketSessionId;
       this.voiceSocketRegistry.registerSocket(session.socketSessionId, client);
 
-      const streamProvider = parseVoiceStreamProviderFromRequest(request);
+      const streamQuery = parseVoiceStreamQueryFromRequest(request);
+      const streamProvider = streamQuery.provider;
       const isExotel = streamProvider === TelephonyProvider.EXOTEL;
       const telephonyProvider = isExotel
         ? TelephonyProvider.EXOTEL
         : TelephonyProvider.SMARTFLO;
+      if (streamQuery.authorizationId) {
+        this.voiceSessionService.setSocketQueryAuthorizationId(
+          session.socketSessionId,
+          streamQuery.authorizationId,
+        );
+      }
       if (isExotel) {
         this.voiceSocketRegistry.registerExotelSocket(session.socketSessionId);
       }
@@ -99,6 +106,7 @@ export class AudioGateway implements OnGatewayConnection, OnGatewayDisconnect {
           socketSessionId: session.socketSessionId,
           remoteAddress,
           connectedAt: session.connectedAt,
+          authorizationId: streamQuery.authorizationId ?? null,
           message: 'Exotel WebSocket connected',
         });
         return;

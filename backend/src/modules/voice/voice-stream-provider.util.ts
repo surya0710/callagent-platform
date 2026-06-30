@@ -3,9 +3,14 @@ import { TelephonyProvider } from './telephony/telephony-provider.types';
 
 export type VoiceStreamProvider = TelephonyProvider;
 
-export function parseVoiceStreamProviderFromRequest(
+export interface VoiceStreamQueryParams {
+  provider?: VoiceStreamProvider;
+  authorizationId?: string;
+}
+
+function readVoiceStreamSearchParams(
   request: IncomingMessage,
-): VoiceStreamProvider | undefined {
+): URLSearchParams | undefined {
   const rawUrl = request.url?.trim();
   if (!rawUrl) {
     return undefined;
@@ -16,19 +21,46 @@ export function parseVoiceStreamProviderFromRequest(
     return undefined;
   }
 
-  const search = rawUrl.slice(queryIndex + 1);
-  const params = new URLSearchParams(search);
+  return new URLSearchParams(rawUrl.slice(queryIndex + 1));
+}
+
+export function parseVoiceStreamQueryFromRequest(
+  request: IncomingMessage,
+): VoiceStreamQueryParams {
+  const params = readVoiceStreamSearchParams(request);
+  if (!params) {
+    return {};
+  }
+
   const provider = params.get('provider')?.trim().toLowerCase();
+  const authorizationId =
+    params.get('authorizationId')?.trim() ||
+    params.get('authorization_id')?.trim() ||
+    undefined;
 
-  if (provider === TelephonyProvider.EXOTEL) {
-    return TelephonyProvider.EXOTEL;
-  }
+  const resolvedProvider =
+    provider === TelephonyProvider.EXOTEL
+      ? TelephonyProvider.EXOTEL
+      : provider === TelephonyProvider.SMARTFLO
+        ? TelephonyProvider.SMARTFLO
+        : undefined;
 
-  if (provider === TelephonyProvider.SMARTFLO) {
-    return TelephonyProvider.SMARTFLO;
-  }
+  return {
+    provider: resolvedProvider,
+    authorizationId,
+  };
+}
 
-  return undefined;
+export function parseVoiceStreamProviderFromRequest(
+  request: IncomingMessage,
+): VoiceStreamProvider | undefined {
+  return parseVoiceStreamQueryFromRequest(request).provider;
+}
+
+export function parseVoiceStreamAuthorizationIdFromRequest(
+  request: IncomingMessage,
+): string | undefined {
+  return parseVoiceStreamQueryFromRequest(request).authorizationId;
 }
 
 export function appendVoiceStreamProviderQuery(

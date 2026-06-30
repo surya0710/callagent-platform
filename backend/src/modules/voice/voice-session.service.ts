@@ -47,6 +47,7 @@ export interface VoiceSession {
   marksReceived: string[];
   stopReason?: string | null;
   remoteAddress?: string;
+  socketQueryAuthorizationId?: string;
   recordingAvailable?: boolean;
   recordingS3Url?: string | null;
   recordingFileName?: string;
@@ -651,9 +652,47 @@ export class VoiceSessionService {
   }
 
   getActiveSessions(): VoiceSession[] {
-    return Array.from(this.activeBySocketSessionId.values()).filter(
-      (session) => session.isAppInitiated === true,
-    );
+    return Array.from(this.activeBySocketSessionId.values()).filter((session) => {
+      if (session.status === 'ENDED') {
+        return false;
+      }
+
+      if (session.isAppInitiated === true) {
+        return true;
+      }
+
+      if (session.isAppInitiated === false) {
+        return false;
+      }
+
+      if (
+        session.streamSid &&
+        this.authorizationPending.has(session.streamSid)
+      ) {
+        return true;
+      }
+
+      return session.status === 'PENDING' || session.status === 'ACTIVE';
+    });
+  }
+
+  setSocketQueryAuthorizationId(
+    socketSessionId: string,
+    authorizationId?: string,
+  ): void {
+    const session = this.activeBySocketSessionId.get(socketSessionId);
+    if (!session || !authorizationId?.trim()) {
+      return;
+    }
+
+    session.socketQueryAuthorizationId = authorizationId.trim();
+  }
+
+  getSocketQueryAuthorizationId(
+    socketSessionId: string,
+  ): string | undefined {
+    return this.activeBySocketSessionId.get(socketSessionId)
+      ?.socketQueryAuthorizationId;
   }
 
   async getRecentEndedSessions(): Promise<VoiceSession[]> {

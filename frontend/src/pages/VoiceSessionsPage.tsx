@@ -20,6 +20,28 @@ import { VoiceSession, VoiceSessionStatus, voiceRecordingDownloadUrl } from '../
 
 const POLL_INTERVAL_MS = 2000;
 
+function aiConnectionLabel(session: VoiceSession): string {
+  if (session.isOpenAiConnected || session.runtimeStatus === 'connected') {
+    return 'AI connected';
+  }
+  if (session.runtimeStatus === 'connecting') {
+    return 'AI connecting';
+  }
+  if (session.runtimeStatus === 'error') {
+    return 'AI error';
+  }
+  if (session.isAppInitiated === false) {
+    return 'Unauthorized';
+  }
+  if (session.lastEvent === 'connected' && session.status === 'PENDING') {
+    return 'Stream connected';
+  }
+  if (session.status === 'ACTIVE' && !session.runtimeStatus) {
+    return 'Call active';
+  }
+  return 'Waiting';
+}
+
 function StatusBadge({ status }: { status: VoiceSessionStatus }) {
   return (
     <span
@@ -163,7 +185,7 @@ export function VoiceSessionsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Voice Sessions</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Monitor Smartflo bidirectional audio streams from app-initiated calls only.
+            Monitor live voice streams from app-initiated Smartflo and Exotel calls.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -366,12 +388,13 @@ export function VoiceSessionsPage() {
       <Card title="Active Sessions">
         {activeSessions.length === 0 ? (
           <div className="rounded-lg border border-dashed border-slate-700 p-10 text-center text-slate-400">
-            No active Smartflo calls
+            No active voice calls
           </div>
         ) : (
           <Table
             headers={[
               'Status',
+              'AI',
               'streamSid',
               'callSid',
               'From',
@@ -389,6 +412,7 @@ export function VoiceSessionsPage() {
                 <td className="px-4 py-3">
                   <StatusBadge status={session.status} />
                 </td>
+                <td className="px-4 py-3 text-xs capitalize">{aiConnectionLabel(session)}</td>
                 <td
                   className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
                   title={session.streamSid ?? undefined}

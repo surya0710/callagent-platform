@@ -61,6 +61,8 @@ export interface VoiceCallStartAuthorizationInput {
   from?: string;
   to?: string;
   customParameters?: unknown;
+  /** From Exotel dynamic stream-url WSS query (?authorizationId=...) */
+  authorizationId?: string;
 }
 
 const DEFAULT_AUTHORIZATION_TTL_MS = 30 * 60 * 1000;
@@ -242,9 +244,9 @@ export class VoiceCallAuthorizationService {
 
     this.pruneExpired();
 
-    const customAuthorizationId = this.extractCustomAuthorizationId(
-      input.customParameters,
-    );
+    const customAuthorizationId =
+      input.authorizationId?.trim() ||
+      this.extractCustomAuthorizationId(input.customParameters);
     if (customAuthorizationId) {
       const byCustom = await this.consumeAuthorization(customAuthorizationId);
       if (byCustom) {

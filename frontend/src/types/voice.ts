@@ -18,6 +18,9 @@ export interface VoiceSession {
   mediaFormat?: VoiceMediaFormat;
   customParameters?: Record<string, unknown>;
   status: VoiceSessionStatus;
+  isAppInitiated?: boolean;
+  isOpenAiConnected?: boolean;
+  rejectionReason?: string;
   connectedAt?: string;
   startedAt?: string;
   endedAt?: string | null;
