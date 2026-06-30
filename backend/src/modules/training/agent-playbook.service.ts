@@ -52,13 +52,17 @@ export class AgentPlaybookService {
     private readonly configService: ConfigService,
   ) {}
 
-  listPlaybooks() {
-    return this.prisma.agentPlaybook.findMany({
-      orderBy: [
-        { status: 'asc' },
-        { version: 'desc' },
-        { updatedAt: 'desc' },
-      ],
+  async listPlaybooks() {
+    const playbooks = await this.prisma.agentPlaybook.findMany({
+      orderBy: [{ version: 'desc' }, { updatedAt: 'desc' }],
+    });
+
+    // Pin the active playbook to the top, keep the rest in latest-version-first
+    // order (Array.prototype.sort is stable, so version desc is preserved).
+    return playbooks.sort((a, b) => {
+      const aActive = a.status === 'active' ? 1 : 0;
+      const bActive = b.status === 'active' ? 1 : 0;
+      return bActive - aActive;
     });
   }
 
