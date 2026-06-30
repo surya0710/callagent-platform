@@ -112,16 +112,34 @@ describe('voice-interruption.util', () => {
       expect(
         shouldSkipAssistantTranscriptDone({
           interruptedAssistantItemId: 'item_1',
-          assistantTranscriptItemId: 'item_1',
+          doneItemId: 'item_1',
         }),
       ).toBe(true);
 
       expect(
         shouldSkipAssistantTranscriptDone({
           interruptedAssistantItemId: 'item_1',
-          assistantTranscriptItemId: 'item_2',
+          doneItemId: 'item_2',
         }),
       ).toBe(false);
+    });
+
+    it('does not skip when no interrupt occurred', () => {
+      expect(
+        shouldSkipAssistantTranscriptDone({
+          interruptedAssistantItemId: undefined,
+          doneItemId: 'item_1',
+        }),
+      ).toBe(false);
+    });
+
+    it('skips when an interrupt occurred but the done event has no item id', () => {
+      expect(
+        shouldSkipAssistantTranscriptDone({
+          interruptedAssistantItemId: 'item_1',
+          doneItemId: undefined,
+        }),
+      ).toBe(true);
     });
   });
 

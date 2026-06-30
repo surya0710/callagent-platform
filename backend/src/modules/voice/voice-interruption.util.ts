@@ -77,13 +77,19 @@ export function mulawBytesToPlaybackMs(mulawBytes: number): number {
 
 export function shouldSkipAssistantTranscriptDone(input: {
   interruptedAssistantItemId?: string;
-  assistantTranscriptItemId?: string;
+  doneItemId?: string;
 }): boolean {
-  if (!input.interruptedAssistantItemId || !input.assistantTranscriptItemId) {
+  if (!input.interruptedAssistantItemId) {
     return false;
   }
 
-  return input.interruptedAssistantItemId === input.assistantTranscriptItemId;
+  // If the transcript-done event carries no item id, fall back to skipping
+  // whenever we know an interrupt happened for the in-flight assistant item.
+  if (!input.doneItemId) {
+    return true;
+  }
+
+  return input.interruptedAssistantItemId === input.doneItemId;
 }
 
 export function resolveInterruptedAssistantText(input: {

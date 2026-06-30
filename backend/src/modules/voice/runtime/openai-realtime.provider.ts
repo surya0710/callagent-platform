@@ -142,6 +142,7 @@ interface OpenAiRealtimeSession {
   currentResponseMulawSent: number;
   interruptedAssistantItemId?: string;
   truncateSentForItemId?: string;
+  interruptedTranscriptCommitted: boolean;
   lastCloseCode?: number;
   lastCloseReason?: string;
   useServerVad: boolean;
@@ -978,6 +979,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       responseDoneCount: 0,
       outboundMediaCount: 0,
       currentResponseMulawSent: 0,
+      interruptedTranscriptCommitted: false,
       useServerVad,
       model,
       aiSpeakFirstEnabled,
@@ -2227,6 +2229,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private commitInterruptedAssistantTranscript(
     session: OpenAiRealtimeSession,
   ): void {
+    if (session.interruptedTranscriptCommitted) {
+      return;
+    }
+
     const text = resolveInterruptedAssistantText({
       assistantTranscriptBuffer: session.assistantTranscriptBuffer,
       lastAssistantText: session.lastAssistantText,
@@ -2234,6 +2240,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     if (!text) {
       return;
     }
+
+    session.interruptedTranscriptCommitted = true;
 
     const streamSid = session.streamSid;
     const endedAtMs = this.resolveTranscriptOffsetMs(session);
@@ -3729,19 +3737,21 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       type === 'response.output_audio_transcript.done' ||
       type.includes('output_audio_transcript.done')
     ) {
+      const doneItemId =
+        extractEventItemId(event) ?? session.assistantTranscriptItemId;
       if (
         shouldSkipAssistantTranscriptDone({
           interruptedAssistantItemId: session.interruptedAssistantItemId,
-          assistantTranscriptItemId: session.assistantTranscriptItemId,
+          doneItemId,
         })
       ) {
+        this.commitInterruptedAssistantTranscript(session);
         this.logger.log({
           streamSid,
-          itemId: session.assistantTranscriptItemId,
+          itemId: doneItemId,
           message: 'assistant_transcript_done_skipped_after_interrupt',
         });
         session.assistantTranscriptBuffer = '';
-        session.assistantTranscriptItemId = undefined;
         return;
       }
 
@@ -3820,7 +3830,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.currentResponseId = undefined;
       session.aiSpeakingStartedAt = undefined;
       session.assistantTranscriptBuffer = '';
-      session.assistantTranscriptItemId = undefined;
+      // Intentionally keep assistantTranscriptItemId so a late
+      // output_audio_transcript.done for the interrupted item can still be
+      // matched and skipped. It is reset on the next response.created.
       this.clearManualFallbackSilenceTimer(session);
       this.updateRuntimeState(streamSid, {
         isAiSpeaking: false,
@@ -3888,6 +3900,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.assistantTranscriptItemId = extractAssistantItemIdFromResponseCreated(event);
       session.interruptedAssistantItemId = undefined;
       session.truncateSentForItemId = undefined;
+      session.interruptedTranscriptCommitted = false;
       session.currentResponseId = extractResponseId(event);
       session.aiSpeakingStartedAt = new Date();
       if (!session.firstResponseCreateAt) {
