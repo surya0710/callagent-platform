@@ -311,6 +311,11 @@ describe('voice-opening.util', () => {
       expect(hasOpeningPreTimerCustomerSpeech(6, 399)).toBe(false);
       expect(hasOpeningPreTimerCustomerSpeech(6, 400)).toBe(true);
     });
+
+    it('detects early customer speech without implying greeting cancellation', () => {
+      // Detection is diagnostic only; speak-first must still send the opening greeting.
+      expect(hasOpeningPreTimerCustomerSpeech(6, 400)).toBe(true);
+    });
   });
 
   describe('buildGreetingDiagnosticLog', () => {

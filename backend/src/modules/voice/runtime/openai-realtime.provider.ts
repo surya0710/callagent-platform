@@ -1641,23 +1641,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
-  private skipOpeningForCustomerBeforeTimer(
-    session: OpenAiRealtimeSession,
-    delayMs: number,
-  ): void {
-    this.logGreetingDiagnostic(session, {
-      skipReason: 'customer_spoke_before_opening_timer',
-      delayMs,
-    });
-    session.openingGreetingRequested = true;
-    this.clearOpeningDelayTimer(session);
-    this.setVoiceSessionStage(session, 'WAITING_FOR_CUSTOMER');
-    this.activateNormalModeAfterOpening(session, {
-      preserveQueuedInbound: true,
-    });
-    this.flushPendingInputIfReady(session);
-  }
-
   private setOpeningState(
     session: OpenAiRealtimeSession,
     openingState: OpeningState,
@@ -1800,8 +1783,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     if (session.customerSpokeBeforeOpeningDelay) {
-      this.skipOpeningForCustomerBeforeTimer(session, delayMs);
-      return;
+      this.logGreetingDiagnostic(session, {
+        delayMs,
+        configuredOpeningDelayMs: delayMs,
+      });
     }
 
     this.startConversationWithGreeting(session);
@@ -2851,7 +2836,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     this.clearOpeningReadinessRetry(session);
-    this.scheduleOpeningAfterDelay(session);
+    const delayMs = this.voiceOpeningConfigService.getOpeningDelayMs();
+    if (delayMs > 0) {
+      this.scheduleOpeningAfterDelay(session);
+      return;
+    }
+
+    this.logGreetingDiagnostic(session, {
+      greetingScheduled: false,
+      configuredOpeningDelayMs: 0,
+    });
+    this.startConversationWithGreeting(session);
   }
 
   private tryStartOpeningGreeting(session: OpenAiRealtimeSession): void {
