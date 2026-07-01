@@ -337,6 +337,10 @@ export class SmartfloStreamAdapter {
     });
 
     setImmediate(() => {
+      this.voiceRuntime.onSocketConnected?.(socketSessionId);
+    });
+
+    setImmediate(() => {
       this.audioGateway.sendSyntheticTone(streamSid);
     });
   }

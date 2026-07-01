@@ -92,10 +92,10 @@ const MULAW_SILENCE_BYTE = 0xff;
 const INPUT_COMMIT_DELAY_MS = 600;
 const MANUAL_FALLBACK_SILENCE_MS = 800;
 const RESPONSE_WAIT_MS = 15000;
-const SESSION_INSTRUCTION_READY_FALLBACK_MS = 750;
-const OPENING_READINESS_RETRY_MS = 300;
+const SESSION_INSTRUCTION_READY_FALLBACK_MS = 100;
+const OPENING_READINESS_RETRY_MS = 75;
 const OPENING_READINESS_MAX_RETRIES = 40;
-const OPENING_GREETING_DEFER_RETRY_MS = 250;
+const OPENING_GREETING_DEFER_RETRY_MS = 75;
 const OPENING_GREETING_DEFER_MAX_RETRIES = 24;
 const WS_OPEN_TIMEOUT_MS = 8000;
 const PLAYBOOK_LOOKUP_TIMEOUT_MS = 750;
@@ -1444,7 +1444,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
   private markOpenAiInstructionReady(
     session: OpenAiRealtimeSession,
-    reason: 'session.updated' | 'fallback',
+    reason: 'session.updated' | 'session.created' | 'fallback',
   ): void {
     if (session.openAiSessionUpdated) {
       return;
@@ -1840,6 +1840,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }, OPENING_READINESS_RETRY_MS);
   }
 
+  private resolveOpeningDelayMs(session: OpenAiRealtimeSession): number {
+    if (session.smartfloStartReceived) {
+      return 0;
+    }
+    return this.voiceOpeningConfigService.getOpeningDelayMs();
+  }
+
   private scheduleOpeningAfterDelay(session: OpenAiRealtimeSession): void {
     if (
       session.openingDelayTimer ||
@@ -1850,7 +1857,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    const delayMs = this.voiceOpeningConfigService.getOpeningDelayMs();
+    const delayMs = this.resolveOpeningDelayMs(session);
     session.openingDelayPending = true;
     session.sessionReadyAt = session.sessionReadyAt ?? new Date();
     session.preOpeningSpeechPacketCount = 0;
@@ -2959,7 +2966,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     this.clearOpeningReadinessRetry(session);
-    const delayMs = this.voiceOpeningConfigService.getOpeningDelayMs();
+    const delayMs = this.resolveOpeningDelayMs(session);
     if (delayMs > 0) {
       this.scheduleOpeningAfterDelay(session);
       return;
@@ -3089,8 +3096,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         delayMs: session.sessionReadyAt
           ? now.getTime() - session.sessionReadyAt.getTime()
           : undefined,
-        configuredOpeningDelayMs:
-          this.voiceOpeningConfigService.getOpeningDelayMs(),
+        configuredOpeningDelayMs: this.resolveOpeningDelayMs(session),
       });
       this.callTiming.markByStreamSid(
         session.streamSid,
@@ -4005,7 +4011,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         });
       }
       if (session.sessionUpdateSent) {
-        this.scheduleSessionInstructionReadyFallback(session);
+        if (session.aiSpeakFirstEnabled && session.smartfloStartReceived) {
+          this.markOpenAiInstructionReady(session, 'session.created');
+        } else {
+          this.scheduleSessionInstructionReadyFallback(session);
+        }
       }
       this.evaluateOpeningReadiness(session);
       return;

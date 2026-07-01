@@ -29,6 +29,15 @@ echo "==> Ensuring voice recording env vars"
 ensure_env_var "VOICE_RECORDINGS_STORAGE_DRIVER" "local"
 ensure_env_var "VOICE_RECORDINGS_STORAGE_PATH" "storage"
 
+echo "==> Ensuring speak-first greeting fires immediately on connect"
+ensure_env_var "VOICE_AI_SPEAK_FIRST_ENABLED" "true"
+if grep -q "^VOICE_AI_SPEAK_FIRST_OPENING_DELAY_MS=" .env; then
+  sed -i 's/^VOICE_AI_SPEAK_FIRST_OPENING_DELAY_MS=.*/VOICE_AI_SPEAK_FIRST_OPENING_DELAY_MS=0/' .env
+  echo "Set VOICE_AI_SPEAK_FIRST_OPENING_DELAY_MS=0 in backend/.env"
+else
+  ensure_env_var "VOICE_AI_SPEAK_FIRST_OPENING_DELAY_MS" "0"
+fi
+
 if [ -f "pnpm-lock.yaml" ]; then
   pnpm install --frozen-lockfile
 else

@@ -239,6 +239,10 @@ export class VoiceStreamRuntimeBridge {
     });
 
     setImmediate(() => {
+      this.voiceRuntime.onSocketConnected?.(socketSessionId);
+    });
+
+    setImmediate(() => {
       this.audioGateway.sendSyntheticTone(streamSid);
     });
   }
