@@ -6,7 +6,8 @@ import { SessionTranscriptSection } from '../components/voice/SessionTranscriptS
 import { Button } from '../components/ui/Button';
 import { Card, StatCard } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
-import { ErrorState, LoadingState, Table } from '../components/ui/Table';
+import { ErrorState, LoadingState } from '../components/ui/Table';
+import { ClientDataTable, DataTable } from '../components/ui/DataTable';
 import { voiceApi } from '../lib/voiceApi';
 import {
   copyToClipboard,
@@ -19,6 +20,7 @@ import {
 import { VoiceSession, VoiceSessionStatus, voiceRecordingDownloadUrl } from '../types/voice';
 
 const POLL_INTERVAL_MS = 2000;
+const DEFAULT_PAGE_SIZE = 10;
 
 function authStatusLabel(session: VoiceSession): string {
   if (session.isAppInitiated === true) {
@@ -154,6 +156,10 @@ export function VoiceSessionsPage() {
   const [transcriptSession, setTranscriptSession] = useState<VoiceSession | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [recentPage, setRecentPage] = useState(1);
+  const [recentLimit, setRecentLimit] = useState(DEFAULT_PAGE_SIZE);
+  const [activePage, setActivePage] = useState(1);
+  const [activeLimit, setActiveLimit] = useState(DEFAULT_PAGE_SIZE);
 
   const pollInterval = autoRefresh ? POLL_INTERVAL_MS : false;
 
@@ -164,17 +170,33 @@ export function VoiceSessionsPage() {
   });
 
   const sessionsQuery = useQuery({
-    queryKey: ['voice-sessions'],
-    queryFn: voiceApi.getSessions,
+    queryKey: ['voice-sessions', recentPage, recentLimit],
+    queryFn: () => voiceApi.getSessions({ page: recentPage, limit: recentLimit }),
     refetchInterval: pollInterval,
   });
 
   const activeSessions = sessionsQuery.data?.active ?? [];
-  const recentEnded = [...(sessionsQuery.data?.recentEnded ?? [])].sort(
-    (a, b) =>
-      new Date(b.endedAt ?? 0).getTime() - new Date(a.endedAt ?? 0).getTime(),
-  );
+  const recentEnded = sessionsQuery.data?.recentEnded ?? [];
+  const recentMeta = sessionsQuery.data?.meta ?? {
+    total: 0,
+    page: recentPage,
+    limit: recentLimit,
+    totalPages: 1,
+  };
   const hasActiveSessions = activeSessions.length > 0;
+
+  useEffect(() => {
+    if (recentPage > recentMeta.totalPages && recentMeta.totalPages > 0) {
+      setRecentPage(recentMeta.totalPages);
+    }
+  }, [recentPage, recentMeta.totalPages]);
+
+  useEffect(() => {
+    const activeTotalPages = Math.ceil(activeSessions.length / activeLimit) || 1;
+    if (activePage > activeTotalPages && activeTotalPages > 0) {
+      setActivePage(activeTotalPages);
+    }
+  }, [activePage, activeLimit, activeSessions.length]);
 
   useEffect(() => {
     if (!healthQuery.isFetching && !sessionsQuery.isFetching) {
@@ -277,7 +299,7 @@ export function VoiceSessionsPage() {
         />
         <StatCard
           label="Recent Ended"
-          value={recentEnded.length}
+          value={recentMeta.total}
         />
         <StatCard
           label="Server Time"
@@ -346,161 +368,166 @@ export function VoiceSessionsPage() {
       )}
 
       <Card title="Recent Ended Sessions">
-        {recentEnded.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-700 p-10 text-center text-slate-400">
-            No recent ended sessions
-          </div>
-        ) : (
-          <Table
-            headers={[
-              'Status',
-              'Provider',
-              'Auth',
-              'streamSid',
-              'callSid',
-              'From',
-              'To',
-              'Packets',
-              'Stop / Rejection',
-              'Recording',
-              'Started At',
-              'Ended At',
-              'Duration',
-              'Actions',
-            ]}
-          >
-            {recentEnded.map((session) => (
-              <tr key={session.socketSessionId} className="text-slate-300">
-                <td className="px-4 py-3">
-                  <StatusBadge status={session.status} />
-                </td>
-                <td className="whitespace-nowrap px-4 py-3 capitalize">
-                  {providerLabel(session)}
-                </td>
-                <td className="max-w-[10rem] truncate px-4 py-3 text-xs" title={authStatusLabel(session)}>
-                  {authStatusLabel(session)}
-                </td>
-                <td
-                  className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
-                  title={session.streamSid ?? undefined}
-                >
-                  {streamIdLabel(session)}
-                </td>
-                <td
-                  className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
-                  title={session.callSid ?? undefined}
-                >
-                  {safeValue(session.callSid)}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">{safeValue(session.from)}</td>
-                <td className="whitespace-nowrap px-4 py-3">{safeValue(session.to)}</td>
-                <td className="whitespace-nowrap px-4 py-3">{session.packetsReceived}</td>
-                <td className="max-w-[12rem] truncate px-4 py-3" title={session.stopReason ?? session.rejectionReason ?? undefined}>
-                  {safeValue(session.stopReason ?? session.rejectionReason)}
-                </td>
-                <td className="px-4 py-3">
-                  {session.recordingAvailable && session.streamSid ? (
-                    <a
-                      href={voiceRecordingDownloadUrl(session.streamSid)}
-                      className="text-xs text-indigo-400 hover:text-indigo-300"
-                      target="_blank"
-                      rel="noreferrer"
-                      download
-                    >
-                      Download WAV
-                    </a>
-                  ) : (
-                    <span className="text-slate-500">—</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">{formatDateTime(session.startedAt ?? session.connectedAt)}</td>
-                <td className="px-4 py-3">{formatDateTime(session.endedAt ?? undefined)}</td>
-                <td className="px-4 py-3">{sessionDuration(session)}</td>
-                <td className="px-4 py-3">
-                  <SessionActions
-                    session={session}
-                    onViewDetails={setSelectedSession}
-                    onViewTranscript={setTranscriptSession}
-                    copiedKey={copiedKey}
-                    onCopy={handleCopy}
-                  />
-                </td>
-              </tr>
-            ))}
-          </Table>
-        )}
+        <DataTable
+          headers={[
+            'Status',
+            'Provider',
+            'Auth',
+            'streamSid',
+            'callSid',
+            'From',
+            'To',
+            'Packets',
+            'Stop / Rejection',
+            'Recording',
+            'Started At',
+            'Ended At',
+            'Duration',
+            'Actions',
+          ]}
+          empty={recentMeta.total === 0}
+          emptyMessage="No recent ended sessions"
+          meta={recentMeta}
+          onPageChange={setRecentPage}
+          onLimitChange={(limit) => {
+            setRecentLimit(limit);
+            setRecentPage(1);
+          }}
+        >
+          {recentEnded.map((session) => (
+            <tr key={session.socketSessionId} className="text-slate-300">
+              <td className="px-4 py-3">
+                <StatusBadge status={session.status} />
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 capitalize">
+                {providerLabel(session)}
+              </td>
+              <td className="max-w-[10rem] truncate px-4 py-3 text-xs" title={authStatusLabel(session)}>
+                {authStatusLabel(session)}
+              </td>
+              <td
+                className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
+                title={session.streamSid ?? undefined}
+              >
+                {streamIdLabel(session)}
+              </td>
+              <td
+                className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
+                title={session.callSid ?? undefined}
+              >
+                {safeValue(session.callSid)}
+              </td>
+              <td className="whitespace-nowrap px-4 py-3">{safeValue(session.from)}</td>
+              <td className="whitespace-nowrap px-4 py-3">{safeValue(session.to)}</td>
+              <td className="whitespace-nowrap px-4 py-3">{session.packetsReceived}</td>
+              <td className="max-w-[12rem] truncate px-4 py-3" title={session.stopReason ?? session.rejectionReason ?? undefined}>
+                {safeValue(session.stopReason ?? session.rejectionReason)}
+              </td>
+              <td className="px-4 py-3">
+                {session.recordingAvailable && session.streamSid ? (
+                  <a
+                    href={voiceRecordingDownloadUrl(session.streamSid)}
+                    className="text-xs text-indigo-400 hover:text-indigo-300"
+                    target="_blank"
+                    rel="noreferrer"
+                    download
+                  >
+                    Download WAV
+                  </a>
+                ) : (
+                  <span className="text-slate-500">—</span>
+                )}
+              </td>
+              <td className="px-4 py-3">{formatDateTime(session.startedAt ?? session.connectedAt)}</td>
+              <td className="px-4 py-3">{formatDateTime(session.endedAt ?? undefined)}</td>
+              <td className="px-4 py-3">{sessionDuration(session)}</td>
+              <td className="px-4 py-3">
+                <SessionActions
+                  session={session}
+                  onViewDetails={setSelectedSession}
+                  onViewTranscript={setTranscriptSession}
+                  copiedKey={copiedKey}
+                  onCopy={handleCopy}
+                />
+              </td>
+            </tr>
+          ))}
+        </DataTable>
       </Card>
 
       <Card title="Active Sessions">
-        {activeSessions.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-700 p-10 text-center text-slate-400">
-            No active voice calls
-          </div>
-        ) : (
-          <Table
-            headers={[
-              'Status',
-              'Provider',
-              'AI',
-              'Auth',
-              'streamSid',
-              'callSid',
-              'From',
-              'To',
-              'Direction',
-              'Packets',
-              'Last Event',
-              'Last Event At',
-              'Duration',
-              'Actions',
-            ]}
-          >
-            {activeSessions.map((session) => (
-              <tr key={session.socketSessionId} className="text-slate-300">
-                <td className="px-4 py-3">
-                  <StatusBadge status={session.status} />
-                </td>
-                <td className="whitespace-nowrap px-4 py-3 capitalize">
-                  {providerLabel(session)}
-                </td>
-                <td className="px-4 py-3 text-xs capitalize">{aiConnectionLabel(session)}</td>
-                <td className="max-w-[10rem] truncate px-4 py-3 text-xs" title={authStatusLabel(session)}>
-                  {authStatusLabel(session)}
-                </td>
-                <td
-                  className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
-                  title={session.streamSid ?? undefined}
-                >
-                  {streamIdLabel(session)}
-                </td>
-                <td
-                  className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
-                  title={session.callSid ?? undefined}
-                >
-                  {safeValue(session.callSid)}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3">{safeValue(session.from)}</td>
-                <td className="whitespace-nowrap px-4 py-3">{safeValue(session.to)}</td>
-                <td className="whitespace-nowrap px-4 py-3 capitalize">{safeValue(session.direction)}</td>
-                <td className="whitespace-nowrap px-4 py-3">{session.packetsReceived}</td>
-                <td className="max-w-[12rem] truncate px-4 py-3" title={session.lastEvent ?? undefined}>
-                  {safeValue(session.lastEvent)}
-                </td>
-                <td className="px-4 py-3">{formatDateTime(session.lastEventAt)}</td>
-                <td className="px-4 py-3">{sessionDuration(session, now)}</td>
-                <td className="px-4 py-3">
-                  <SessionActions
-                    session={session}
-                    onViewDetails={setSelectedSession}
-                    onViewTranscript={setTranscriptSession}
-                    copiedKey={copiedKey}
-                    onCopy={handleCopy}
-                  />
-                </td>
-              </tr>
-            ))}
-          </Table>
-        )}
+        <ClientDataTable
+          headers={[
+            'Status',
+            'Provider',
+            'AI',
+            'Auth',
+            'streamSid',
+            'callSid',
+            'From',
+            'To',
+            'Direction',
+            'Packets',
+            'Last Event',
+            'Last Event At',
+            'Duration',
+            'Actions',
+          ]}
+          data={activeSessions}
+          page={activePage}
+          limit={activeLimit}
+          onPageChange={setActivePage}
+          onLimitChange={(limit) => {
+            setActiveLimit(limit);
+            setActivePage(1);
+          }}
+          emptyMessage="No active voice calls"
+          rowKey={(session) => session.socketSessionId}
+          renderRow={(session) => (
+            <>
+              <td className="px-4 py-3">
+                <StatusBadge status={session.status} />
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 capitalize">
+                {providerLabel(session)}
+              </td>
+              <td className="px-4 py-3 text-xs capitalize">{aiConnectionLabel(session)}</td>
+              <td className="max-w-[10rem] truncate px-4 py-3 text-xs" title={authStatusLabel(session)}>
+                {authStatusLabel(session)}
+              </td>
+              <td
+                className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
+                title={session.streamSid ?? undefined}
+              >
+                {streamIdLabel(session)}
+              </td>
+              <td
+                className="max-w-[10rem] truncate px-4 py-3 font-mono text-xs"
+                title={session.callSid ?? undefined}
+              >
+                {safeValue(session.callSid)}
+              </td>
+              <td className="whitespace-nowrap px-4 py-3">{safeValue(session.from)}</td>
+              <td className="whitespace-nowrap px-4 py-3">{safeValue(session.to)}</td>
+              <td className="whitespace-nowrap px-4 py-3 capitalize">{safeValue(session.direction)}</td>
+              <td className="whitespace-nowrap px-4 py-3">{session.packetsReceived}</td>
+              <td className="max-w-[12rem] truncate px-4 py-3" title={session.lastEvent ?? undefined}>
+                {safeValue(session.lastEvent)}
+              </td>
+              <td className="px-4 py-3">{formatDateTime(session.lastEventAt)}</td>
+              <td className="px-4 py-3">{sessionDuration(session, now)}</td>
+              <td className="px-4 py-3">
+                <SessionActions
+                  session={session}
+                  onViewDetails={setSelectedSession}
+                  onViewTranscript={setTranscriptSession}
+                  copiedKey={copiedKey}
+                  onCopy={handleCopy}
+                />
+              </td>
+            </>
+          )}
+        />
       </Card>
 
       {selectedSession && (

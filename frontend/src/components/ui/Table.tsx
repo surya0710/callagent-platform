@@ -1,6 +1,16 @@
 import { ReactNode } from 'react';
 
-export function Table({ headers, children, empty }: { headers: string[]; children: ReactNode; empty?: boolean }) {
+export function Table({
+  headers,
+  children,
+  empty,
+  embedded,
+}: {
+  headers: string[];
+  children: ReactNode;
+  empty?: boolean;
+  embedded?: boolean;
+}) {
   if (empty) {
     return (
       <div className="rounded-lg border border-dashed border-slate-700 p-10 text-center text-slate-400">
@@ -10,7 +20,9 @@ export function Table({ headers, children, empty }: { headers: string[]; childre
   }
 
   return (
-    <div className="max-w-full overflow-x-auto rounded-lg border border-slate-800">
+    <div
+      className={`max-w-full overflow-x-auto ${embedded ? '' : 'rounded-lg border border-slate-800'}`}
+    >
       <table className="w-full min-w-[960px] text-left text-sm">
         <thead className="bg-slate-900 text-slate-400">
           <tr>

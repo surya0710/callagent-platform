@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -24,6 +25,7 @@ import {
 } from './voice-session.service';
 import { VoiceTranscriptService } from './transcript/voice-transcript.service';
 import { PrismaService } from '../../database/prisma.service';
+import { VoiceSessionQueryDto } from './dto/voice-session-query.dto';
 
 @ApiTags('Voice')
 @Public()
@@ -43,16 +45,27 @@ export class VoiceController {
 
   @Get('sessions')
   @ApiOperation({ summary: 'List active and recently ended voice sessions' })
-  async listSessions() {
+  async listSessions(@Query() query: VoiceSessionQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
     const recentEnded = await this.voiceSessionService.getRecentEndedSessions();
+    const total = recentEnded.length;
+    const skip = (page - 1) * limit;
+    const pageItems = recentEnded.slice(skip, skip + limit);
     const recentEndedWithS3 = await this.enrichRecordingAvailability(
-      recentEnded.map(toVoiceSessionResponse),
+      pageItems.map(toVoiceSessionResponse),
     );
     return {
       active: this.voiceSessionService
         .getActiveSessions()
         .map(toVoiceSessionResponse),
       recentEnded: recentEndedWithS3,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
     };
   }
 
@@ -66,9 +79,25 @@ export class VoiceController {
 
   @Get('sessions/recent')
   @ApiOperation({ summary: 'List recently ended voice sessions' })
-  async listRecentSessions() {
+  async listRecentSessions(@Query() query: VoiceSessionQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
     const recentEnded = await this.voiceSessionService.getRecentEndedSessions();
-    return this.enrichRecordingAvailability(recentEnded.map(toVoiceSessionResponse));
+    const total = recentEnded.length;
+    const skip = (page - 1) * limit;
+    const pageItems = recentEnded.slice(skip, skip + limit);
+    const data = await this.enrichRecordingAvailability(
+      pageItems.map(toVoiceSessionResponse),
+    );
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
   }
 
   private async enrichRecordingAvailability(
