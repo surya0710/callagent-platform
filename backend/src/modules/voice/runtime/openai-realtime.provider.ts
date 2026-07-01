@@ -3078,7 +3078,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     try {
       const sent = this.sendResponseCreate(session, 'opening', {
-        modalities: ['audio'],
         instructions: buildOpeningResponseInstructions(
           session.openingContext,
           session.callContext,
