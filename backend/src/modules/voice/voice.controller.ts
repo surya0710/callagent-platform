@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  Logger,
   NotFoundException,
   Param,
   Post,
@@ -32,6 +33,8 @@ import { filterVoiceSessionsBySearch } from './voice-session-search.util';
 @Public()
 @Controller('voice')
 export class VoiceController {
+  private readonly logger = new Logger(VoiceController.name);
+
   constructor(
     private readonly voiceSessionService: VoiceSessionService,
     private readonly voiceRecordingService: VoiceRecordingService,
@@ -109,27 +112,75 @@ export class VoiceController {
     sessions: ReturnType<typeof toVoiceSessionResponse>[],
   ): Promise<ReturnType<typeof toVoiceSessionResponse>[]> {
     const callIds = sessions
-      .map((s) => s.callId)
+      .map((session) => session.callId)
       .filter((id): id is string => Boolean(id));
 
-    if (callIds.length === 0) {
-      return sessions;
+    const callRecordingById = new Map<string, string | null>();
+    if (callIds.length > 0) {
+      const calls = await this.prisma.call.findMany({
+        where: { id: { in: callIds } },
+        select: { id: true, recordingS3Url: true },
+      });
+      for (const call of calls) {
+        callRecordingById.set(call.id, call.recordingS3Url);
+      }
     }
 
-    const calls = await this.prisma.call.findMany({
-      where: { id: { in: callIds }, recordingS3Url: { not: null } },
-      select: { id: true },
+    return Promise.all(
+      sessions.map(async (session) => {
+        if (!session.streamSid) {
+          return {
+            ...session,
+            recordingAvailable: false,
+            recordingS3Url: null,
+          };
+        }
+
+        const lookup = await this.voiceRecordingService.resolveRecordingLookup(
+          session.streamSid,
+          {
+            sessionRecordingS3Url: session.recordingS3Url,
+            callId: session.callId,
+            callRecordingS3Url: session.callId
+              ? callRecordingById.get(session.callId)
+              : null,
+          },
+        );
+
+        this.logRecordingLookupDiagnostic(session, lookup);
+
+        return {
+          ...session,
+          recordingAvailable:
+            session.recordingAvailable === true || lookup.recordingExists,
+          recordingS3Url: null,
+        };
+      }),
+    );
+  }
+
+  private logRecordingLookupDiagnostic(
+    session:
+      | Pick<
+          ReturnType<typeof toVoiceSessionResponse>,
+          'socketSessionId' | 'streamSid' | 'telephonyProvider'
+        >
+      | null
+      | undefined,
+    lookup: Awaited<
+      ReturnType<VoiceRecordingService['resolveRecordingLookup']>
+    >,
+  ): void {
+    this.logger.log({
+      sessionId: session?.socketSessionId ?? null,
+      streamSid: lookup.streamSid,
+      provider: session?.telephonyProvider ?? null,
+      recordingExists: lookup.recordingExists,
+      recordingStorage: lookup.recordingStorage,
+      s3Key: lookup.s3Key,
+      downloadUrlAvailable: lookup.downloadUrlAvailable,
+      message: 'voice_recording_lookup_diag',
     });
-
-    const callIdsWithRecording = new Set(calls.map((c) => c.id));
-
-    return sessions.map((s) => ({
-      ...s,
-      recordingAvailable:
-        s.recordingAvailable ||
-        (s.callId ? callIdsWithRecording.has(s.callId) : false),
-      recordingS3Url: null,
-    }));
   }
 
   @Get('sessions/:streamSid/runtime-debug')
@@ -264,7 +315,10 @@ export class VoiceController {
       throw new NotFoundException(`Voice session not found: ${streamSid}`);
     }
 
-    return toVoiceSessionResponse(session);
+    const [response] = await this.enrichRecordingAvailability([
+      toVoiceSessionResponse(session),
+    ]);
+    return response;
   }
 
   @Get('sessions/:streamSid/transcript')
@@ -330,9 +384,33 @@ export class VoiceController {
     @Param('streamSid') streamSid: string,
     @Res() res: Response,
   ): Promise<void> {
+    const session = await this.voiceSessionService.resolveByStreamSid(streamSid);
+    const lookup = await this.voiceRecordingService.resolveRecordingLookup(
+      streamSid,
+      {
+        sessionRecordingS3Url: session?.recordingS3Url,
+        callId: session?.callId,
+      },
+    );
+    this.logRecordingLookupDiagnostic(
+      session ? toVoiceSessionResponse(session) : null,
+      lookup,
+    );
+
+    if (!lookup.recordingExists || !lookup.s3Key) {
+      throw new NotFoundException(`Voice recording not found: ${streamSid}`);
+    }
+
     try {
-      const signed =
-        await this.voiceRecordingService.getSignedRecordingUrl(streamSid);
+      const signed = await this.voiceRecordingService.getSignedRecordingUrl(
+        streamSid,
+        900,
+        {
+          sessionRecordingS3Url: session?.recordingS3Url,
+          callId: session?.callId,
+          callRecordingS3Url: lookup.recordingStorage === 'call' ? lookup.s3Key : undefined,
+        },
+      );
       res.redirect(302, signed.url);
       return;
     } catch (error) {
@@ -341,12 +419,23 @@ export class VoiceController {
       }
     }
 
-    const exists = await this.voiceRecordingService.recordingExists(streamSid);
+    const exists = await this.voiceRecordingService.recordingExists(streamSid, {
+      sessionRecordingS3Url: session?.recordingS3Url,
+      callId: session?.callId,
+      callRecordingS3Url: lookup.recordingStorage === 'call' ? lookup.s3Key : undefined,
+    });
     if (!exists) {
       throw new NotFoundException(`Voice recording not found: ${streamSid}`);
     }
 
-    const stream = await this.voiceRecordingService.openRecordingReadStream(streamSid);
+    const stream = await this.voiceRecordingService.openRecordingReadStream(
+      streamSid,
+      {
+        sessionRecordingS3Url: session?.recordingS3Url,
+        callId: session?.callId,
+        callRecordingS3Url: lookup.recordingStorage === 'call' ? lookup.s3Key : undefined,
+      },
+    );
     if (!stream) {
       throw new NotFoundException(`Voice recording not found: ${streamSid}`);
     }
@@ -362,13 +451,30 @@ export class VoiceController {
 
   @Get('recordings/:streamSid')
   @ApiOperation({ summary: 'Get voice recording metadata by streamSid' })
-  getRecording(@Param('streamSid') streamSid: string) {
-    const recording = this.voiceRecordingService.getRecording(streamSid);
-    if (!recording) {
+  async getRecording(@Param('streamSid') streamSid: string) {
+    const inMemory = this.voiceRecordingService.getRecording(streamSid);
+    if (inMemory) {
+      return this.voiceRecordingService.toPublicMetadata(inMemory);
+    }
+
+    const session = await this.voiceSessionService.resolveByStreamSid(streamSid);
+    const lookup = await this.voiceRecordingService.resolveRecordingLookup(
+      streamSid,
+      {
+        sessionRecordingS3Url: session?.recordingS3Url,
+        callId: session?.callId,
+      },
+    );
+    if (!lookup.recordingExists || !lookup.s3Key) {
       throw new NotFoundException(`Voice recording not found: ${streamSid}`);
     }
 
-    return this.voiceRecordingService.toPublicMetadata(recording);
+    return {
+      streamSid,
+      s3Key: lookup.s3Key,
+      recordingStorage: lookup.recordingStorage,
+      downloadUrlAvailable: lookup.downloadUrlAvailable,
+    };
   }
 
   @Get('health')

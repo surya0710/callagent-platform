@@ -70,4 +70,22 @@ describe('VoiceSessionService exotel session lifecycle', () => {
     const active = service.getActiveSessions();
     expect(active.some((entry) => entry.streamSid === streamSid)).toBe(true);
   });
+
+  it('includes smartflo ended sessions with connectedAt in recent ended', async () => {
+    const service = createService();
+    const session = service.createSocketSession('127.0.0.1');
+    const streamSid = 'smartflo_stream_1';
+    service.bindStreamSid(session.socketSessionId, {
+      streamSid,
+      callSid: 'SF-1',
+    });
+    const bound = service.getByStreamSid(streamSid);
+    if (bound) {
+      bound.telephonyProvider = 'smartflo';
+    }
+    service.endByStreamSid(streamSid, 'stop');
+
+    const recent = await service.getRecentEndedSessions();
+    expect(recent.some((entry) => entry.streamSid === streamSid)).toBe(true);
+  });
 });

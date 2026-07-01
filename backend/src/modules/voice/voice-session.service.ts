@@ -752,8 +752,12 @@ export class VoiceSessionService {
     const local = this.recentEndedSessions.filter(
       (session) =>
         session.isAppInitiated === true ||
-        Boolean(session.streamSid && session.startedAt) ||
-        (session.telephonyProvider === 'exotel' && Boolean(session.streamSid)),
+        Boolean(
+          session.streamSid &&
+            (session.startedAt ||
+              session.connectedAt ||
+              session.packetsReceived > 0),
+        ),
     );
     const shared = await this.voiceSharedStateService.listRecentEndedSessions();
 
