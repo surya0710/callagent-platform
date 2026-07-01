@@ -299,6 +299,10 @@ export class EnvironmentVariables {
 
   @IsOptional()
   @IsString()
+  VOICE_AI_SPEAK_FIRST_OPENING_DELAY_MS?: string;
+
+  @IsOptional()
+  @IsString()
   VOICE_AI_SPEAK_FIRST_FALLBACK_TO_WAIT_FOR_CUSTOMER?: string;
 
   @IsOptional()

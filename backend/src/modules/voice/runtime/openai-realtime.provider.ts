@@ -89,6 +89,8 @@ const INPUT_COMMIT_DELAY_MS = 600;
 const MANUAL_FALLBACK_SILENCE_MS = 800;
 const RESPONSE_WAIT_MS = 15000;
 const SESSION_READY_TIMEOUT_MS = 5000;
+const OPENING_READINESS_RETRY_MS = 300;
+const OPENING_READINESS_MAX_RETRIES = 40;
 const WS_OPEN_TIMEOUT_MS = 8000;
 const PLAYBOOK_LOOKUP_TIMEOUT_MS = 750;
 const DEFAULT_POST_OPENING_SPEECH_GATE_MAX_MS = 300;
@@ -203,10 +205,9 @@ interface OpenAiRealtimeSession {
   openingTimeoutTimer?: NodeJS.Timeout;
   openingDelayTimer?: NodeJS.Timeout;
   openingDelayPending?: boolean;
+  openingReadinessRetryTimer?: NodeJS.Timeout;
+  openingReadinessRetryCount?: number;
   sessionReadyAt?: Date;
-  customerSpokeBeforeOpening?: boolean;
-  openingDelaySpeechPacketCount?: number;
-  openingDelaySpeechDurationMs?: number;
   openingSuppressedInboundPackets: number;
   openingAudioStartedAt?: Date;
   openingAudioDoneAt?: Date;
@@ -650,6 +651,30 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     await this.startOpenAiSession(context);
+    const session = this.sessions.get(streamSid);
+    if (session) {
+      this.evaluateOpeningReadiness(session);
+    }
+  }
+
+  onSocketConnected(socketSessionId: string): void {
+    const streamSid =
+      this.voiceSocketRegistry.getStreamSidForSocket(socketSessionId);
+    if (!streamSid) {
+      return;
+    }
+
+    const session = this.sessions.get(streamSid);
+    if (!session?.aiSpeakFirstEnabled || session.closing) {
+      return;
+    }
+
+    this.logger.log({
+      streamSid,
+      socketSessionId,
+      message: 'voice_opening_readiness_recheck_on_socket_connect',
+    });
+    this.evaluateOpeningReadiness(session);
   }
 
   prewarmAuthorizedCall(input: VoiceRuntimePrewarmContext): void {
@@ -1210,6 +1235,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.closing = true;
     this.clearOpeningTimeout(session);
     this.clearOpeningDelayTimer(session);
+    this.clearOpeningReadinessRetry(session);
     this.clearHangupTimer(session);
     this.clearCallEndMaxWaitTimer(session);
     this.clearCommitTimer(session);
@@ -1479,6 +1505,51 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.openingDelayPending = false;
   }
 
+  private clearOpeningReadinessRetry(session: OpenAiRealtimeSession): void {
+    if (session.openingReadinessRetryTimer) {
+      clearTimeout(session.openingReadinessRetryTimer);
+      session.openingReadinessRetryTimer = undefined;
+    }
+  }
+
+  private shouldRetryOpeningReadiness(skipReason: string): boolean {
+    return [
+      'smartflo_start_not_received',
+      'smartflo_websocket_not_open',
+      'openai_session_not_created',
+      'openai_session_not_updated',
+      'response_pending',
+    ].includes(skipReason);
+  }
+
+  private scheduleOpeningReadinessRetry(session: OpenAiRealtimeSession): void {
+    if (
+      session.openingReadinessRetryTimer ||
+      session.openingGreetingRequested ||
+      session.openingGreetingComplete ||
+      session.openingDelayTimer ||
+      session.closing
+    ) {
+      return;
+    }
+
+    const retryCount = session.openingReadinessRetryCount ?? 0;
+    if (retryCount >= OPENING_READINESS_MAX_RETRIES) {
+      this.logger.warn({
+        streamSid: session.streamSid,
+        retryCount,
+        message: 'voice_opening_readiness_retry_exhausted',
+      });
+      return;
+    }
+
+    session.openingReadinessRetryCount = retryCount + 1;
+    session.openingReadinessRetryTimer = setTimeout(() => {
+      session.openingReadinessRetryTimer = undefined;
+      this.evaluateOpeningReadiness(session);
+    }, OPENING_READINESS_RETRY_MS);
+  }
+
   private scheduleOpeningAfterDelay(session: OpenAiRealtimeSession): void {
     if (
       session.openingDelayTimer ||
@@ -1522,8 +1593,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    if (session.customerSpokeBeforeOpening) {
-      this.skipOpeningForCustomerFirst(session, delayMs);
+    if (session.responseRequested || session.responseInProgress) {
+      this.logger.log({
+        streamSid: session.streamSid,
+        responseRequested: session.responseRequested,
+        responseInProgress: session.responseInProgress,
+        message: 'voice_opening_skipped_response_already_active',
+      });
       return;
     }
 
@@ -1540,57 +1616,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     });
 
     this.startConversationWithGreeting(session);
-  }
-
-  private skipOpeningForCustomerFirst(
-    session: OpenAiRealtimeSession,
-    delayMs: number,
-  ): void {
-    const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
-    this.logger.log({
-      streamSid: session.streamSid,
-      provider: voiceSession?.telephonyProvider,
-      authorizationId: voiceSession?.authorizationId,
-      sessionReadyAt: session.sessionReadyAt?.toISOString(),
-      delayMs,
-      message: 'voice_opening_skipped_customer_spoke_first',
-    });
-
-    session.openingGreetingRequested = true;
-    this.clearOpeningDelayTimer(session);
-    this.activateNormalModeAfterOpening(session, {
-      preserveQueuedInbound: true,
-    });
-    this.flushPendingInputIfReady(session);
-  }
-
-  private trackOpeningDelayCustomerSpeech(
-    session: OpenAiRealtimeSession,
-    pcm8: Buffer,
-  ): void {
-    if (!session.openingDelayPending || session.customerSpokeBeforeOpening) {
-      return;
-    }
-
-    const speech = this.isSpeechLikeForRuntime(pcm8);
-    if (!speech.speechLike) {
-      return;
-    }
-
-    session.openingDelaySpeechPacketCount =
-      (session.openingDelaySpeechPacketCount ?? 0) + 1;
-    session.openingDelaySpeechDurationMs =
-      (session.openingDelaySpeechDurationMs ?? 0) +
-      this.estimatePcm8DurationMs(pcm8);
-
-    const hasEnoughSpeech =
-      session.openingDelaySpeechPacketCount >=
-        this.getSpeechMinPacketsForSession(session) &&
-      session.openingDelaySpeechDurationMs >=
-        this.getSpeechMinDurationMsForSession(session);
-    if (hasEnoughSpeech) {
-      session.customerSpokeBeforeOpening = true;
-    }
   }
 
   private scheduleOpeningTimeout(session: OpenAiRealtimeSession): void {
@@ -1625,6 +1650,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   ): void {
     this.clearOpeningTimeout(session);
     this.clearOpeningDelayTimer(session);
+    this.clearOpeningReadinessRetry(session);
     session.openingGreetingPending = false;
     session.openingIsCurrentResponse = false;
     session.responseRequested = false;
@@ -2628,11 +2654,19 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         streamSid: session.streamSid,
         reason: skipReason,
         openingState: session.openingState,
+        smartfloStartReceived: session.smartfloStartReceived,
+        smartfloWebSocketOpen: readinessInput.smartfloWebSocketOpen,
+        openAiSessionCreated: session.openAiSessionCreated,
+        openAiSessionUpdated: session.openAiSessionUpdated,
         message: 'opening skipped reason',
       });
+      if (this.shouldRetryOpeningReadiness(skipReason)) {
+        this.scheduleOpeningReadinessRetry(session);
+      }
       return;
     }
 
+    this.clearOpeningReadinessRetry(session);
     this.scheduleOpeningAfterDelay(session);
   }
 
@@ -2780,7 +2814,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private appendInputAudio(session: OpenAiRealtimeSession, pcm8: Buffer): void {
     if (this.shouldQueueInboundUntilOpeningComplete(session)) {
       session.pendingPcm8.push(pcm8);
-      this.trackOpeningDelayCustomerSpeech(session, pcm8);
       return;
     }
 
