@@ -503,10 +503,13 @@ export function buildSpeakFirstDiagnosticLog(
 export interface GreetingDiagnosticInput {
   provider?: string;
   sessionId?: string;
+  authorizationId?: string;
   stage?: VoiceSessionStage;
+  openingState?: OpeningState;
   openAiReady?: boolean;
   greetingScheduled?: boolean;
   greetingSent?: boolean;
+  greetingActuallySent?: boolean;
   firstAudioDelta?: boolean;
   firstOutboundMedia?: boolean;
   skipReason?: string | null;
@@ -515,12 +518,24 @@ export interface GreetingDiagnosticInput {
   msSinceTelephonyStart?: number;
   msSinceSessionReady?: number;
   msSinceOpenAiConnected?: number;
+  responseRequested?: boolean;
+  responseInProgress?: boolean;
+  customerSpokeBeforeOpeningDelay?: boolean;
 }
 
 /** Fields supplied by runtime session context when logging greeting diagnostics. */
 export type GreetingDiagnosticLogInput = Omit<
   GreetingDiagnosticInput,
-  'provider' | 'sessionId' | 'stage' | 'openAiReady'
+  | 'provider'
+  | 'sessionId'
+  | 'authorizationId'
+  | 'stage'
+  | 'openingState'
+  | 'openAiReady'
+  | 'responseRequested'
+  | 'responseInProgress'
+  | 'customerSpokeBeforeOpeningDelay'
+  | 'greetingActuallySent'
 >;
 
 export function buildGreetingDiagnosticLog(
@@ -529,10 +544,13 @@ export function buildGreetingDiagnosticLog(
   return {
     provider: input.provider,
     sessionId: input.sessionId,
+    authorizationId: input.authorizationId,
     stage: input.stage,
+    openingState: input.openingState,
     openAiReady: input.openAiReady,
     greetingScheduled: input.greetingScheduled,
     greetingSent: input.greetingSent,
+    greetingActuallySent: input.greetingActuallySent,
     firstAudioDelta: input.firstAudioDelta,
     firstOutboundMedia: input.firstOutboundMedia,
     skipReason: input.skipReason ?? null,
@@ -541,6 +559,9 @@ export function buildGreetingDiagnosticLog(
     msSinceTelephonyStart: input.msSinceTelephonyStart,
     msSinceSessionReady: input.msSinceSessionReady,
     msSinceOpenAiConnected: input.msSinceOpenAiConnected,
+    responseRequested: input.responseRequested,
+    responseInProgress: input.responseInProgress,
+    customerSpokeBeforeOpeningDelay: input.customerSpokeBeforeOpeningDelay,
     message: 'voice_greeting_diag',
   };
 }

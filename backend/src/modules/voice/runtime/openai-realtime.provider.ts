@@ -95,6 +95,8 @@ const RESPONSE_WAIT_MS = 15000;
 const SESSION_INSTRUCTION_READY_FALLBACK_MS = 750;
 const OPENING_READINESS_RETRY_MS = 300;
 const OPENING_READINESS_MAX_RETRIES = 40;
+const OPENING_GREETING_DEFER_RETRY_MS = 250;
+const OPENING_GREETING_DEFER_MAX_RETRIES = 24;
 const WS_OPEN_TIMEOUT_MS = 8000;
 const PLAYBOOK_LOOKUP_TIMEOUT_MS = 750;
 const DEFAULT_POST_OPENING_SPEECH_GATE_MAX_MS = 300;
@@ -203,6 +205,7 @@ interface OpenAiRealtimeSession {
   callEndCloseAt?: Date;
   callEndCloseError?: string;
   openingGreetingRequested: boolean;
+  greetingActuallySent: boolean;
   openingGreetingPending: boolean;
   openingGreetingComplete: boolean;
   openingIsCurrentResponse: boolean;
@@ -211,6 +214,8 @@ interface OpenAiRealtimeSession {
   openingDelayPending?: boolean;
   openingReadinessRetryTimer?: NodeJS.Timeout;
   openingReadinessRetryCount?: number;
+  openingGreetingDeferTimer?: NodeJS.Timeout;
+  openingGreetingDeferRetryCount?: number;
   sessionInstructionReadyFallbackTimer?: NodeJS.Timeout;
   sessionUpdateSent?: boolean;
   telephonyStartAt?: Date;
@@ -889,6 +894,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.telephonyStartAt = new Date();
     session.openingReadinessRetryCount = 0;
     this.clearOpeningReadinessRetry(session);
+    this.clearOpeningGreetingDeferTimer(session);
     if (context.openingContext) {
       session.openingContext = context.openingContext;
     }
@@ -1062,6 +1068,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         aiSpeakFirstEnabled && openingContext ? 'opening' : 'normal',
       callEndDetected: false,
       openingGreetingRequested: false,
+      greetingActuallySent: false,
       openingGreetingPending: false,
       openingGreetingComplete: !aiSpeakFirstEnabled,
       openingIsCurrentResponse: false,
@@ -1167,6 +1174,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       this.clearOpeningTimeout(session);
       this.clearOpeningDelayTimer(session);
       this.clearOpeningReadinessRetry(session);
+      this.clearOpeningGreetingDeferTimer(session);
       this.clearSessionInstructionReadyFallback(session);
       this.clearCommitTimer(session);
       this.clearHangupTimer(session);
@@ -1250,6 +1258,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.clearOpeningTimeout(session);
     this.clearOpeningDelayTimer(session);
     this.clearOpeningReadinessRetry(session);
+    this.clearOpeningGreetingDeferTimer(session);
     this.clearSessionInstructionReadyFallback(session);
     this.clearHangupTimer(session);
     this.clearCallEndMaxWaitTimer(session);
@@ -1560,18 +1569,26 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private getGreetingDiagnosticContext(session: OpenAiRealtimeSession): {
     provider?: string;
     sessionId: string;
+    authorizationId?: string;
     stage?: VoiceSessionStage;
+    openingState: OpeningState;
     openAiReady: boolean;
     msSinceTelephonyStart?: number;
     msSinceSessionReady?: number;
     msSinceOpenAiConnected?: number;
+    responseRequested: boolean;
+    responseInProgress: boolean;
+    customerSpokeBeforeOpeningDelay: boolean;
+    greetingActuallySent: boolean;
   } {
     const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
     const nowMs = Date.now();
     return {
       provider: voiceSession?.telephonyProvider,
       sessionId: session.streamSid,
+      authorizationId: voiceSession?.authorizationId,
       stage: session.voiceSessionStage ?? voiceSession?.stage,
+      openingState: session.openingState,
       openAiReady:
         session.openAiSessionUpdated &&
         session.ws.readyState === WebSocket.OPEN &&
@@ -1585,6 +1602,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       msSinceOpenAiConnected: session.connectedAt
         ? nowMs - session.connectedAt.getTime()
         : undefined,
+      responseRequested: session.responseRequested,
+      responseInProgress: session.responseInProgress,
+      customerSpokeBeforeOpeningDelay:
+        session.customerSpokeBeforeOpeningDelay === true,
+      greetingActuallySent: session.greetingActuallySent === true,
     };
   }
 
@@ -1641,6 +1663,96 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
+<<<<<<< HEAD
+=======
+  private clearOpeningGreetingDeferTimer(
+    session: OpenAiRealtimeSession,
+  ): void {
+    if (session.openingGreetingDeferTimer) {
+      clearTimeout(session.openingGreetingDeferTimer);
+      session.openingGreetingDeferTimer = undefined;
+    }
+  }
+
+  private scheduleOpeningGreetingDeferRetry(
+    session: OpenAiRealtimeSession,
+    skipReason: string,
+    delayMs?: number,
+  ): void {
+    if (
+      session.openingGreetingDeferTimer ||
+      session.greetingActuallySent ||
+      session.openingGreetingComplete ||
+      session.closing
+    ) {
+      return;
+    }
+
+    const retryCount = session.openingGreetingDeferRetryCount ?? 0;
+    if (retryCount >= OPENING_GREETING_DEFER_MAX_RETRIES) {
+      const message = `Opening greeting defer retry exhausted: ${skipReason}`;
+      this.logger.error({
+        streamSid: session.streamSid,
+        skipReason,
+        retryCount,
+        message: 'voice_opening_greeting_defer_exhausted',
+      });
+      this.logGreetingDiagnostic(session, {
+        skipReason: `${skipReason}_defer_exhausted`,
+        delayMs,
+      });
+      this.failOpeningWithFallback(session, message);
+      return;
+    }
+
+    session.openingGreetingDeferRetryCount = retryCount + 1;
+    this.logGreetingDiagnostic(session, {
+      skipReason,
+      delayMs,
+    });
+
+    session.openingGreetingDeferTimer = setTimeout(() => {
+      session.openingGreetingDeferTimer = undefined;
+      if (session.closing || session.greetingActuallySent || session.openingGreetingComplete) {
+        return;
+      }
+      if (session.responseRequested || session.responseInProgress) {
+        this.scheduleOpeningGreetingDeferRetry(
+          session,
+          'response_already_active',
+          delayMs,
+        );
+        return;
+      }
+      this.startConversationWithGreeting(session);
+    }, OPENING_GREETING_DEFER_RETRY_MS);
+  }
+
+  private maybeRetryOpeningGreetingAfterResponse(
+    session: OpenAiRealtimeSession,
+  ): void {
+    if (
+      session.closing ||
+      session.greetingActuallySent ||
+      session.openingGreetingComplete ||
+      !session.aiSpeakFirstEnabled ||
+      !session.openingContext
+    ) {
+      return;
+    }
+
+    if (session.responseRequested || session.responseInProgress) {
+      return;
+    }
+
+    if (session.openingDelayTimer || session.openingDelayPending) {
+      return;
+    }
+
+    this.startConversationWithGreeting(session);
+  }
+
+>>>>>>> 65f15a1 (Ai Speaks First)
   private setOpeningState(
     session: OpenAiRealtimeSession,
     openingState: OpeningState,
@@ -1700,7 +1812,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private scheduleOpeningReadinessRetry(session: OpenAiRealtimeSession): void {
     if (
       session.openingReadinessRetryTimer ||
-      session.openingGreetingRequested ||
+      session.greetingActuallySent ||
       session.openingGreetingComplete ||
       session.openingDelayTimer ||
       session.closing
@@ -1710,11 +1822,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     const retryCount = session.openingReadinessRetryCount ?? 0;
     if (retryCount >= OPENING_READINESS_MAX_RETRIES) {
-      this.logger.warn({
+      const message = `Opening readiness retry exhausted after ${retryCount} attempts`;
+      this.logger.error({
         streamSid: session.streamSid,
         retryCount,
+        openingState: session.openingState,
         message: 'voice_opening_readiness_retry_exhausted',
       });
+      this.logGreetingDiagnostic(session, {
+        skipReason: 'opening_readiness_retry_exhausted',
+      });
+      this.failOpeningWithFallback(session, message);
       return;
     }
 
@@ -1728,7 +1846,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private scheduleOpeningAfterDelay(session: OpenAiRealtimeSession): void {
     if (
       session.openingDelayTimer ||
-      session.openingGreetingRequested ||
+      session.greetingActuallySent ||
       session.openingGreetingComplete ||
       session.closing
     ) {
@@ -1741,6 +1859,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.preOpeningSpeechPacketCount = 0;
     session.preOpeningSpeechDurationMs = 0;
     session.customerSpokeBeforeOpeningDelay = false;
+    session.openingGreetingDeferRetryCount = 0;
 
     this.logGreetingDiagnostic(session, {
       greetingScheduled: true,
@@ -1768,24 +1887,30 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   ): void {
     if (
       session.closing ||
-      session.openingGreetingRequested ||
+      session.greetingActuallySent ||
       session.openingGreetingComplete
     ) {
       return;
     }
 
     if (session.responseRequested || session.responseInProgress) {
-      this.logGreetingDiagnostic(session, {
-        skipReason: 'response_already_active',
+      this.scheduleOpeningGreetingDeferRetry(
+        session,
+        'response_already_active',
         delayMs,
-      });
+      );
       return;
     }
 
     if (session.customerSpokeBeforeOpeningDelay) {
       this.logGreetingDiagnostic(session, {
+<<<<<<< HEAD
         delayMs,
         configuredOpeningDelayMs: delayMs,
+=======
+        skipReason: 'customer_spoke_before_opening_timer',
+        delayMs,
+>>>>>>> 65f15a1 (Ai Speaks First)
       });
     }
 
@@ -1825,6 +1950,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.clearOpeningTimeout(session);
     this.clearOpeningDelayTimer(session);
     this.clearOpeningReadinessRetry(session);
+    this.clearOpeningGreetingDeferTimer(session);
     this.clearSessionInstructionReadyFallback(session);
     session.openingGreetingPending = false;
     session.openingIsCurrentResponse = false;
@@ -1862,6 +1988,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     },
   ): void {
     if (session.openingGreetingComplete && !options?.failed) {
+      return;
+    }
+
+    if (!options?.failed && !session.greetingActuallySent) {
       return;
     }
 
@@ -2809,7 +2939,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       openAiSessionCreated: session.openAiSessionCreated,
       openAiSessionUpdated: session.openAiSessionUpdated,
       responsePending: session.responseRequested || session.responseInProgress,
-      openingAlreadyRequested: session.openingGreetingRequested,
+      openingAlreadyRequested: session.greetingActuallySent,
     };
 
     const skipReason = getOpeningSkipReason(readinessInput);
@@ -2862,13 +2992,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    if (session.openingGreetingRequested || session.openingGreetingComplete) {
+    if (session.greetingActuallySent || session.openingGreetingComplete) {
       this.logger.log({
         streamSid: session.streamSid,
-        openingGreetingRequested: session.openingGreetingRequested,
+        greetingActuallySent: session.greetingActuallySent,
         openingGreetingComplete: session.openingGreetingComplete,
         message: 'opening already sent guard',
       });
+      return;
+    }
+
+    if (session.openingGreetingPending) {
       return;
     }
 
@@ -2884,17 +3018,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     if (session.responseRequested || session.responseInProgress) {
-      this.logger.debug({
-        streamSid: session.streamSid,
-        message: 'Deferring opening greeting — response already in progress',
-      });
+      this.scheduleOpeningGreetingDeferRetry(
+        session,
+        'response_already_active',
+      );
       return;
     }
 
-    session.openingGreetingRequested = true;
     session.openingGreetingPending = true;
     session.openingIsCurrentResponse = true;
     this.clearOpeningDelayTimer(session);
+    this.clearOpeningGreetingDeferTimer(session);
 
     const now = new Date();
     if (!session.firstResponseCreateAt) {
@@ -2954,6 +3088,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       if (!sent) {
         throw new Error('Opening response.create blocked by turn-taking guard');
       }
+      session.openingGreetingRequested = true;
+      session.greetingActuallySent = true;
       this.logGreetingDiagnostic(session, {
         greetingSent: true,
         greetingScheduled: true,
@@ -4352,11 +4488,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       this.resetSpeechTurnState(session);
       if (
         session.openingIsCurrentResponse &&
-        session.openingGreetingRequested &&
+        session.greetingActuallySent &&
         !session.openingGreetingComplete
       ) {
         session.openingIsCurrentResponse = false;
         this.completeOpeningGreeting(session);
+      } else {
+        this.maybeRetryOpeningGreetingAfterResponse(session);
       }
       this.clearManualFallbackSilenceTimer(session);
       this.flushOutboundPcmRemainder(session);
@@ -4416,7 +4554,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.speakFirstDiagFirstAudioDeltaLogged = true;
       this.logGreetingDiagnostic(session, {
         firstAudioDelta: true,
-        greetingSent: session.openingGreetingRequested,
+        greetingSent: session.greetingActuallySent,
       });
     }
 
@@ -4647,7 +4785,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.speakFirstDiagFirstOutboundLogged = true;
       this.logGreetingDiagnostic(session, {
         firstOutboundMedia: true,
-        greetingSent: session.openingGreetingRequested,
+        greetingSent: session.greetingActuallySent,
       });
     }
   }
