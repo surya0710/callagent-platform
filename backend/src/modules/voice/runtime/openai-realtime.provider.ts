@@ -2465,9 +2465,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.lastCustomerInterruptAt = new Date();
     session.outboundMulawBuffer = Buffer.alloc(0);
 
-    this.audioGateway.sendClear(session.streamSid);
-    this.tryTruncateInterruptedAssistantItem(session, reason);
-
     try {
       session.ws.send(JSON.stringify({ type: 'response.cancel' }));
       this.logger.log({
@@ -2884,6 +2881,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           rms: Number(speech.rms.toFixed(5)),
           message: 'customer_interrupt_detected',
         });
+        this.audioGateway.sendClear(session.streamSid);
+        this.tryTruncateInterruptedAssistantItem(session, 'customer_barge_in');
         this.tryCancelInterruptedResponse(session, 'customer_barge_in');
         this.logTurnTaking(session, 'voice_barge_in_detected', {
           speechDurationMs: Math.round(session.pendingSpeechDurationMs),
@@ -4007,16 +4006,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       if (session.openingIsCurrentResponse && !session.openingGreetingComplete) {
         this.failOpeningWithFallback(session, 'Opening response cancelled');
       }
-      if (session.interruptedAssistantItemId) {
-        this.commitInterruptedAssistantTranscript(session);
-      }
       this.resetResponseGuards(session, 'response_cancelled');
       session.currentResponseId = undefined;
       session.aiSpeakingStartedAt = undefined;
-      session.assistantTranscriptBuffer = '';
-      // Intentionally keep assistantTranscriptItemId so a late
-      // output_audio_transcript.done for the interrupted item can still be
-      // matched and skipped. It is reset on the next response.created.
       this.clearManualFallbackSilenceTimer(session);
       this.updateRuntimeState(streamSid, {
         isAiSpeaking: false,
