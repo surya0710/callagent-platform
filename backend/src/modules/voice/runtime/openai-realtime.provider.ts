@@ -88,7 +88,7 @@ const MULAW_SILENCE_BYTE = 0xff;
 const INPUT_COMMIT_DELAY_MS = 600;
 const MANUAL_FALLBACK_SILENCE_MS = 800;
 const RESPONSE_WAIT_MS = 15000;
-const SESSION_READY_TIMEOUT_MS = 5000;
+const SESSION_INSTRUCTION_READY_FALLBACK_MS = 750;
 const OPENING_READINESS_RETRY_MS = 300;
 const OPENING_READINESS_MAX_RETRIES = 40;
 const WS_OPEN_TIMEOUT_MS = 8000;
@@ -207,6 +207,9 @@ interface OpenAiRealtimeSession {
   openingDelayPending?: boolean;
   openingReadinessRetryTimer?: NodeJS.Timeout;
   openingReadinessRetryCount?: number;
+  sessionInstructionReadyFallbackTimer?: NodeJS.Timeout;
+  sessionUpdateSent?: boolean;
+  telephonyStartAt?: Date;
   sessionReadyAt?: Date;
   openingSuppressedInboundPackets: number;
   openingAudioStartedAt?: Date;
@@ -873,6 +876,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.streamSid = realStreamSid;
     session.callSid = callSid ?? session.callSid;
     session.smartfloStartReceived = context.smartfloStartReceived === true;
+    session.telephonyStartAt = new Date();
+    session.openingReadinessRetryCount = 0;
+    this.clearOpeningReadinessRetry(session);
     if (context.openingContext) {
       session.openingContext = context.openingContext;
     }
@@ -1016,6 +1022,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       aiSpeakFirstEnabled,
       authorized: context.authorized !== false,
       smartfloStartReceived: context.smartfloStartReceived === true,
+      telephonyStartAt: context.smartfloStartReceived
+        ? new Date()
+        : undefined,
       openingState: aiSpeakFirstEnabled ? 'waiting_for_openai_ready' : 'disabled',
       openAiSessionCreated: false,
       openAiSessionUpdated: false,
@@ -1098,19 +1107,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         turnDetection: useServerVad ? 'server_vad' : 'manual',
         message: 'OpenAI Realtime WebSocket open',
       });
-
-      setTimeout(() => {
-        if (!session.sessionReady && !session.closing) {
-          session.sessionReady = true;
-          session.openAiSessionUpdated = true;
-          this.evaluateOpeningReadiness(session);
-          this.flushPendingInputIfReady(session);
-          this.logger.warn({
-            streamSid,
-            message: 'session.updated not received; proceeding with audio anyway',
-          });
-        }
-      }, SESSION_READY_TIMEOUT_MS);
     });
 
     ws.on('message', (data) => {
@@ -1154,6 +1150,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.lastCloseCode = code;
       session.lastCloseReason = reason.toString();
       this.clearOpeningTimeout(session);
+      this.clearOpeningDelayTimer(session);
+      this.clearOpeningReadinessRetry(session);
+      this.clearSessionInstructionReadyFallback(session);
       this.clearCommitTimer(session);
       this.clearHangupTimer(session);
       this.clearCallEndMaxWaitTimer(session);
@@ -1236,6 +1235,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.clearOpeningTimeout(session);
     this.clearOpeningDelayTimer(session);
     this.clearOpeningReadinessRetry(session);
+    this.clearSessionInstructionReadyFallback(session);
     this.clearHangupTimer(session);
     this.clearCallEndMaxWaitTimer(session);
     this.clearCommitTimer(session);
@@ -1385,6 +1385,73 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       activePlaybookVersion: activePlaybook?.version,
     });
     session.ws.send(JSON.stringify(payload));
+    session.sessionUpdateSent = true;
+    this.scheduleSessionInstructionReadyFallback(session);
+  }
+
+  private clearSessionInstructionReadyFallback(
+    session: OpenAiRealtimeSession,
+  ): void {
+    if (session.sessionInstructionReadyFallbackTimer) {
+      clearTimeout(session.sessionInstructionReadyFallbackTimer);
+      session.sessionInstructionReadyFallbackTimer = undefined;
+    }
+  }
+
+  private scheduleSessionInstructionReadyFallback(
+    session: OpenAiRealtimeSession,
+  ): void {
+    if (
+      session.sessionInstructionReadyFallbackTimer ||
+      session.openAiSessionUpdated ||
+      session.closing
+    ) {
+      return;
+    }
+
+    session.sessionInstructionReadyFallbackTimer = setTimeout(() => {
+      session.sessionInstructionReadyFallbackTimer = undefined;
+      if (!session.openAiSessionUpdated && !session.closing) {
+        this.markOpenAiInstructionReady(session, 'fallback');
+        this.flushPendingInputIfReady(session);
+      }
+    }, SESSION_INSTRUCTION_READY_FALLBACK_MS);
+  }
+
+  private markOpenAiInstructionReady(
+    session: OpenAiRealtimeSession,
+    reason: 'session.updated' | 'fallback',
+  ): void {
+    if (session.openAiSessionUpdated) {
+      return;
+    }
+
+    session.openAiSessionUpdated = true;
+    session.sessionReady = true;
+    session.openingReadinessRetryCount = 0;
+    this.clearSessionInstructionReadyFallback(session);
+    this.clearOpeningReadinessRetry(session);
+
+    if (!session.sessionReadyAt) {
+      session.sessionReadyAt = new Date();
+    }
+
+    this.logger.log({
+      streamSid: session.streamSid,
+      reason,
+      openAiSessionCreated: session.openAiSessionCreated,
+      sessionUpdateSent: session.sessionUpdateSent === true,
+      message: 'voice_openai_session_instruction_ready',
+    });
+
+    if (
+      session.openingState === 'waiting_for_openai_ready' &&
+      session.aiSpeakFirstEnabled
+    ) {
+      this.setOpeningState(session, 'ready_to_speak', 'voice_opening_ready');
+    }
+
+    this.evaluateOpeningReadiness(session);
   }
 
   private async resolveActivePlaybookForSession(
@@ -1512,9 +1579,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
-  private shouldRetryOpeningReadiness(skipReason: string): boolean {
+  private shouldRetryOpeningReadiness(
+    session: OpenAiRealtimeSession,
+    skipReason: string,
+  ): boolean {
+    if (!session.smartfloStartReceived) {
+      return false;
+    }
+
     return [
-      'smartflo_start_not_received',
       'smartflo_websocket_not_open',
       'openai_session_not_created',
       'openai_session_not_updated',
@@ -1560,7 +1633,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    const delayMs = this.voiceOpeningConfigService.getOpeningDelayMs();
+    const delayMs = this.getOpeningDelayRemainingMs(session);
     session.openingDelayPending = true;
     session.sessionReadyAt = session.sessionReadyAt ?? new Date();
 
@@ -1570,15 +1643,34 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       provider: voiceSession?.telephonyProvider,
       authorizationId: voiceSession?.authorizationId,
       sessionReadyAt: session.sessionReadyAt.toISOString(),
+      telephonyStartAt: session.telephonyStartAt?.toISOString(),
       delayMs,
+      targetFromCallConnectMs: this.voiceOpeningConfigService.getOpeningDelayMs(),
       message: 'voice_opening_delay_scheduled',
     });
 
-    session.openingDelayTimer = setTimeout(() => {
+    const triggerOpening = (): void => {
       session.openingDelayTimer = undefined;
       session.openingDelayPending = false;
       this.fireDelayedOpening(session, delayMs);
-    }, delayMs);
+    };
+
+    if (delayMs <= 0) {
+      triggerOpening();
+      return;
+    }
+
+    session.openingDelayTimer = setTimeout(triggerOpening, delayMs);
+  }
+
+  private getOpeningDelayRemainingMs(session: OpenAiRealtimeSession): number {
+    const targetFromStartMs = this.voiceOpeningConfigService.getOpeningDelayMs();
+    if (!session.telephonyStartAt) {
+      return targetFromStartMs;
+    }
+
+    const elapsedSinceStart = Date.now() - session.telephonyStartAt.getTime();
+    return Math.max(0, targetFromStartMs - elapsedSinceStart);
   }
 
   private fireDelayedOpening(
@@ -1651,6 +1743,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.clearOpeningTimeout(session);
     this.clearOpeningDelayTimer(session);
     this.clearOpeningReadinessRetry(session);
+    this.clearSessionInstructionReadyFallback(session);
     session.openingGreetingPending = false;
     session.openingIsCurrentResponse = false;
     session.responseRequested = false;
@@ -2657,7 +2750,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         openAiSessionUpdated: session.openAiSessionUpdated,
         message: 'opening skipped reason',
       });
-      if (this.shouldRetryOpeningReadiness(skipReason)) {
+      if (this.shouldRetryOpeningReadiness(session, skipReason)) {
         this.scheduleOpeningReadinessRetry(session);
       }
       return;
@@ -3672,7 +3765,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     if (type === 'session.created') {
       session.openAiSessionCreated = true;
-      session.sessionReady = true;
       this.callTiming.markByStreamSid(
         streamSid,
         CallTimingEvent.OPENAI_SESSION_CREATED,
@@ -3696,13 +3788,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           message: 'voice_opening_waiting_for_openai_ready',
         });
       }
+      if (session.sessionUpdateSent) {
+        this.scheduleSessionInstructionReadyFallback(session);
+      }
       this.evaluateOpeningReadiness(session);
       return;
     }
 
     if (type === 'session.updated') {
-      session.openAiSessionUpdated = true;
-      session.sessionReady = true;
+      this.markOpenAiInstructionReady(session, 'session.updated');
       this.callTiming.markByStreamSid(
         streamSid,
         CallTimingEvent.OPENAI_SESSION_UPDATED,
@@ -3720,7 +3814,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           });
         }
       }
-      this.evaluateOpeningReadiness(session);
       this.flushPendingInputIfReady(session);
       return;
     }
