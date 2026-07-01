@@ -34,13 +34,13 @@ import {
   buildOpeningResponseInstructions,
   buildOpeningSessionInstructions,
   buildPostOpeningSessionInstructions,
-  buildExampleOpeningMessage,
+  buildShortSpeakFirstOpeningLine,
   buildGreetingDiagnosticLog,
   getOpeningSkipReason,
   hasOpeningPreTimerCustomerSpeech,
   CONVERSATION_MAX_OUTPUT_TOKENS,
   isOpeningInboundSuppressedState,
-  OPENING_MAX_OUTPUT_TOKENS,
+  OPENING_SHORT_MAX_OUTPUT_TOKENS,
   GreetingDiagnosticLogInput,
 } from '../voice-opening.util';
 import { VoiceSessionStage } from '../voice-session-stage.types';
@@ -241,6 +241,8 @@ interface OpenAiRealtimeSession {
   bargeInConfirmed: boolean;
   manualFallbackUsedSinceLastResponse: boolean;
   pendingAuthorizedResponseSource?: ResponseCreateSource;
+  activeResponseSource?: ResponseCreateSource;
+  openingAudioDeltaReceived?: boolean;
   lastCustomerSpeechAt?: Date;
   lastAssistantResponseDoneAt?: Date;
 }
@@ -1339,6 +1341,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
             session.openingContext,
             envInstructions,
             accent,
+            session.callContext,
           )
       : (envInstructions ?? resolvedDefault);
     const activePlaybook =
@@ -1711,7 +1714,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     session.openingGreetingDeferTimer = setTimeout(() => {
       session.openingGreetingDeferTimer = undefined;
-      if (session.closing || session.greetingActuallySent || session.openingGreetingComplete) {
+      if (session.closing || session.greetingActuallySent || session.openingGreetingComplete || session.openingAudioDeltaReceived) {
         return;
       }
       if (session.responseRequested || session.responseInProgress) {
@@ -1731,11 +1734,21 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   ): void {
     if (
       session.closing ||
-      session.greetingActuallySent ||
       session.openingGreetingComplete ||
+      session.greetingActuallySent ||
+      session.openingAudioDeltaReceived ||
       !session.aiSpeakFirstEnabled ||
       !session.openingContext
     ) {
+      if (
+        session.greetingActuallySent ||
+        session.openingGreetingComplete ||
+        session.openingAudioDeltaReceived
+      ) {
+        this.logGreetingDiagnostic(session, {
+          repeatedOpeningPrevented: true,
+        });
+      }
       return;
     }
 
@@ -1748,6 +1761,37 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     this.startConversationWithGreeting(session);
+  }
+
+  private openingResponseHadAudio(session: OpenAiRealtimeSession): boolean {
+    return Boolean(
+      session.openingAudioDeltaReceived || session.currentResponseMulawSent > 0,
+    );
+  }
+
+  private finalizeInterruptedOpeningIfNeeded(
+    session: OpenAiRealtimeSession,
+    reason: string,
+  ): boolean {
+    if (!session.openingIsCurrentResponse || session.openingGreetingComplete) {
+      return false;
+    }
+
+    if (!this.openingResponseHadAudio(session)) {
+      return false;
+    }
+
+    this.logger.log({
+      streamSid: session.streamSid,
+      reason,
+      currentResponseMulawSent: session.currentResponseMulawSent,
+      message: 'voice_opening_finalize_after_partial_audio',
+    });
+    session.openingGreetingPending = false;
+    session.openingIsCurrentResponse = false;
+    session.activeResponseSource = undefined;
+    this.completeOpeningGreeting(session);
+    return true;
   }
 
   private setOpeningState(
@@ -2077,6 +2121,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     this.activateNormalModeAfterOpening(session);
+    this.logGreetingDiagnostic(session, {
+      openingMarkedComplete: true,
+    });
   }
 
   private flushPendingInputIfReady(session: OpenAiRealtimeSession): void {
@@ -2992,10 +3039,21 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    if (session.greetingActuallySent || session.openingGreetingComplete) {
+    if (session.openingGreetingComplete) {
+      this.logGreetingDiagnostic(session, {
+        repeatedOpeningPrevented: true,
+      });
+      return;
+    }
+
+    if (session.greetingActuallySent || session.openingAudioDeltaReceived) {
+      this.logGreetingDiagnostic(session, {
+        repeatedOpeningPrevented: true,
+      });
       this.logger.log({
         streamSid: session.streamSid,
         greetingActuallySent: session.greetingActuallySent,
+        openingAudioDeltaReceived: session.openingAudioDeltaReceived,
         openingGreetingComplete: session.openingGreetingComplete,
         message: 'opening already sent guard',
       });
@@ -3041,8 +3099,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       'voice_opening_response_requested',
     );
 
-    const openingGreetingText = buildExampleOpeningMessage(
-      session.openingContext,
+    const openingGreetingText = buildShortSpeakFirstOpeningLine(
       session.callContext,
     );
 
@@ -3082,7 +3139,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           session.openingContext,
           session.callContext,
         ),
-        max_output_tokens: OPENING_MAX_OUTPUT_TOKENS,
+        max_output_tokens: OPENING_SHORT_MAX_OUTPUT_TOKENS,
       });
       if (!sent) {
         throw new Error('Opening response.create blocked by turn-taking guard');
@@ -4300,15 +4357,23 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
           ? error.message
           : JSON.stringify(event.error ?? event);
       this.logger.error({ streamSid, error: event.error ?? event }, message);
-      if (session.openingGreetingPending || session.openingIsCurrentResponse) {
-        session.openingGreetingPending = false;
-        session.openingIsCurrentResponse = false;
-        this.logger.error({
-          streamSid,
-          error: message,
-          message: 'voice_opening_failed',
-        });
-        this.failOpeningWithFallback(session, message);
+      if (session.openingIsCurrentResponse && !session.openingGreetingComplete) {
+        if (
+          !this.finalizeInterruptedOpeningIfNeeded(
+            session,
+            'openai_error_during_opening',
+          )
+        ) {
+          session.openingGreetingPending = false;
+          session.openingIsCurrentResponse = false;
+          session.activeResponseSource = undefined;
+          this.logger.error({
+            streamSid,
+            error: message,
+            message: 'voice_opening_failed',
+          });
+          this.failOpeningWithFallback(session, message);
+        }
       }
       this.resetResponseGuards(session, 'openai_error_event');
       this.clearManualFallbackSilenceTimer(session);
@@ -4322,7 +4387,22 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     if (type === 'response.cancelled') {
       if (session.openingIsCurrentResponse && !session.openingGreetingComplete) {
-        this.failOpeningWithFallback(session, 'Opening response cancelled');
+        if (
+          !this.finalizeInterruptedOpeningIfNeeded(
+            session,
+            'opening_response_cancelled_with_audio',
+          )
+        ) {
+          session.openingGreetingPending = false;
+          session.openingIsCurrentResponse = false;
+          session.activeResponseSource = undefined;
+          session.greetingActuallySent = false;
+          session.openingGreetingRequested = false;
+          this.logger.log({
+            streamSid,
+            message: 'voice_opening_cancelled_no_audio_retry_allowed',
+          });
+        }
       }
       this.resetResponseGuards(session, 'response_cancelled');
       session.currentResponseId = undefined;
@@ -4397,12 +4477,22 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.interruptedTranscriptCommitted = false;
       session.currentResponseId = extractResponseId(event);
       session.aiSpeakingStartedAt = new Date();
+      session.activeResponseSource = responseSource;
       if (!session.firstResponseCreateAt) {
         session.firstResponseCreateAt = new Date();
       }
       session.responseLanguage = resolveSessionResponseLanguage(session);
 
-      if (session.openingIsCurrentResponse) {
+      if (responseSource === 'opening') {
+        const now = new Date();
+        session.openingGreetingPending = false;
+        this.logGreetingDiagnostic(session, {
+          openingResponseStarted: true,
+        });
+        this.voiceSessionService.updateOpeningState(streamSid, {
+          openingResponseCreatedAt: now,
+        });
+      } else if (session.openingIsCurrentResponse) {
         const now = new Date();
         session.openingGreetingPending = false;
         this.voiceSessionService.updateOpeningState(streamSid, {
@@ -4488,14 +4578,21 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.cancelSentForResponseId = undefined;
       session.manualFallbackSpeechDetected = false;
       this.resetSpeechTurnState(session);
+      const wasOpeningResponse =
+        session.activeResponseSource === 'opening' ||
+        (session.openingIsCurrentResponse && session.greetingActuallySent);
+      session.activeResponseSource = undefined;
       if (
-        session.openingIsCurrentResponse &&
+        wasOpeningResponse &&
         session.greetingActuallySent &&
         !session.openingGreetingComplete
       ) {
         session.openingIsCurrentResponse = false;
+        this.logGreetingDiagnostic(session, {
+          openingResponseDone: true,
+        });
         this.completeOpeningGreeting(session);
-      } else {
+      } else if (!wasOpeningResponse) {
         this.maybeRetryOpeningGreetingAfterResponse(session);
       }
       this.clearManualFallbackSilenceTimer(session);
@@ -4557,6 +4654,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       this.logGreetingDiagnostic(session, {
         firstAudioDelta: true,
         greetingSent: session.greetingActuallySent,
+      });
+    }
+
+    if (
+      (session.openingIsCurrentResponse ||
+        session.activeResponseSource === 'opening') &&
+      !session.openingAudioDeltaReceived
+    ) {
+      session.openingAudioDeltaReceived = true;
+      this.logGreetingDiagnostic(session, {
+        openingFirstAudioDelta: true,
       });
     }
 

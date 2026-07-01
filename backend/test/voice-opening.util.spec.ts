@@ -1,5 +1,6 @@
 import {
   buildExampleOpeningMessage,
+  buildShortSpeakFirstOpeningLine,
   buildOpeningResponseInstructions,
   buildOpeningSessionInstructions,
   buildPostOpeningSessionInstructions,
@@ -163,8 +164,20 @@ describe('voice-opening.util', () => {
     });
   });
 
+  describe('buildShortSpeakFirstOpeningLine', () => {
+    it('returns generic hello when customer name is missing', () => {
+      expect(buildShortSpeakFirstOpeningLine()).toBe('Hello ji.');
+    });
+
+    it('uses first name with ji suffix', () => {
+      expect(
+        buildShortSpeakFirstOpeningLine({ customerName: 'Rahul Sharma' }),
+      ).toBe('Hello Rahul ji.');
+    });
+  });
+
   describe('buildOpeningResponseInstructions', () => {
-    it('requires a single scripted opening line and stop', () => {
+    it('requires only the short hello line and stop', () => {
       const instructions = buildOpeningResponseInstructions({
         agentName: 'Aisha',
         companyName: 'TATD',
@@ -172,15 +185,14 @@ describe('voice-opening.util', () => {
         openingGreeting: 'Hi, good morning',
       });
 
-      expect(instructions).toContain('Aisha');
-      expect(instructions).toContain('TATD');
-      expect(instructions).toContain('good morning');
-      expect(instructions).toContain('Do not continue with discovery questions');
-      expect(instructions).toContain('stop and wait for the customer');
+      expect(instructions).toContain('Hello ji.');
+      expect(instructions).toContain('Do NOT introduce yourself');
       expect(instructions).toContain('Then STOP immediately');
+      expect(instructions).not.toContain('good time');
+      expect(instructions).not.toContain('TATD');
     });
 
-    it('frames opening as driver service feedback when callContext is provided', () => {
+    it('uses customer name in the short automatic opening line', () => {
       const instructions = buildOpeningResponseInstructions(
         {
           agentName: 'Aisha',
@@ -194,13 +206,10 @@ describe('voice-opening.util', () => {
         },
       );
 
-      expect(instructions).toContain('on-demand driver service booking feedback call');
-      expect(instructions).toContain('booking OD482917');
-      expect(instructions).toContain('Is this a good time to speak?');
-      expect(instructions).toContain('do not repeat the call purpose in the opening');
-      expect(instructions).toContain(
-        'Good morning Rahul ji, this is Aisha calling from TATD regarding your booking OD482917. Is this a good time to speak?',
-      );
+      expect(instructions).toContain('Hello Rahul ji.');
+      expect(instructions).not.toContain('booking OD482917');
+      expect(instructions).not.toContain('Is this a good time');
+      expect(instructions).not.toContain('TATD');
     });
   });
 
@@ -212,9 +221,31 @@ describe('voice-opening.util', () => {
         callPurpose: 'to discuss your interest in our services',
       });
 
-      expect(instructions).toContain('opening greeting is already done');
+      expect(instructions).toContain('automatic short opening');
+      expect(instructions).toContain('Never repeat it');
       expect(instructions).toContain('Maximum 20 words');
       expect(instructions).toContain('do not repeat unless asked');
+      expect(instructions).toContain('Introduce yourself as Aisha from TATD');
+    });
+
+    it('mentions booking on the next turn after customer speaks', () => {
+      const instructions = buildPostOpeningSessionInstructions(
+        {
+          agentName: 'Aisha',
+          companyName: 'TATD',
+          callPurpose: 'for feedback',
+        },
+        undefined,
+        'indian',
+        {
+          customerName: 'Rahul Sharma',
+          bookingNumber: 'OD482917',
+        },
+      );
+
+      expect(instructions).toContain('Hello Rahul ji.');
+      expect(instructions).toContain('Booking reference: OD482917');
+      expect(instructions).toContain('Mention the booking reference naturally');
     });
   });
 
@@ -337,31 +368,41 @@ describe('voice-opening.util', () => {
           msSinceOpenAiConnected: 1200,
           responseRequested: false,
           responseInProgress: false,
-          customerSpokeBeforeOpeningDelay: false,
-        }),
-      ).toEqual({
-        provider: 'exotel',
-        sessionId: 'exotel_123',
-        authorizationId: 'auth_456',
-        stage: 'GREETING',
-        openingState: 'ready_to_speak',
-        openAiReady: true,
-        greetingScheduled: true,
-        greetingSent: undefined,
-        greetingActuallySent: false,
-        firstAudioDelta: undefined,
-        firstOutboundMedia: undefined,
-        skipReason: null,
-        delayMs: 300,
-        configuredOpeningDelayMs: 300,
-        msSinceTelephonyStart: 820,
-        msSinceSessionReady: 310,
-        msSinceOpenAiConnected: 1200,
-        responseRequested: false,
-        responseInProgress: false,
         customerSpokeBeforeOpeningDelay: false,
-        message: 'voice_greeting_diag',
-      });
+        openingResponseStarted: true,
+        openingFirstAudioDelta: true,
+        openingResponseDone: true,
+        openingMarkedComplete: true,
+        repeatedOpeningPrevented: false,
+      }),
+    ).toEqual({
+      provider: 'exotel',
+      sessionId: 'exotel_123',
+      authorizationId: 'auth_456',
+      stage: 'GREETING',
+      openingState: 'ready_to_speak',
+      openAiReady: true,
+      greetingScheduled: true,
+      greetingSent: undefined,
+      greetingActuallySent: false,
+      firstAudioDelta: undefined,
+      firstOutboundMedia: undefined,
+      skipReason: null,
+      delayMs: 300,
+      configuredOpeningDelayMs: 300,
+      msSinceTelephonyStart: 820,
+      msSinceSessionReady: 310,
+      msSinceOpenAiConnected: 1200,
+      responseRequested: false,
+      responseInProgress: false,
+      customerSpokeBeforeOpeningDelay: false,
+      openingResponseStarted: true,
+      openingFirstAudioDelta: true,
+      openingResponseDone: true,
+      openingMarkedComplete: true,
+      repeatedOpeningPrevented: false,
+      message: 'voice_greeting_diag',
+    });
     });
   });
 });

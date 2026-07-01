@@ -30,6 +30,7 @@ export const VOICE_OPENING_DEFAULTS: Required<
 
 export const CONVERSATION_MAX_OUTPUT_TOKENS = 180;
 export const OPENING_MAX_OUTPUT_TOKENS = 120;
+export const OPENING_SHORT_MAX_OUTPUT_TOKENS = 32;
 
 const OPENING_MAX_WORDS = 40;
 const INDIA_TIME_ZONE = 'Asia/Kolkata';
@@ -184,6 +185,17 @@ function shouldOmitCallPurposeInOpening(callContext?: CallContext): boolean {
   return Boolean(callContext?.bookingNumber?.trim());
 }
 
+/** Automatic speak-first line only — no company/booking intro on the first turn. */
+export function buildShortSpeakFirstOpeningLine(
+  callContext?: CallContext,
+): string {
+  const customerName = callContext?.customerName?.trim();
+  if (customerName) {
+    return `Hello ${formatCustomerNameForGreeting(customerName)}.`;
+  }
+  return 'Hello ji.';
+}
+
 export function buildExampleOpeningMessage(
   context: VoiceOpeningContext,
   callContext?: CallContext,
@@ -243,49 +255,17 @@ export function buildOpeningResponseInstructions(
   context: VoiceOpeningContext,
   callContext?: CallContext,
 ): string {
-  const line = buildExampleOpeningMessage(context, callContext);
-  const omitPurpose = shouldOmitCallPurposeInOpening(callContext);
-  const permissionHint =
-    context.askPermissionBeforePitch !== false
-      ? 'Ask if this is a good time to speak.'
-      : omitPurpose
-        ? 'Stop and wait for the customer.'
-        : 'State the call purpose, then stop and wait for the customer.';
-  const openingTaskLine = omitPurpose
-    ? `Greet the customer, introduce yourself as ${context.agentName}, mention ${context.companyName} and the booking reference, and ${permissionHint} Do not state the call purpose separately or ask feedback questions in the opening.`
-    : `Greet the customer, introduce yourself as ${context.agentName}, mention ${context.companyName}, state the call purpose, and ${permissionHint}`;
-
-  const minimalContextRules = callContext
-    ? [
-        'Use only customer name and booking number if available in the opening.',
-        'This is an on-demand driver service booking feedback call.',
-        VOICE_DOMAIN_LOCK_BLOCK,
-        'Do not mention driver, payment, or other ride details in the opening unless specifically configured.',
-        ...(omitPurpose
-          ? [
-              'The booking reference already explains why you are calling; do not repeat the call purpose in the opening.',
-            ]
-          : []),
-      ]
-    : [];
+  const line = buildShortSpeakFirstOpeningLine(callContext);
 
   return [
-    'Say exactly one short opening message for an outbound phone call.',
-    openingTaskLine,
-    ...minimalContextRules,
-    'Do not continue with discovery questions.',
-    'Do not pitch.',
-    'Do not ask multiple questions.',
-    'Do NOT offer to call back later in the opening.',
-    'Do NOT role-play the customer or answer the good-time question yourself.',
-    'After this opening message, stop and wait for the customer.',
-    'Match configured greeting and India time-aware greeting if enabled.',
-    `Example output: "${line}"`,
-    `Use agent name "${context.agentName}". Maximum ${OPENING_MAX_WORDS} words total.`,
-    'Do not handle objections, explain services, or use playbook content in this opening turn.',
-    'Do NOT add pleasantries, explanations, context, or extra questions beyond that line.',
+    'Say exactly one very short automatic opening line for an outbound phone call.',
+    `Say only: "${line}"`,
+    'Do NOT introduce yourself, company name, booking number, call purpose, or ask any question.',
+    'Do NOT add pleasantries, explanations, or extra words.',
+    'Maximum 5 words.',
     'Then STOP immediately and end your turn.',
     'Do not mention AI, bots, systems, or models.',
+    'The full introduction happens only after the customer responds.',
   ].join(' ');
 }
 
@@ -295,35 +275,24 @@ export function buildOpeningSessionInstructions(
   accent: VoiceAccentProfile = 'indian',
   callContext?: CallContext,
 ): string {
-  const example = buildExampleOpeningMessage(context, callContext);
+  const example = buildShortSpeakFirstOpeningLine(callContext);
   const omitPurpose = shouldOmitCallPurposeInOpening(callContext);
-  const permissionRule =
-    context.askPermissionBeforePitch !== false
-      ? 'End with one short permission question only.'
-      : omitPurpose
-        ? 'Stop and wait for the customer.'
-        : 'After stating the purpose, stop and wait for the customer.';
   const purposeLine = omitPurpose
-    ? `Call purpose (for later turns only, not the opening): ${context.callPurpose}.`
+    ? `Call purpose (for later turns only, not the automatic opening): ${context.callPurpose}.`
     : `Call purpose: ${context.callPurpose}.`;
 
   const openingRules = [
     `You are ${context.agentName} from ${context.companyName}.`,
     purposeLine,
     'CALL OPENING RULES:',
-    `- Deliver ONE short opening only, like: "${example}"`,
-    `- ${permissionRule}`,
-    ...(omitPurpose
-      ? [
-          '- Do not state the call purpose in the opening; the booking reference is enough.',
-        ]
-      : []),
-    `- Maximum ${OPENING_MAX_WORDS} words in the opening.`,
-    '- Do not pitch, elaborate, or add filler.',
-    '- Do not ask discovery questions, handle objections, or use playbook content during the opening.',
-    '- Wait for the customer response before saying anything else.',
-    '- If the customer is silent after the opening, remain silent.',
-    `- If asked who is calling, give a one-sentence reply with ${context.agentName}, ${context.companyName}, and purpose only.`,
+    `- Deliver ONE very short automatic opening only, like: "${example}"`,
+    '- Do NOT introduce yourself, company, booking, purpose, or ask questions in the automatic opening.',
+    '- After the customer responds, introduce yourself, mention booking context if available, and ask if it is a good time to speak.',
+    '- Never repeat the automatic hello opening after the customer speaks.',
+    '- Do not pitch, elaborate, or add filler during the automatic opening.',
+    '- Do not ask discovery questions, handle objections, or use playbook content during the automatic opening.',
+    '- Wait for the customer response before the full introduction.',
+    '- If the customer is silent after the automatic opening, remain silent.',
     '- Speak first when the call begins.',
   ].join(' ');
 
@@ -336,7 +305,12 @@ export function buildPostOpeningSessionInstructions(
   context: VoiceOpeningContext,
   baseInstructions?: string,
   accent: VoiceAccentProfile = 'indian',
+  callContext?: CallContext,
 ): string {
+  const shortOpening = buildShortSpeakFirstOpeningLine(callContext);
+  const bookingHint = callContext?.bookingNumber?.trim()
+    ? `Booking reference: ${callContext.bookingNumber.trim()}.`
+    : '';
   const base = sanitizeBaseInstructionsForOpening(baseInstructions, accent);
   return [
     base,
@@ -346,15 +320,26 @@ export function buildPostOpeningSessionInstructions(
     VOICE_DOMAIN_FEEDBACK_GUIDANCE,
     `You are ${context.agentName} from ${context.companyName}.`,
     `Call purpose (do not repeat unless asked): ${context.callPurpose}.`,
-    'The opening greeting is already done.',
-    'If a good-time permission question was just asked, wait silently for the customer answer.',
+    bookingHint,
+    `The automatic short opening "${shortOpening}" is already done. Never repeat it.`,
+    'When the customer speaks (for example hello), your next reply should:',
+    `- Introduce yourself as ${context.agentName} from ${context.companyName}.`,
+    ...(bookingHint
+      ? ['- Mention the booking reference naturally.']
+      : []),
+    ...(context.askPermissionBeforePitch !== false
+      ? ['- Ask if this is a good time to speak.']
+      : ['- Continue with the call purpose briefly, then wait.']),
+    'Do NOT repeat the automatic hello opening line.',
     'If the customer says yes or agrees to speak, ask about driver service or ride experience — not delivery or order.',
     'Do NOT assume the customer said no, busy, or unavailable.',
     'Do NOT offer to call back unless the customer clearly says they are unavailable or asks to talk later.',
     'Wait for the caller to finish before each reply.',
     `If they ask who is calling, reply in one sentence: ${context.agentName} from ${context.companyName}.`,
     PASSIVE_CALLER_FIRST_SUFFIX,
-  ].join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
 }
 
 export function parseAskPermissionBeforePitch(
@@ -521,6 +506,11 @@ export interface GreetingDiagnosticInput {
   responseRequested?: boolean;
   responseInProgress?: boolean;
   customerSpokeBeforeOpeningDelay?: boolean;
+  openingResponseStarted?: boolean;
+  openingFirstAudioDelta?: boolean;
+  openingResponseDone?: boolean;
+  openingMarkedComplete?: boolean;
+  repeatedOpeningPrevented?: boolean;
 }
 
 /** Fields supplied by runtime session context when logging greeting diagnostics. */
@@ -562,6 +552,11 @@ export function buildGreetingDiagnosticLog(
     responseRequested: input.responseRequested,
     responseInProgress: input.responseInProgress,
     customerSpokeBeforeOpeningDelay: input.customerSpokeBeforeOpeningDelay,
+    openingResponseStarted: input.openingResponseStarted,
+    openingFirstAudioDelta: input.openingFirstAudioDelta,
+    openingResponseDone: input.openingResponseDone,
+    openingMarkedComplete: input.openingMarkedComplete,
+    repeatedOpeningPrevented: input.repeatedOpeningPrevented,
     message: 'voice_greeting_diag',
   };
 }
