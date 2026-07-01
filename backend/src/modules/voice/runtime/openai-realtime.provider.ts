@@ -1562,8 +1562,12 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     sessionId: string;
     stage?: VoiceSessionStage;
     openAiReady: boolean;
+    msSinceTelephonyStart?: number;
+    msSinceSessionReady?: number;
+    msSinceOpenAiConnected?: number;
   } {
     const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
+    const nowMs = Date.now();
     return {
       provider: voiceSession?.telephonyProvider,
       sessionId: session.streamSid,
@@ -1572,6 +1576,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         session.openAiSessionUpdated &&
         session.ws.readyState === WebSocket.OPEN &&
         this.isSmartfloWebSocketOpen(session.streamSid),
+      msSinceTelephonyStart: session.telephonyStartAt
+        ? nowMs - session.telephonyStartAt.getTime()
+        : undefined,
+      msSinceSessionReady: session.sessionReadyAt
+        ? nowMs - session.sessionReadyAt.getTime()
+        : undefined,
+      msSinceOpenAiConnected: session.connectedAt
+        ? nowMs - session.connectedAt.getTime()
+        : undefined,
     };
   }
 
@@ -1749,6 +1762,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.logGreetingDiagnostic(session, {
       greetingScheduled: true,
       delayMs,
+      configuredOpeningDelayMs: delayMs,
     });
 
     const triggerOpening = (): void => {
@@ -2951,6 +2965,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         delayMs: session.sessionReadyAt
           ? now.getTime() - session.sessionReadyAt.getTime()
           : undefined,
+        configuredOpeningDelayMs:
+          this.voiceOpeningConfigService.getOpeningDelayMs(),
       });
       this.callTiming.markByStreamSid(
         session.streamSid,

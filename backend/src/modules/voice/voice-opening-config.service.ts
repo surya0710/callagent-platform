@@ -22,7 +22,8 @@ export class VoiceOpeningConfigService {
   }
 
   getOpeningDelayMs(): number {
-    const raw = this.readInt('VOICE_AI_SPEAK_FIRST_OPENING_DELAY_MS', 2500, 2000);
+    // Brief telephony-path stabilization only; greeting readiness is gated separately.
+    const raw = this.readInt('VOICE_AI_SPEAK_FIRST_OPENING_DELAY_MS', 300, 0);
     return Math.min(raw, 3000);
   }
 

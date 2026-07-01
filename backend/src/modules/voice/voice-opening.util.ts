@@ -511,6 +511,10 @@ export interface GreetingDiagnosticInput {
   firstOutboundMedia?: boolean;
   skipReason?: string | null;
   delayMs?: number;
+  configuredOpeningDelayMs?: number;
+  msSinceTelephonyStart?: number;
+  msSinceSessionReady?: number;
+  msSinceOpenAiConnected?: number;
 }
 
 /** Fields supplied by runtime session context when logging greeting diagnostics. */
@@ -533,6 +537,10 @@ export function buildGreetingDiagnosticLog(
     firstOutboundMedia: input.firstOutboundMedia,
     skipReason: input.skipReason ?? null,
     delayMs: input.delayMs,
+    configuredOpeningDelayMs: input.configuredOpeningDelayMs,
+    msSinceTelephonyStart: input.msSinceTelephonyStart,
+    msSinceSessionReady: input.msSinceSessionReady,
+    msSinceOpenAiConnected: input.msSinceOpenAiConnected,
     message: 'voice_greeting_diag',
   };
 }

@@ -322,7 +322,11 @@ describe('voice-opening.util', () => {
           stage: 'GREETING',
           openAiReady: true,
           greetingScheduled: true,
-          delayMs: 2500,
+          delayMs: 300,
+          configuredOpeningDelayMs: 300,
+          msSinceTelephonyStart: 820,
+          msSinceSessionReady: 310,
+          msSinceOpenAiConnected: 1200,
         }),
       ).toEqual({
         provider: 'exotel',
@@ -334,7 +338,11 @@ describe('voice-opening.util', () => {
         firstAudioDelta: undefined,
         firstOutboundMedia: undefined,
         skipReason: null,
-        delayMs: 2500,
+        delayMs: 300,
+        configuredOpeningDelayMs: 300,
+        msSinceTelephonyStart: 820,
+        msSinceSessionReady: 310,
+        msSinceOpenAiConnected: 1200,
         message: 'voice_greeting_diag',
       });
     });
