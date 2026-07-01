@@ -412,6 +412,9 @@ export function getOpeningSkipReason(
   if (!input.openAiSessionCreated) {
     return 'openai_session_not_created';
   }
+  if (!input.openAiSessionUpdated) {
+    return 'openai_session_not_updated';
+  }
   if (input.responsePending) {
     return 'response_pending';
   }

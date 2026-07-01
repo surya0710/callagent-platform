@@ -21,6 +21,11 @@ export class VoiceOpeningConfigService {
     return this.readInt('VOICE_AI_SPEAK_FIRST_OPENING_TIMEOUT_MS', 8000, 1000);
   }
 
+  getOpeningDelayMs(): number {
+    const raw = this.readInt('VOICE_AI_SPEAK_FIRST_OPENING_DELAY_MS', 2500, 2000);
+    return Math.min(raw, 3000);
+  }
+
   shouldFallbackToWaitForCustomer(): boolean {
     return this.readBoolean(
       'VOICE_AI_SPEAK_FIRST_FALLBACK_TO_WAIT_FOR_CUSTOMER',

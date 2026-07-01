@@ -194,6 +194,12 @@ interface OpenAiRealtimeSession {
   openingGreetingComplete: boolean;
   openingIsCurrentResponse: boolean;
   openingTimeoutTimer?: NodeJS.Timeout;
+  openingDelayTimer?: NodeJS.Timeout;
+  openingDelayPending?: boolean;
+  sessionReadyAt?: Date;
+  customerSpokeBeforeOpening?: boolean;
+  openingDelaySpeechPacketCount?: number;
+  openingDelaySpeechDurationMs?: number;
   openingSuppressedInboundPackets: number;
   openingAudioStartedAt?: Date;
   openingAudioDoneAt?: Date;
@@ -1160,6 +1166,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     session.closing = true;
     this.clearOpeningTimeout(session);
+    this.clearOpeningDelayTimer(session);
     this.clearHangupTimer(session);
     this.clearCallEndMaxWaitTimer(session);
     this.clearCommitTimer(session);
@@ -1419,6 +1426,128 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
+  private clearOpeningDelayTimer(session: OpenAiRealtimeSession): void {
+    if (session.openingDelayTimer) {
+      clearTimeout(session.openingDelayTimer);
+      session.openingDelayTimer = undefined;
+    }
+    session.openingDelayPending = false;
+  }
+
+  private scheduleOpeningAfterDelay(session: OpenAiRealtimeSession): void {
+    if (
+      session.openingDelayTimer ||
+      session.openingGreetingRequested ||
+      session.openingGreetingComplete ||
+      session.closing
+    ) {
+      return;
+    }
+
+    const delayMs = this.voiceOpeningConfigService.getOpeningDelayMs();
+    session.openingDelayPending = true;
+    session.sessionReadyAt = session.sessionReadyAt ?? new Date();
+
+    const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
+    this.logger.log({
+      streamSid: session.streamSid,
+      provider: voiceSession?.telephonyProvider,
+      authorizationId: voiceSession?.authorizationId,
+      sessionReadyAt: session.sessionReadyAt.toISOString(),
+      delayMs,
+      message: 'voice_opening_delay_scheduled',
+    });
+
+    session.openingDelayTimer = setTimeout(() => {
+      session.openingDelayTimer = undefined;
+      session.openingDelayPending = false;
+      this.fireDelayedOpening(session, delayMs);
+    }, delayMs);
+  }
+
+  private fireDelayedOpening(
+    session: OpenAiRealtimeSession,
+    delayMs: number,
+  ): void {
+    if (
+      session.closing ||
+      session.openingGreetingRequested ||
+      session.openingGreetingComplete
+    ) {
+      return;
+    }
+
+    if (session.customerSpokeBeforeOpening) {
+      this.skipOpeningForCustomerFirst(session, delayMs);
+      return;
+    }
+
+    const openingSentAt = new Date();
+    const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
+    this.logger.log({
+      streamSid: session.streamSid,
+      provider: voiceSession?.telephonyProvider,
+      authorizationId: voiceSession?.authorizationId,
+      sessionReadyAt: session.sessionReadyAt?.toISOString(),
+      openingSentAt: openingSentAt.toISOString(),
+      delayMs,
+      message: 'voice_opening_delayed_trigger',
+    });
+
+    this.startConversationWithGreeting(session);
+  }
+
+  private skipOpeningForCustomerFirst(
+    session: OpenAiRealtimeSession,
+    delayMs: number,
+  ): void {
+    const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
+    this.logger.log({
+      streamSid: session.streamSid,
+      provider: voiceSession?.telephonyProvider,
+      authorizationId: voiceSession?.authorizationId,
+      sessionReadyAt: session.sessionReadyAt?.toISOString(),
+      delayMs,
+      message: 'voice_opening_skipped_customer_spoke_first',
+    });
+
+    session.openingGreetingRequested = true;
+    this.clearOpeningDelayTimer(session);
+    this.activateNormalModeAfterOpening(session, {
+      preserveQueuedInbound: true,
+    });
+    this.flushPendingInputIfReady(session);
+  }
+
+  private trackOpeningDelayCustomerSpeech(
+    session: OpenAiRealtimeSession,
+    pcm8: Buffer,
+  ): void {
+    if (!session.openingDelayPending || session.customerSpokeBeforeOpening) {
+      return;
+    }
+
+    const speech = this.isSpeechLikeForRuntime(pcm8);
+    if (!speech.speechLike) {
+      return;
+    }
+
+    session.openingDelaySpeechPacketCount =
+      (session.openingDelaySpeechPacketCount ?? 0) + 1;
+    session.openingDelaySpeechDurationMs =
+      (session.openingDelaySpeechDurationMs ?? 0) +
+      this.estimatePcm8DurationMs(pcm8);
+
+    const hasEnoughSpeech =
+      session.openingDelaySpeechPacketCount >=
+        this.getSpeechMinPacketsForSession(session) &&
+      session.openingDelaySpeechDurationMs >=
+        this.getSpeechMinDurationMsForSession(session);
+    if (hasEnoughSpeech) {
+      session.customerSpokeBeforeOpening = true;
+    }
+  }
+
   private scheduleOpeningTimeout(session: OpenAiRealtimeSession): void {
     this.clearOpeningTimeout(session);
     const timeoutMs = this.voiceOpeningConfigService.getOpeningTimeoutMs();
@@ -1450,6 +1579,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     errorMessage: string,
   ): void {
     this.clearOpeningTimeout(session);
+    this.clearOpeningDelayTimer(session);
     session.openingGreetingPending = false;
     session.openingIsCurrentResponse = false;
     session.responseRequested = false;
@@ -1479,7 +1609,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
   private activateNormalModeAfterOpening(
     session: OpenAiRealtimeSession,
-    options?: { failed?: boolean; openingError?: string },
+    options?: {
+      failed?: boolean;
+      openingError?: string;
+      preserveQueuedInbound?: boolean;
+    },
   ): void {
     if (session.openingGreetingComplete && !options?.failed) {
       return;
@@ -1488,7 +1622,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.openingGreetingComplete = true;
     session.openingGreetingPending = false;
     session.openingIsCurrentResponse = false;
-    session.pendingPcm8 = [];
+    if (!options?.preserveQueuedInbound) {
+      session.pendingPcm8 = [];
+    }
     session.responseRequested = false;
     session.responseInProgress = false;
 
@@ -1587,7 +1723,8 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.aiSpeakFirstEnabled &&
         !session.openingGreetingComplete &&
         (session.openingState === 'waiting_for_openai_ready' ||
-          session.openingState === 'ready_to_speak'),
+          session.openingState === 'ready_to_speak' ||
+          session.openingDelayPending),
     );
   }
 
@@ -2293,13 +2430,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     if (
       session.openingState === 'waiting_for_openai_ready' &&
-      session.openAiSessionCreated
+      session.openAiSessionUpdated
     ) {
+      if (!session.sessionReadyAt) {
+        session.sessionReadyAt = new Date();
+      }
       this.setOpeningState(session, 'ready_to_speak', 'voice_opening_ready');
       this.logger.log({
         streamSid: session.streamSid,
         openAiSessionCreated: session.openAiSessionCreated,
         openAiSessionUpdated: session.openAiSessionUpdated,
+        sessionReadyAt: session.sessionReadyAt.toISOString(),
         message: 'OpenAI session ready',
       });
     }
@@ -2341,7 +2482,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    this.startConversationWithGreeting(session);
+    this.scheduleOpeningAfterDelay(session);
   }
 
   private tryStartOpeningGreeting(session: OpenAiRealtimeSession): void {
@@ -2389,6 +2530,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.openingGreetingRequested = true;
     session.openingGreetingPending = true;
     session.openingIsCurrentResponse = true;
+    this.clearOpeningDelayTimer(session);
 
     const now = new Date();
     if (!session.firstResponseCreateAt) {
@@ -2448,8 +2590,16 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       if (!sent) {
         throw new Error('Opening response.create blocked by turn-taking guard');
       }
+      const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
       this.logger.log({
         streamSid: session.streamSid,
+        provider: voiceSession?.telephonyProvider,
+        authorizationId: voiceSession?.authorizationId,
+        sessionReadyAt: session.sessionReadyAt?.toISOString(),
+        openingSentAt: now.toISOString(),
+        delayMs: session.sessionReadyAt
+          ? now.getTime() - session.sessionReadyAt.getTime()
+          : undefined,
         message: 'opening response.create sent',
       });
       this.callTiming.markByStreamSid(
@@ -2479,6 +2629,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private appendInputAudio(session: OpenAiRealtimeSession, pcm8: Buffer): void {
     if (this.shouldQueueInboundUntilOpeningComplete(session)) {
       session.pendingPcm8.push(pcm8);
+      this.trackOpeningDelayCustomerSpeech(session, pcm8);
       return;
     }
 

@@ -268,14 +268,21 @@ describe('voice-opening.util', () => {
       );
     });
 
-    it('returns true after OpenAI session.created even before session.updated', () => {
+    it('returns false before OpenAI session.updated', () => {
       expect(
         canTriggerOpening({
           ...baseReady,
           openAiSessionUpdated: false,
           openingState: 'ready_to_speak',
         }),
-      ).toBe(true);
+      ).toBe(false);
+      expect(
+        getOpeningSkipReason({
+          ...baseReady,
+          openAiSessionUpdated: false,
+          openingState: 'ready_to_speak',
+        }),
+      ).toBe('openai_session_not_updated');
     });
 
     it('returns false before OpenAI session.created', () => {
