@@ -1663,8 +1663,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
   }
 
-<<<<<<< HEAD
-=======
   private clearOpeningGreetingDeferTimer(
     session: OpenAiRealtimeSession,
   ): void {
@@ -1752,7 +1750,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     this.startConversationWithGreeting(session);
   }
 
->>>>>>> 65f15a1 (Ai Speaks First)
   private setOpeningState(
     session: OpenAiRealtimeSession,
     openingState: OpeningState,
@@ -1904,13 +1901,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     if (session.customerSpokeBeforeOpeningDelay) {
       this.logGreetingDiagnostic(session, {
-<<<<<<< HEAD
-        delayMs,
-        configuredOpeningDelayMs: delayMs,
-=======
         skipReason: 'customer_spoke_before_opening_timer',
         delayMs,
->>>>>>> 65f15a1 (Ai Speaks First)
+        configuredOpeningDelayMs: delayMs,
       });
     }
 
