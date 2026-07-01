@@ -116,6 +116,12 @@ export interface TranscriptEmailStatusResponse {
 export interface VoiceSessionsResponse {
   active: VoiceSession[];
   recentEnded: VoiceSession[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
 }
 
 export interface VoiceServerOrigin {

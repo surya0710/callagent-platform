@@ -252,6 +252,19 @@ export class VoiceCallAuthorizationService {
     input: VoiceCallStartAuthorizationInput,
   ): Promise<VoiceCallAuthorizationResult> {
     if (!this.isAuthorizationRequired()) {
+      const devMatch = await this.tryConsumePendingAuthorization(input);
+      if (devMatch) {
+        this.logger.log({
+          streamSid: input.streamSid,
+          matchMethod: 'dev_bypass_pending_auth',
+          authorizationId: devMatch.authorizationId,
+          hasCallContext: Boolean(devMatch.callContext),
+          message:
+            'Voice stream authorization bypassed (dev mode) — loaded pending callContext',
+        });
+        return devMatch;
+      }
+
       this.logger.log({
         streamSid: input.streamSid,
         matchMethod: 'dev_bypass',
@@ -426,6 +439,60 @@ export class VoiceCallAuthorizationService {
       authorized: false,
       reason: 'not_app_initiated',
     };
+  }
+
+  /** Dev bypass: still load stored callContext when a pending authorization matches. */
+  private async tryConsumePendingAuthorization(
+    input: VoiceCallStartAuthorizationInput,
+  ): Promise<VoiceCallAuthorizationMatch | undefined> {
+    this.pruneExpired();
+
+    const customAuthorizationId =
+      input.authorizationId?.trim() ||
+      this.extractCustomAuthorizationId(input.customParameters);
+    if (customAuthorizationId) {
+      const byCustom = await this.consumeAuthorization(customAuthorizationId);
+      if (byCustom) {
+        return byCustom;
+      }
+    }
+
+    const callSid = input.callSid?.trim();
+    if (callSid) {
+      const authorizationId = this.findAuthorizationIdForCallSid(callSid);
+      if (authorizationId) {
+        const match = await this.consumeAuthorization(authorizationId);
+        if (match) {
+          return match;
+        }
+      }
+
+      const redisEntry =
+        await this.voiceSharedStateService.loadAuthorizationByCallSid(callSid);
+      if (redisEntry) {
+        const match = await this.consumeAuthorization(redisEntry.authorizationId);
+        if (match) {
+          return match;
+        }
+      }
+    }
+
+    const candidatePhones = this.buildPhoneMatchCandidates(input.from, input.to);
+    for (const phone of candidatePhones) {
+      const match = await this.consumeLatestPhoneAuthorization(phone);
+      if (match) {
+        return match;
+      }
+    }
+
+    for (const phone of candidatePhones) {
+      const fuzzyMatch = await this.consumeAuthorizationByPhoneSuffix(phone);
+      if (fuzzyMatch) {
+        return fuzzyMatch;
+      }
+    }
+
+    return undefined;
   }
 
   private findAuthorizationIdForCallSid(callSid: string): string | undefined {

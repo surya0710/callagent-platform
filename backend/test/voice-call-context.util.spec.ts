@@ -48,6 +48,12 @@ describe('voice-call-context.util', () => {
     expect(instructions).toContain("This call is ONLY about TATD's on-demand driver service booking.");
     expect(instructions).toContain('How was your experience with the driver service?');
     expect(instructions).toContain('Do not invent missing values');
+    expect(instructions).toContain(
+      'When the customer asks for a field listed above, answer accurately from this context.',
+    );
+    expect(instructions).toContain(
+      'If the customer asks for a detail not listed above, say the team can confirm.',
+    );
     expect(instructions).not.toContain('undefined');
     expect(instructions).not.toMatch(/how was your delivery/i);
     expect(instructions).not.toMatch(/how was your order/i);
@@ -87,6 +93,20 @@ describe('voice-call-context.util', () => {
     expect(opening).not.toContain('follow-up');
     expect(opening).not.toContain('₹');
     expect(opening).not.toContain('Ramesh');
+  });
+
+  it('adds opening-phase rules without hiding driver context from Q&A', () => {
+    const instructions = buildCallContextInstructions(sampleContext, {
+      openingPhase: true,
+    });
+
+    expect(instructions).toContain('Driver Name: Rajesh Kumar');
+    expect(instructions).toContain(
+      'When the customer asks for a field listed above, answer accurately from this context.',
+    );
+    expect(instructions).toContain(
+      'Do not volunteer driver, payment, or fare details in the opening greeting.',
+    );
   });
 
   it('injects call context after playbook in normal mode instructions', () => {
