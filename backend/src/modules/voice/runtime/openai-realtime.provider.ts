@@ -41,7 +41,7 @@ import {
   CONVERSATION_MAX_OUTPUT_TOKENS,
   isOpeningInboundSuppressedState,
   OPENING_MAX_OUTPUT_TOKENS,
-  GreetingDiagnosticInput,
+  GreetingDiagnosticLogInput,
 } from '../voice-opening.util';
 import { VoiceSessionStage } from '../voice-session-stage.types';
 import { VoiceOpeningConfigService } from '../voice-opening-config.service';
@@ -1467,9 +1467,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       this.setVoiceSessionStage(session, 'GREETING');
     }
 
-    this.logGreetingDiagnostic(session, {
-      openAiReady: true,
-    });
+    this.logGreetingDiagnostic(session, {});
 
     this.evaluateOpeningReadiness(session);
   }
@@ -1587,7 +1585,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
   private logGreetingDiagnostic(
     session: OpenAiRealtimeSession,
-    input: Omit<GreetingDiagnosticInput, 'provider' | 'sessionId' | 'stage' | 'openAiReady'>,
+    input: GreetingDiagnosticLogInput,
   ): void {
     const context = this.getGreetingDiagnosticContext(session);
     this.logger.log(
@@ -1636,7 +1634,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   ): void {
     this.logGreetingDiagnostic(session, {
       skipReason: 'customer_spoke_before_opening_timer',
-      openAiReady: true,
       delayMs,
     });
     session.openingGreetingRequested = true;
@@ -1751,7 +1748,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     this.logGreetingDiagnostic(session, {
       greetingScheduled: true,
-      openAiReady: true,
       delayMs,
     });
 
@@ -1784,7 +1780,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     if (session.responseRequested || session.responseInProgress) {
       this.logGreetingDiagnostic(session, {
         skipReason: 'response_already_active',
-        openAiReady: true,
         delayMs,
       });
       return;
@@ -1905,9 +1900,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     this.setVoiceSessionStage(session, 'WAITING_FOR_CUSTOMER');
-    this.logGreetingDiagnostic(session, {
-      openAiReady: session.openAiSessionUpdated,
-    });
+    this.logGreetingDiagnostic(session, {});
 
     this.resetSpeechTurnState(session);
     this.clearOpeningTimeout(session);
@@ -2836,7 +2829,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     if (skipReason) {
       this.logGreetingDiagnostic(session, {
         skipReason,
-        openAiReady: session.openAiSessionUpdated,
       });
       if (this.shouldRetryOpeningReadiness(session, skipReason)) {
         this.scheduleOpeningReadinessRetry(session);
@@ -2955,7 +2947,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       }
       this.logGreetingDiagnostic(session, {
         greetingSent: true,
-        openAiReady: true,
         greetingScheduled: true,
         delayMs: session.sessionReadyAt
           ? now.getTime() - session.sessionReadyAt.getTime()
@@ -4414,7 +4405,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.speakFirstDiagFirstAudioDeltaLogged = true;
       this.logGreetingDiagnostic(session, {
         firstAudioDelta: true,
-        openAiReady: session.openAiSessionUpdated,
         greetingSent: session.openingGreetingRequested,
       });
     }
@@ -4646,7 +4636,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.speakFirstDiagFirstOutboundLogged = true;
       this.logGreetingDiagnostic(session, {
         firstOutboundMedia: true,
-        openAiReady: session.openAiSessionUpdated,
         greetingSent: session.openingGreetingRequested,
       });
     }

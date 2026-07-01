@@ -513,6 +513,12 @@ export interface GreetingDiagnosticInput {
   delayMs?: number;
 }
 
+/** Fields supplied by runtime session context when logging greeting diagnostics. */
+export type GreetingDiagnosticLogInput = Omit<
+  GreetingDiagnosticInput,
+  'provider' | 'sessionId' | 'stage' | 'openAiReady'
+>;
+
 export function buildGreetingDiagnosticLog(
   input: GreetingDiagnosticInput,
 ): Record<string, unknown> {
