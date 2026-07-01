@@ -11,10 +11,10 @@ import {
 export class VoiceOpeningConfigService {
   private readonly logger = new Logger(VoiceOpeningConfigService.name);
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: ConfigService) { }
 
   isSpeakFirstEnabled(): boolean {
-    return this.readBoolean('VOICE_AI_SPEAK_FIRST_ENABLED', false);
+    return this.readBoolean('VOICE_AI_SPEAK_FIRST_ENABLED', true);
   }
 
   getOpeningTimeoutMs(): number {
