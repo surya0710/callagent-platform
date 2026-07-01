@@ -11,6 +11,8 @@ import {
   sanitizeBaseInstructionsForOpening,
   canTriggerOpening,
   getOpeningSkipReason,
+  hasOpeningPreTimerCustomerSpeech,
+  buildSpeakFirstDiagnosticLog,
   VOICE_OPENING_DEFAULTS,
 } from '../src/modules/voice/voice-opening.util';
 
@@ -300,6 +302,44 @@ describe('voice-opening.util', () => {
           openingState: 'waiting_for_openai_ready',
         }),
       ).toBe('openai_session_not_created');
+    });
+  });
+
+  describe('hasOpeningPreTimerCustomerSpeech', () => {
+    it('requires sustained speech before the opening timer fires', () => {
+      expect(hasOpeningPreTimerCustomerSpeech(5, 500)).toBe(false);
+      expect(hasOpeningPreTimerCustomerSpeech(6, 399)).toBe(false);
+      expect(hasOpeningPreTimerCustomerSpeech(6, 400)).toBe(true);
+    });
+  });
+
+  describe('buildSpeakFirstDiagnosticLog', () => {
+    it('includes speak-first diagnostic fields', () => {
+      expect(
+        buildSpeakFirstDiagnosticLog({
+          stage: 'timerScheduled',
+          provider: 'exotel',
+          streamId: 'exotel_123',
+          authorizationId: 'auth_1',
+          sessionReady: true,
+          timerScheduled: true,
+          delayMs: 2500,
+        }),
+      ).toEqual({
+        provider: 'exotel',
+        streamId: 'exotel_123',
+        authorizationId: 'auth_1',
+        sessionReady: true,
+        timerScheduled: true,
+        timerFired: undefined,
+        openingSent: undefined,
+        firstAudioDelta: undefined,
+        firstOutboundMedia: undefined,
+        skipReason: null,
+        delayMs: 2500,
+        stage: 'timerScheduled',
+        message: 'voice_speak_first_timerScheduled',
+      });
     });
   });
 });

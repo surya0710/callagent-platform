@@ -35,10 +35,13 @@ import {
   buildOpeningSessionInstructions,
   buildPostOpeningSessionInstructions,
   buildExampleOpeningMessage,
+  buildSpeakFirstDiagnosticLog,
   getOpeningSkipReason,
+  hasOpeningPreTimerCustomerSpeech,
   CONVERSATION_MAX_OUTPUT_TOKENS,
   isOpeningInboundSuppressedState,
   OPENING_MAX_OUTPUT_TOKENS,
+  SpeakFirstDiagnosticInput,
 } from '../voice-opening.util';
 import { VoiceOpeningConfigService } from '../voice-opening-config.service';
 import { VoiceSocketRegistry } from '../voice-socket.registry';
@@ -211,6 +214,11 @@ interface OpenAiRealtimeSession {
   sessionUpdateSent?: boolean;
   telephonyStartAt?: Date;
   sessionReadyAt?: Date;
+  customerSpokeBeforeOpeningDelay?: boolean;
+  preOpeningSpeechPacketCount?: number;
+  preOpeningSpeechDurationMs?: number;
+  speakFirstDiagFirstAudioDeltaLogged?: boolean;
+  speakFirstDiagFirstOutboundLogged?: boolean;
   openingSuppressedInboundPackets: number;
   openingAudioStartedAt?: Date;
   openingAudioDoneAt?: Date;
@@ -1451,6 +1459,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       this.setOpeningState(session, 'ready_to_speak', 'voice_opening_ready');
     }
 
+    this.logSpeakFirstDiagnostic(session, {
+      stage: 'sessionReady',
+      sessionReady: true,
+    });
+
     this.evaluateOpeningReadiness(session);
   }
 
@@ -1537,6 +1550,89 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private isSmartfloWebSocketOpen(streamSid: string): boolean {
     const client = this.voiceSocketRegistry.getByStreamSid(streamSid);
     return Boolean(client && client.readyState === WebSocket.OPEN);
+  }
+
+  private getSpeakFirstDiagnosticContext(session: OpenAiRealtimeSession): {
+    provider?: string;
+    streamId: string;
+    authorizationId?: string;
+    sessionReady: boolean;
+  } {
+    const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
+    return {
+      provider: voiceSession?.telephonyProvider,
+      streamId: session.streamSid,
+      authorizationId: voiceSession?.authorizationId,
+      sessionReady:
+        session.openAiSessionUpdated &&
+        session.ws.readyState === WebSocket.OPEN &&
+        this.isSmartfloWebSocketOpen(session.streamSid),
+    };
+  }
+
+  private logSpeakFirstDiagnostic(
+    session: OpenAiRealtimeSession,
+    input: SpeakFirstDiagnosticInput,
+  ): void {
+    const context = this.getSpeakFirstDiagnosticContext(session);
+    this.logger.log(
+      buildSpeakFirstDiagnosticLog({
+        ...context,
+        streamId: context.streamId,
+        ...input,
+      }),
+    );
+  }
+
+  private trackPreOpeningCustomerSpeech(
+    session: OpenAiRealtimeSession,
+    pcm8: Buffer,
+  ): void {
+    if (
+      !session.openingDelayPending ||
+      session.customerSpokeBeforeOpeningDelay
+    ) {
+      return;
+    }
+
+    const speech = this.isSpeechLikeForRuntime(pcm8);
+    if (!speech.speechLike) {
+      return;
+    }
+
+    session.preOpeningSpeechPacketCount =
+      (session.preOpeningSpeechPacketCount ?? 0) + 1;
+    session.preOpeningSpeechDurationMs =
+      (session.preOpeningSpeechDurationMs ?? 0) +
+      this.estimatePcm8DurationMs(pcm8);
+
+    if (
+      hasOpeningPreTimerCustomerSpeech(
+        session.preOpeningSpeechPacketCount,
+        session.preOpeningSpeechDurationMs,
+      )
+    ) {
+      session.customerSpokeBeforeOpeningDelay = true;
+    }
+  }
+
+  private skipOpeningForCustomerBeforeTimer(
+    session: OpenAiRealtimeSession,
+    delayMs: number,
+  ): void {
+    this.logSpeakFirstDiagnostic(session, {
+      stage: 'skipped',
+      skipReason: 'customer_spoke_before_opening_timer',
+      sessionReady: true,
+      timerFired: true,
+      delayMs,
+    });
+    session.openingGreetingRequested = true;
+    this.clearOpeningDelayTimer(session);
+    this.activateNormalModeAfterOpening(session, {
+      preserveQueuedInbound: true,
+    });
+    this.flushPendingInputIfReady(session);
   }
 
   private setOpeningState(
@@ -1633,20 +1729,18 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
-    const delayMs = this.getOpeningDelayRemainingMs(session);
+    const delayMs = this.voiceOpeningConfigService.getOpeningDelayMs();
     session.openingDelayPending = true;
     session.sessionReadyAt = session.sessionReadyAt ?? new Date();
+    session.preOpeningSpeechPacketCount = 0;
+    session.preOpeningSpeechDurationMs = 0;
+    session.customerSpokeBeforeOpeningDelay = false;
 
-    const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
-    this.logger.log({
-      streamSid: session.streamSid,
-      provider: voiceSession?.telephonyProvider,
-      authorizationId: voiceSession?.authorizationId,
-      sessionReadyAt: session.sessionReadyAt.toISOString(),
-      telephonyStartAt: session.telephonyStartAt?.toISOString(),
+    this.logSpeakFirstDiagnostic(session, {
+      stage: 'timerScheduled',
+      sessionReady: true,
+      timerScheduled: true,
       delayMs,
-      targetFromCallConnectMs: this.voiceOpeningConfigService.getOpeningDelayMs(),
-      message: 'voice_opening_delay_scheduled',
     });
 
     const triggerOpening = (): void => {
@@ -1663,16 +1757,6 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.openingDelayTimer = setTimeout(triggerOpening, delayMs);
   }
 
-  private getOpeningDelayRemainingMs(session: OpenAiRealtimeSession): number {
-    const targetFromStartMs = this.voiceOpeningConfigService.getOpeningDelayMs();
-    if (!session.telephonyStartAt) {
-      return targetFromStartMs;
-    }
-
-    const elapsedSinceStart = Date.now() - session.telephonyStartAt.getTime();
-    return Math.max(0, targetFromStartMs - elapsedSinceStart);
-  }
-
   private fireDelayedOpening(
     session: OpenAiRealtimeSession,
     delayMs: number,
@@ -1686,26 +1770,27 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     if (session.responseRequested || session.responseInProgress) {
-      this.logger.log({
-        streamSid: session.streamSid,
-        responseRequested: session.responseRequested,
-        responseInProgress: session.responseInProgress,
-        message: 'voice_opening_skipped_response_already_active',
+      this.logSpeakFirstDiagnostic(session, {
+        stage: 'skipped',
+        skipReason: 'response_already_active',
+        sessionReady: true,
+        timerFired: true,
+        delayMs,
       });
       return;
     }
 
-    const openingSentAt = new Date();
-    const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
-    this.logger.log({
-      streamSid: session.streamSid,
-      provider: voiceSession?.telephonyProvider,
-      authorizationId: voiceSession?.authorizationId,
-      sessionReadyAt: session.sessionReadyAt?.toISOString(),
-      openingSentAt: openingSentAt.toISOString(),
+    this.logSpeakFirstDiagnostic(session, {
+      stage: 'timerFired',
+      sessionReady: true,
+      timerFired: true,
       delayMs,
-      message: 'voice_opening_delayed_trigger',
     });
+
+    if (session.customerSpokeBeforeOpeningDelay) {
+      this.skipOpeningForCustomerBeforeTimer(session, delayMs);
+      return;
+    }
 
     this.startConversationWithGreeting(session);
   }
@@ -2740,15 +2825,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       );
     }
     if (skipReason) {
-      this.logger.log({
-        streamSid: session.streamSid,
-        reason: skipReason,
-        openingState: session.openingState,
-        smartfloStartReceived: session.smartfloStartReceived,
-        smartfloWebSocketOpen: readinessInput.smartfloWebSocketOpen,
-        openAiSessionCreated: session.openAiSessionCreated,
-        openAiSessionUpdated: session.openAiSessionUpdated,
-        message: 'opening skipped reason',
+      this.logSpeakFirstDiagnostic(session, {
+        stage: 'skipped',
+        skipReason,
+        sessionReady: session.openAiSessionUpdated,
       });
       if (this.shouldRetryOpeningReadiness(session, skipReason)) {
         this.scheduleOpeningReadinessRetry(session);
@@ -2865,17 +2945,15 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       if (!sent) {
         throw new Error('Opening response.create blocked by turn-taking guard');
       }
-      const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
-      this.logger.log({
-        streamSid: session.streamSid,
-        provider: voiceSession?.telephonyProvider,
-        authorizationId: voiceSession?.authorizationId,
-        sessionReadyAt: session.sessionReadyAt?.toISOString(),
-        openingSentAt: now.toISOString(),
+      this.logSpeakFirstDiagnostic(session, {
+        stage: 'openingSent',
+        sessionReady: true,
+        timerScheduled: true,
+        timerFired: true,
+        openingSent: true,
         delayMs: session.sessionReadyAt
           ? now.getTime() - session.sessionReadyAt.getTime()
           : undefined,
-        message: 'opening response.create sent',
       });
       this.callTiming.markByStreamSid(
         session.streamSid,
@@ -2904,6 +2982,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
   private appendInputAudio(session: OpenAiRealtimeSession, pcm8: Buffer): void {
     if (this.shouldQueueInboundUntilOpeningComplete(session)) {
       session.pendingPcm8.push(pcm8);
+      this.trackPreOpeningCustomerSpeech(session, pcm8);
       return;
     }
 
@@ -4325,6 +4404,16 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       return;
     }
 
+    if (!session.speakFirstDiagFirstAudioDeltaLogged) {
+      session.speakFirstDiagFirstAudioDeltaLogged = true;
+      this.logSpeakFirstDiagnostic(session, {
+        stage: 'firstAudioDelta',
+        sessionReady: session.openAiSessionUpdated,
+        openingSent: session.openingGreetingRequested,
+        firstAudioDelta: true,
+      });
+    }
+
     this.callTiming.markByStreamSid(
       session.streamSid,
       CallTimingEvent.FIRST_OPENAI_AUDIO_DELTA,
@@ -4546,6 +4635,17 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     );
 
     this.audioGateway.sendMedia(streamSid, base64MulawPayload);
+
+    const session = this.sessions.get(streamSid);
+    if (session && !session.speakFirstDiagFirstOutboundLogged) {
+      session.speakFirstDiagFirstOutboundLogged = true;
+      this.logSpeakFirstDiagnostic(session, {
+        stage: 'firstOutboundMedia',
+        sessionReady: session.openAiSessionUpdated,
+        openingSent: session.openingGreetingRequested,
+        firstOutboundMedia: true,
+      });
+    }
   }
 
   private resolveCallId(streamSid: string): string | undefined {

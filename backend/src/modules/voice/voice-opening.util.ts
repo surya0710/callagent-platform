@@ -443,3 +443,60 @@ export function isOpeningInboundSuppressedState(state: OpeningState): boolean {
 export function isOpeningFlowComplete(state: OpeningState): boolean {
   return state === 'opening_done' || state === 'failed' || state === 'disabled';
 }
+
+export const OPENING_PRE_TIMER_SPEECH_MIN_PACKETS = 6;
+export const OPENING_PRE_TIMER_SPEECH_MIN_DURATION_MS = 400;
+
+export function hasOpeningPreTimerCustomerSpeech(
+  packetCount: number,
+  durationMs: number,
+): boolean {
+  return (
+    packetCount >= OPENING_PRE_TIMER_SPEECH_MIN_PACKETS &&
+    durationMs >= OPENING_PRE_TIMER_SPEECH_MIN_DURATION_MS
+  );
+}
+
+export type SpeakFirstDiagnosticStage =
+  | 'sessionReady'
+  | 'timerScheduled'
+  | 'timerFired'
+  | 'openingSent'
+  | 'firstAudioDelta'
+  | 'firstOutboundMedia'
+  | 'skipped';
+
+export interface SpeakFirstDiagnosticInput {
+  stage: SpeakFirstDiagnosticStage;
+  provider?: string;
+  streamId?: string;
+  authorizationId?: string;
+  sessionReady?: boolean;
+  timerScheduled?: boolean;
+  timerFired?: boolean;
+  openingSent?: boolean;
+  firstAudioDelta?: boolean;
+  firstOutboundMedia?: boolean;
+  skipReason?: string | null;
+  delayMs?: number;
+}
+
+export function buildSpeakFirstDiagnosticLog(
+  input: SpeakFirstDiagnosticInput,
+): Record<string, unknown> {
+  return {
+    provider: input.provider,
+    streamId: input.streamId,
+    authorizationId: input.authorizationId ?? null,
+    sessionReady: input.sessionReady,
+    timerScheduled: input.timerScheduled,
+    timerFired: input.timerFired,
+    openingSent: input.openingSent,
+    firstAudioDelta: input.firstAudioDelta,
+    firstOutboundMedia: input.firstOutboundMedia,
+    skipReason: input.skipReason ?? null,
+    delayMs: input.delayMs,
+    stage: input.stage,
+    message: `voice_speak_first_${input.stage}`,
+  };
+}
