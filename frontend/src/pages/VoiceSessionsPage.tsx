@@ -21,6 +21,7 @@ import { VoiceSession, VoiceSessionStatus, voiceRecordingDownloadUrl } from '../
 
 const POLL_INTERVAL_MS = 2000;
 const DEFAULT_PAGE_SIZE = 10;
+const SEARCH_DEBOUNCE_MS = 300;
 
 function authStatusLabel(session: VoiceSession): string {
   if (session.isAppInitiated === true) {
@@ -160,8 +161,19 @@ export function VoiceSessionsPage() {
   const [recentLimit, setRecentLimit] = useState(DEFAULT_PAGE_SIZE);
   const [activePage, setActivePage] = useState(1);
   const [activeLimit, setActiveLimit] = useState(DEFAULT_PAGE_SIZE);
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
 
   const pollInterval = autoRefresh ? POLL_INTERVAL_MS : false;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setRecentPage(1);
+      setActivePage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   const healthQuery = useQuery({
     queryKey: ['voice-health'],
@@ -170,8 +182,13 @@ export function VoiceSessionsPage() {
   });
 
   const sessionsQuery = useQuery({
-    queryKey: ['voice-sessions', recentPage, recentLimit],
-    queryFn: () => voiceApi.getSessions({ page: recentPage, limit: recentLimit }),
+    queryKey: ['voice-sessions', recentPage, recentLimit, search],
+    queryFn: () =>
+      voiceApi.getSessions({
+        page: recentPage,
+        limit: recentLimit,
+        search: search || undefined,
+      }),
     refetchInterval: pollInterval,
   });
 
@@ -238,6 +255,12 @@ export function VoiceSessionsPage() {
 
   const healthOnline = healthQuery.isSuccess && healthQuery.data?.success;
   const healthError = healthQuery.isError;
+  const recentEmptyMessage = search
+    ? `No ended sessions match "${search}"`
+    : 'No recent ended sessions';
+  const activeEmptyMessage = search
+    ? `No active sessions match "${search}"`
+    : 'No active voice calls';
 
   return (
     <div className="min-w-0 max-w-full space-y-6">
@@ -367,6 +390,28 @@ export function VoiceSessionsPage() {
         <ErrorState message="Failed to load voice sessions. Showing last successful data if available." />
       )}
 
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <label className="block min-w-0 flex-1 text-sm text-slate-300">
+          Search sessions
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Phone, streamSid, callSid, status, provider..."
+            className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white placeholder:text-slate-500"
+          />
+        </label>
+        {search && (
+          <Button
+            variant="secondary"
+            className="shrink-0"
+            onClick={() => setSearchInput('')}
+          >
+            Clear search
+          </Button>
+        )}
+      </div>
+
       <Card title="Recent Ended Sessions">
         <DataTable
           headers={[
@@ -386,7 +431,7 @@ export function VoiceSessionsPage() {
             'Actions',
           ]}
           empty={recentMeta.total === 0}
-          emptyMessage="No recent ended sessions"
+          emptyMessage={recentEmptyMessage}
           meta={recentMeta}
           onPageChange={setRecentPage}
           onLimitChange={(limit) => {
@@ -481,7 +526,7 @@ export function VoiceSessionsPage() {
             setActiveLimit(limit);
             setActivePage(1);
           }}
-          emptyMessage="No active voice calls"
+          emptyMessage={activeEmptyMessage}
           rowKey={(session) => session.socketSessionId}
           renderRow={(session) => (
             <>

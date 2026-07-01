@@ -26,6 +26,7 @@ import {
 import { VoiceTranscriptService } from './transcript/voice-transcript.service';
 import { PrismaService } from '../../database/prisma.service';
 import { VoiceSessionQueryDto } from './dto/voice-session-query.dto';
+import { filterVoiceSessionsBySearch } from './voice-session-search.util';
 
 @ApiTags('Voice')
 @Public()
@@ -48,7 +49,11 @@ export class VoiceController {
   async listSessions(@Query() query: VoiceSessionQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const recentEnded = await this.voiceSessionService.getRecentEndedSessions();
+    const search = query.search?.trim();
+    const recentEndedAll = await this.voiceSessionService.getRecentEndedSessions();
+    const recentEnded = filterVoiceSessionsBySearch(recentEndedAll, search);
+    const activeAll = this.voiceSessionService.getActiveSessions();
+    const active = filterVoiceSessionsBySearch(activeAll, search);
     const total = recentEnded.length;
     const skip = (page - 1) * limit;
     const pageItems = recentEnded.slice(skip, skip + limit);
@@ -56,9 +61,7 @@ export class VoiceController {
       pageItems.map(toVoiceSessionResponse),
     );
     return {
-      active: this.voiceSessionService
-        .getActiveSessions()
-        .map(toVoiceSessionResponse),
+      active: active.map(toVoiceSessionResponse),
       recentEnded: recentEndedWithS3,
       meta: {
         total,
@@ -82,7 +85,9 @@ export class VoiceController {
   async listRecentSessions(@Query() query: VoiceSessionQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const recentEnded = await this.voiceSessionService.getRecentEndedSessions();
+    const search = query.search?.trim();
+    const recentEndedAll = await this.voiceSessionService.getRecentEndedSessions();
+    const recentEnded = filterVoiceSessionsBySearch(recentEndedAll, search);
     const total = recentEnded.length;
     const skip = (page - 1) * limit;
     const pageItems = recentEnded.slice(skip, skip + limit);

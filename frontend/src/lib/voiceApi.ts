@@ -13,7 +13,7 @@ export const voiceApi = {
   getHealth: () =>
     api.get<VoiceHealthResponse>('/voice/health').then((res) => res.data),
 
-  getSessions: (params?: { page?: number; limit?: number }) =>
+  getSessions: (params?: { page?: number; limit?: number; search?: string }) =>
     api
       .get<VoiceSessionsResponse>('/voice/sessions', { params })
       .then((res) => res.data),
