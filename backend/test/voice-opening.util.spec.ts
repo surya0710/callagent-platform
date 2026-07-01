@@ -12,7 +12,7 @@ import {
   canTriggerOpening,
   getOpeningSkipReason,
   hasOpeningPreTimerCustomerSpeech,
-  buildSpeakFirstDiagnosticLog,
+  buildGreetingDiagnosticLog,
   VOICE_OPENING_DEFAULTS,
 } from '../src/modules/voice/voice-opening.util';
 
@@ -313,32 +313,29 @@ describe('voice-opening.util', () => {
     });
   });
 
-  describe('buildSpeakFirstDiagnosticLog', () => {
-    it('includes speak-first diagnostic fields', () => {
+  describe('buildGreetingDiagnosticLog', () => {
+    it('includes greeting stage diagnostic fields', () => {
       expect(
-        buildSpeakFirstDiagnosticLog({
-          stage: 'timerScheduled',
+        buildGreetingDiagnosticLog({
           provider: 'exotel',
-          streamId: 'exotel_123',
-          authorizationId: 'auth_1',
-          sessionReady: true,
-          timerScheduled: true,
+          sessionId: 'exotel_123',
+          stage: 'GREETING',
+          openAiReady: true,
+          greetingScheduled: true,
           delayMs: 2500,
         }),
       ).toEqual({
         provider: 'exotel',
-        streamId: 'exotel_123',
-        authorizationId: 'auth_1',
-        sessionReady: true,
-        timerScheduled: true,
-        timerFired: undefined,
-        openingSent: undefined,
+        sessionId: 'exotel_123',
+        stage: 'GREETING',
+        openAiReady: true,
+        greetingScheduled: true,
+        greetingSent: undefined,
         firstAudioDelta: undefined,
         firstOutboundMedia: undefined,
         skipReason: null,
         delayMs: 2500,
-        stage: 'timerScheduled',
-        message: 'voice_speak_first_timerScheduled',
+        message: 'voice_greeting_diag',
       });
     });
   });

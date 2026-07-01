@@ -229,6 +229,7 @@ export class VoiceController {
       openingContext: response.openingContext ?? null,
       aiSpeakFirstEnabled: response.aiSpeakFirstEnabled ?? false,
       openingState: response.openingState ?? null,
+      stage: response.stage ?? null,
       openingRequestedAt: response.openingRequestedAt ?? null,
       openingResponseCreatedAt: response.openingResponseCreatedAt ?? null,
       openingAudioStartedAt: response.openingAudioStartedAt ?? null,

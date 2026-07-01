@@ -6,6 +6,7 @@ import {
 } from './audio/pcm-stats.util';
 import { VoiceSharedStateService } from './voice-shared-state.service';
 import { VoiceOpeningContext, OpeningState } from './voice-opening.types';
+import { VoiceSessionStage } from './voice-session-stage.types';
 import { CallContext } from './voice-call-context.types';
 import { extractCallContextDebugInfo } from './voice-call-context.util';
 
@@ -142,6 +143,7 @@ export interface VoiceSession {
   lastSmartfloSendAt?: Date;
   openingContext?: VoiceOpeningContext;
   aiSpeakFirstEnabled?: boolean;
+  stage?: VoiceSessionStage;
   openingState?: OpeningState;
   openingRequestedAt?: Date;
   openingResponseCreatedAt?: Date;
@@ -304,6 +306,7 @@ export interface VoiceSessionResponse {
   lastSmartfloSendAt?: string | null;
   openingContext?: VoiceOpeningContext;
   aiSpeakFirstEnabled?: boolean;
+  stage?: VoiceSessionStage;
   openingState?: OpeningState;
   openingRequestedAt?: string | null;
   openingResponseCreatedAt?: string | null;
@@ -475,6 +478,7 @@ export function toVoiceSessionResponse(
     lastSmartfloSendAt: session.lastSmartfloSendAt?.toISOString() ?? null,
     openingContext: session.openingContext,
     aiSpeakFirstEnabled: session.aiSpeakFirstEnabled,
+    stage: session.stage,
     openingState: session.openingState,
     openingRequestedAt: session.openingRequestedAt?.toISOString() ?? null,
     openingResponseCreatedAt:
@@ -896,9 +900,19 @@ export class VoiceSessionService {
 
     session.aiSpeakFirstEnabled = update.aiSpeakFirstEnabled;
     session.openingState = update.openingState;
+    session.stage = update.aiSpeakFirstEnabled ? 'CONNECTING' : 'DISABLED';
     if (update.openingContext !== undefined) {
       session.openingContext = update.openingContext;
     }
+  }
+
+  setSessionStage(streamSid: string, stage: VoiceSessionStage): void {
+    const session = this.getByStreamSid(streamSid);
+    if (!session) {
+      return;
+    }
+
+    session.stage = stage;
   }
 
   updateOpeningState(

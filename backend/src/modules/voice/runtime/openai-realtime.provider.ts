@@ -35,14 +35,15 @@ import {
   buildOpeningSessionInstructions,
   buildPostOpeningSessionInstructions,
   buildExampleOpeningMessage,
-  buildSpeakFirstDiagnosticLog,
+  buildGreetingDiagnosticLog,
   getOpeningSkipReason,
   hasOpeningPreTimerCustomerSpeech,
   CONVERSATION_MAX_OUTPUT_TOKENS,
   isOpeningInboundSuppressedState,
   OPENING_MAX_OUTPUT_TOKENS,
-  SpeakFirstDiagnosticInput,
+  GreetingDiagnosticInput,
 } from '../voice-opening.util';
+import { VoiceSessionStage } from '../voice-session-stage.types';
 import { VoiceOpeningConfigService } from '../voice-opening-config.service';
 import { VoiceSocketRegistry } from '../voice-socket.registry';
 import {
@@ -219,6 +220,7 @@ interface OpenAiRealtimeSession {
   preOpeningSpeechDurationMs?: number;
   speakFirstDiagFirstAudioDeltaLogged?: boolean;
   speakFirstDiagFirstOutboundLogged?: boolean;
+  voiceSessionStage?: VoiceSessionStage;
   openingSuppressedInboundPackets: number;
   openingAudioStartedAt?: Date;
   openingAudioDoneAt?: Date;
@@ -1075,6 +1077,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     };
     this.sessions.set(streamSid, session);
 
+    this.setVoiceSessionStage(
+      session,
+      aiSpeakFirstEnabled ? 'CONNECTING' : 'DISABLED',
+    );
+
     this.voiceSessionService.updateOpeningState(streamSid, {
       aiSpeakFirstEnabled,
       openingState: session.openingState,
@@ -1457,11 +1464,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       session.aiSpeakFirstEnabled
     ) {
       this.setOpeningState(session, 'ready_to_speak', 'voice_opening_ready');
+      this.setVoiceSessionStage(session, 'GREETING');
     }
 
-    this.logSpeakFirstDiagnostic(session, {
-      stage: 'sessionReady',
-      sessionReady: true,
+    this.logGreetingDiagnostic(session, {
+      openAiReady: true,
     });
 
     this.evaluateOpeningReadiness(session);
@@ -1552,33 +1559,40 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     return Boolean(client && client.readyState === WebSocket.OPEN);
   }
 
-  private getSpeakFirstDiagnosticContext(session: OpenAiRealtimeSession): {
+  private getGreetingDiagnosticContext(session: OpenAiRealtimeSession): {
     provider?: string;
-    streamId: string;
-    authorizationId?: string;
-    sessionReady: boolean;
+    sessionId: string;
+    stage?: VoiceSessionStage;
+    openAiReady: boolean;
   } {
     const voiceSession = this.voiceSessionService.getByStreamSid(session.streamSid);
     return {
       provider: voiceSession?.telephonyProvider,
-      streamId: session.streamSid,
-      authorizationId: voiceSession?.authorizationId,
-      sessionReady:
+      sessionId: session.streamSid,
+      stage: session.voiceSessionStage ?? voiceSession?.stage,
+      openAiReady:
         session.openAiSessionUpdated &&
         session.ws.readyState === WebSocket.OPEN &&
         this.isSmartfloWebSocketOpen(session.streamSid),
     };
   }
 
-  private logSpeakFirstDiagnostic(
+  private setVoiceSessionStage(
     session: OpenAiRealtimeSession,
-    input: SpeakFirstDiagnosticInput,
+    stage: VoiceSessionStage,
   ): void {
-    const context = this.getSpeakFirstDiagnosticContext(session);
+    session.voiceSessionStage = stage;
+    this.voiceSessionService.setSessionStage(session.streamSid, stage);
+  }
+
+  private logGreetingDiagnostic(
+    session: OpenAiRealtimeSession,
+    input: Omit<GreetingDiagnosticInput, 'provider' | 'sessionId' | 'stage' | 'openAiReady'>,
+  ): void {
+    const context = this.getGreetingDiagnosticContext(session);
     this.logger.log(
-      buildSpeakFirstDiagnosticLog({
+      buildGreetingDiagnosticLog({
         ...context,
-        streamId: context.streamId,
         ...input,
       }),
     );
@@ -1620,15 +1634,14 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session: OpenAiRealtimeSession,
     delayMs: number,
   ): void {
-    this.logSpeakFirstDiagnostic(session, {
-      stage: 'skipped',
+    this.logGreetingDiagnostic(session, {
       skipReason: 'customer_spoke_before_opening_timer',
-      sessionReady: true,
-      timerFired: true,
+      openAiReady: true,
       delayMs,
     });
     session.openingGreetingRequested = true;
     this.clearOpeningDelayTimer(session);
+    this.setVoiceSessionStage(session, 'WAITING_FOR_CUSTOMER');
     this.activateNormalModeAfterOpening(session, {
       preserveQueuedInbound: true,
     });
@@ -1736,10 +1749,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     session.preOpeningSpeechDurationMs = 0;
     session.customerSpokeBeforeOpeningDelay = false;
 
-    this.logSpeakFirstDiagnostic(session, {
-      stage: 'timerScheduled',
-      sessionReady: true,
-      timerScheduled: true,
+    this.logGreetingDiagnostic(session, {
+      greetingScheduled: true,
+      openAiReady: true,
       delayMs,
     });
 
@@ -1770,22 +1782,13 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     }
 
     if (session.responseRequested || session.responseInProgress) {
-      this.logSpeakFirstDiagnostic(session, {
-        stage: 'skipped',
+      this.logGreetingDiagnostic(session, {
         skipReason: 'response_already_active',
-        sessionReady: true,
-        timerFired: true,
+        openAiReady: true,
         delayMs,
       });
       return;
     }
-
-    this.logSpeakFirstDiagnostic(session, {
-      stage: 'timerFired',
-      sessionReady: true,
-      timerFired: true,
-      delayMs,
-    });
 
     if (session.customerSpokeBeforeOpeningDelay) {
       this.skipOpeningForCustomerBeforeTimer(session, delayMs);
@@ -1900,6 +1903,11 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         openingAudioDoneAt: completedAt,
       });
     }
+
+    this.setVoiceSessionStage(session, 'WAITING_FOR_CUSTOMER');
+    this.logGreetingDiagnostic(session, {
+      openAiReady: session.openAiSessionUpdated,
+    });
 
     this.resetSpeechTurnState(session);
     this.clearOpeningTimeout(session);
@@ -2788,6 +2796,7 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
         session.sessionReadyAt = new Date();
       }
       this.setOpeningState(session, 'ready_to_speak', 'voice_opening_ready');
+      this.setVoiceSessionStage(session, 'GREETING');
       this.logger.log({
         streamSid: session.streamSid,
         openAiSessionCreated: session.openAiSessionCreated,
@@ -2825,10 +2834,9 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       );
     }
     if (skipReason) {
-      this.logSpeakFirstDiagnostic(session, {
-        stage: 'skipped',
+      this.logGreetingDiagnostic(session, {
         skipReason,
-        sessionReady: session.openAiSessionUpdated,
+        openAiReady: session.openAiSessionUpdated,
       });
       if (this.shouldRetryOpeningReadiness(session, skipReason)) {
         this.scheduleOpeningReadinessRetry(session);
@@ -2945,12 +2953,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
       if (!sent) {
         throw new Error('Opening response.create blocked by turn-taking guard');
       }
-      this.logSpeakFirstDiagnostic(session, {
-        stage: 'openingSent',
-        sessionReady: true,
-        timerScheduled: true,
-        timerFired: true,
-        openingSent: true,
+      this.logGreetingDiagnostic(session, {
+        greetingSent: true,
+        openAiReady: true,
+        greetingScheduled: true,
         delayMs: session.sessionReadyAt
           ? now.getTime() - session.sessionReadyAt.getTime()
           : undefined,
@@ -4406,11 +4412,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
 
     if (!session.speakFirstDiagFirstAudioDeltaLogged) {
       session.speakFirstDiagFirstAudioDeltaLogged = true;
-      this.logSpeakFirstDiagnostic(session, {
-        stage: 'firstAudioDelta',
-        sessionReady: session.openAiSessionUpdated,
-        openingSent: session.openingGreetingRequested,
+      this.logGreetingDiagnostic(session, {
         firstAudioDelta: true,
+        openAiReady: session.openAiSessionUpdated,
+        greetingSent: session.openingGreetingRequested,
       });
     }
 
@@ -4639,11 +4644,10 @@ export class OpenAIRealtimeProvider implements VoiceRuntimeProvider {
     const session = this.sessions.get(streamSid);
     if (session && !session.speakFirstDiagFirstOutboundLogged) {
       session.speakFirstDiagFirstOutboundLogged = true;
-      this.logSpeakFirstDiagnostic(session, {
-        stage: 'firstOutboundMedia',
-        sessionReady: session.openAiSessionUpdated,
-        openingSent: session.openingGreetingRequested,
+      this.logGreetingDiagnostic(session, {
         firstOutboundMedia: true,
+        openAiReady: session.openAiSessionUpdated,
+        greetingSent: session.openingGreetingRequested,
       });
     }
   }

@@ -1,4 +1,5 @@
 import { VoiceOpeningContext, OpeningState } from './voice-opening.types';
+import { VoiceSessionStage } from './voice-session-stage.types';
 import {
   buildAccentInstructions,
   VoiceAccentProfile,
@@ -466,6 +467,7 @@ export type SpeakFirstDiagnosticStage =
   | 'firstOutboundMedia'
   | 'skipped';
 
+/** @deprecated use GreetingDiagnosticInput */
 export interface SpeakFirstDiagnosticInput {
   stage: SpeakFirstDiagnosticStage;
   provider?: string;
@@ -481,22 +483,50 @@ export interface SpeakFirstDiagnosticInput {
   delayMs?: number;
 }
 
+/** @deprecated use buildGreetingDiagnosticLog */
 export function buildSpeakFirstDiagnosticLog(
   input: SpeakFirstDiagnosticInput,
 ): Record<string, unknown> {
+  return buildGreetingDiagnosticLog({
+    provider: input.provider,
+    sessionId: input.streamId,
+    openAiReady: input.sessionReady,
+    greetingScheduled: input.timerScheduled,
+    greetingSent: input.openingSent,
+    firstAudioDelta: input.firstAudioDelta,
+    firstOutboundMedia: input.firstOutboundMedia,
+    skipReason: input.skipReason,
+    delayMs: input.delayMs,
+  });
+}
+
+export interface GreetingDiagnosticInput {
+  provider?: string;
+  sessionId?: string;
+  stage?: VoiceSessionStage;
+  openAiReady?: boolean;
+  greetingScheduled?: boolean;
+  greetingSent?: boolean;
+  firstAudioDelta?: boolean;
+  firstOutboundMedia?: boolean;
+  skipReason?: string | null;
+  delayMs?: number;
+}
+
+export function buildGreetingDiagnosticLog(
+  input: GreetingDiagnosticInput,
+): Record<string, unknown> {
   return {
     provider: input.provider,
-    streamId: input.streamId,
-    authorizationId: input.authorizationId ?? null,
-    sessionReady: input.sessionReady,
-    timerScheduled: input.timerScheduled,
-    timerFired: input.timerFired,
-    openingSent: input.openingSent,
+    sessionId: input.sessionId,
+    stage: input.stage,
+    openAiReady: input.openAiReady,
+    greetingScheduled: input.greetingScheduled,
+    greetingSent: input.greetingSent,
     firstAudioDelta: input.firstAudioDelta,
     firstOutboundMedia: input.firstOutboundMedia,
     skipReason: input.skipReason ?? null,
     delayMs: input.delayMs,
-    stage: input.stage,
-    message: `voice_speak_first_${input.stage}`,
+    message: 'voice_greeting_diag',
   };
 }
